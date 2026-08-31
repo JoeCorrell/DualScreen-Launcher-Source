@@ -357,7 +357,32 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             ProcessHelper.addDebugCallback(it)
         }
         updateStatus("INITIALIZING TESTED WINDOWS RUNTIME", "Preparing Wine, prefix, renderer and mounts")
-        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, shortcut)
+        /*
+         * Stardew is deliberately not the first process passed to Wine.
+         *
+         * The copied WEMU container which is known to work boots its hidden
+         * desktop/file-manager target first.  Once winhandler.exe completes
+         * its INIT handshake, WEMU submits Stardew through WinHandler; that
+         * path stages StardewCoreClrCompatibility's hidden VBS launcher and
+         * supplies the CoreCLR/FEX policy to the actual child.  Starting the
+         * executable as Wine's initial target bypassed that path entirely and
+         * left the process parked before .NET/XNA created a window.
+         *
+         * A null shortcut selects WemuSession's wfm.exe bootstrap.  The real
+         * command is queued below after session.start().  WinHandler retains
+         * queued actions until the guest INIT packet arrives, so this is a
+         * readiness handshake, not a timing delay.
+         */
+        val deferredStardewLaunch = shouldUseDeferredStardewLaunch(game.id, configurationLauncher)
+        val sessionShortcut = if (deferredStardewLaunch) null else shortcut
+        if (deferredStardewLaunch) {
+            launchStatus.record(
+                "PROCESS",
+                "Stardew two-stage launch selected: bootstrap=wfm.exe " +
+                    "target=${shortcut.path} bridge=WinHandler/CoreCLR",
+            )
+        }
+        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, sessionShortcut)
         runtime = session
         if (game.id == "skyrim-se") {
             session.setSkyrimAudioCompatibility(true)
@@ -406,6 +431,15 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             Log.e(TAG, "Runtime start failed", failure)
             finishWithMessage(failure?.message ?: "The game could not be started")
             return
+        }
+        if (deferredStardewLaunch) {
+            val command = deferredGuestCommand(shortcut.path, shortcut.getExtra("execArgs"))
+            session.winHandler.exec(command)
+            launchStatus.record(
+                "PROCESS",
+                "Queued target through WinHandler; command=$command " +
+                    "dispatch=after-guest-INIT coreclr=hidden-vbs",
+            )
         }
         runCatching { preset.markLaunchMaterialized(container) }
             .onFailure { Log.e(TAG, "Could not record runtime materialization", it) }
@@ -1044,6 +1078,19 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         const val EXTRA_CONTAINER_ID = "containerId"
         const val EXTRA_SHORTCUT_PATH = "shortcutPath"
         const val EXTRA_CONFIGURATION_LAUNCHER = "configurationLauncher"
+    }
+}
+
+internal fun shouldUseDeferredStardewLaunch(gameId: String, configurationLauncher: Boolean): Boolean =
+    gameId == "stardew-valley" && !configurationLauncher
+
+internal fun deferredGuestCommand(path: String, execArgs: String): String = buildString {
+    append('"')
+    append(path.trim().trim('"'))
+    append('"')
+    if (execArgs.isNotBlank()) {
+        append(' ')
+        append(execArgs.trim())
     }
 }
 

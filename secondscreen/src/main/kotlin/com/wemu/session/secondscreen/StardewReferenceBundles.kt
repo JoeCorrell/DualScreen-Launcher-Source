@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -76,10 +76,10 @@ fun StardewBundlesReferencePage(
                     item(key = "room:${room.name}") {
                         BundleRoomHeader(state, room)
                     }
-                    items(
+                    itemsIndexed(
                         items = room.bundles,
-                        key = { bundle -> "bundle:${room.name}:${bundle.name}" },
-                    ) { bundle ->
+                        key = { index, bundle -> bundleRowKey(room.name, index, bundle) },
+                    ) { _, bundle ->
                         BundleProgressRow(state, bundle)
                     }
                 }
@@ -238,10 +238,10 @@ private fun BundleProgressRow(state: StardewState, bundle: StardewBundle) {
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
-                items(
+                itemsIndexed(
                     items = bundle.missing,
-                    key = { item -> "${item.id}:${item.name}:${item.count}:${item.quality}" },
-                ) { item ->
+                    key = { index, item -> bundleItemKey(index, item) },
+                ) { _, item ->
                     BundleItemChip(state, item)
                 }
             }
@@ -416,6 +416,16 @@ internal fun referenceBundleRooms(bundles: List<StardewBundle>): List<ReferenceB
             )
         }
         .sortedWith(compareBy<ReferenceBundleRoom> { referenceBundleRoomRank(it.name) }.thenBy { it.name })
+
+/**
+ * Compose lazy-list keys must be unique even when a save or content pack
+ * contains duplicate bundle names or two identical requirement stacks.
+ */
+internal fun bundleRowKey(room: String, index: Int, bundle: StardewBundle): String =
+    "bundle:$room:$index:${bundle.name}"
+
+internal fun bundleItemKey(index: Int, item: StardewBundleItem): String =
+    "$index:${item.id}:${item.name}:${item.count}:${item.quality}"
 
 private fun referenceBundleRoomRank(room: String): Int =
     BUNDLE_ROOM_ORDER.indexOf(room).let { if (it < 0) Int.MAX_VALUE else it }

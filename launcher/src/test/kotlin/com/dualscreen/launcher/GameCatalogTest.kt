@@ -84,13 +84,15 @@ class GameCatalogTest {
         val stardew = checkNotNull(GameCatalog.byId("stardew-valley"))
         assertThat(stardew.executableCandidates).containsExactly("Stardew Valley.exe")
         assertThat(stardew.prerequisites).isEmpty()
-        assertThat(stardew.panelMode).isEqualTo(LowerPanelMode.NATIVE_WINDOW)
+        assertThat(stardew.panelMode).isEqualTo(LowerPanelMode.STARDEW)
         assertThat(stardew.requiredFiles).contains("Stardew Valley.dll")
         assertThat(stardew.fileRules.single().sha256AnyOf).containsExactly(
             "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c",
             "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
             "7579cca523d19470b4f842b9068b6bf9b8f96efe632b83471bc62cae7f7b3b90",
             "f3a92e73f1cdf7c0d4eb5f995b2555244fbe16d33429e26c2b425f6eb1480c63",
+            "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466",
+            "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c",
         )
     }
 
