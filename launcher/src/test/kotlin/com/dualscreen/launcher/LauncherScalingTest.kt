@@ -7,12 +7,12 @@ import org.junit.Test
 class LauncherScalingTest {
     @Test
     fun artworkContractsInsteadOfMetadataWhenBannerIsVisible() {
-        assertThat(browseCoverHeight(288.dp)).isEqualTo(172.dp)
-        assertThat(288.dp - browseCoverHeight(288.dp)).isEqualTo(116.dp)
+        assertThat(browseCoverHeight(288.dp)).isEqualTo(156.dp)
+        assertThat(288.dp - browseCoverHeight(288.dp)).isEqualTo(132.dp)
     }
 
     @Test
     fun veryShortCardsRetainUsableArtwork() {
-        assertThat(browseCoverHeight(210.dp)).isEqualTo(120.dp)
+        assertThat(browseCoverHeight(210.dp)).isEqualTo(88.dp)
     }
 }

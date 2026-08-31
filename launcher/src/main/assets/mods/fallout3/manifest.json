@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.08.30-mod-sync-2",
+    "version":  "launcher-2026.08.31-native-reference-pages",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "dinput8.dll",
-                      "sha256":  "2e40303f21f22c1c1fd4cbde79e0a44d45e3346296b176ebca7037b2abf0b2a0"
+                      "sha256":  "89615683881246a8871429c01cc4ae1f881f6a2facb87d032cf673bcf21a4297"
                   },
                   {
                       "source":  "Fallout3SecondScreen.ini",

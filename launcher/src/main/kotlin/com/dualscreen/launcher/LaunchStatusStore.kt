@@ -23,17 +23,19 @@ data class LaunchStatus(
 /** Persistent, device-visible launch diagnostics shared by both displays. */
 class LaunchStatusStore(context: Context) {
     private val lock = Any()
-    private val directory = File(context.filesDir, "launch-logs")
+    private val fallbackDirectory = File(context.filesDir, "launch-logs")
     private val mutableStatus = MutableStateFlow<LaunchStatus?>(null)
     val status: StateFlow<LaunchStatus?> = mutableStatus.asStateFlow()
     private var output: File? = null
     private var guestOutputDropped = false
 
     fun begin(game: SupportedGame): File = synchronized(lock) {
-        check(directory.isDirectory || directory.mkdirs()) {
-            "Could not create the launch log directory"
+        val file = runCatching { DualscreenStorage().launchLog(game) }.getOrElse {
+            check(fallbackDirectory.isDirectory || fallbackDirectory.mkdirs()) {
+                "Could not create the launch log directory"
+            }
+            File(fallbackDirectory, "${game.id}-latest.log")
         }
-        val file = File(directory, "${game.id}-latest.log")
         file.writeText("")
         output = file
         guestOutputDropped = false

@@ -171,6 +171,16 @@ internal class PayloadBootstrapper(private val context: Context) {
             return@withLock
         }
         val current = PayloadAssetStore.root(context)
+        withContext(Dispatchers.IO) {
+            embedded.packs.forEach { pack -> recoverPayloadPackRoot(current, pack.root) }
+            current.parentFile?.listFiles()
+                ?.filter { it.name.startsWith("staging-") }
+                ?.forEach { stale ->
+                    if (!stale.deleteRecursively()) {
+                        Log.w(TAG, "Could not clear interrupted payload staging: $stale")
+                    }
+                }
+        }
         val currentVersion = File(current, VERSION_FILE).readTextOrNull()
         if (currentVersion == null) {
             mutableState.value = PayloadBootstrapState.Checking
@@ -180,6 +190,7 @@ internal class PayloadBootstrapper(private val context: Context) {
 
         var target = when {
             currentVersion == null -> embedded
+            embedded.packs.any { !payloadRootPresent(File(current, it.root)) } -> embedded
             force -> embedded
             isNewerVersion(embedded.version, currentVersion) -> embedded
             else -> null
@@ -308,48 +319,49 @@ internal class PayloadBootstrapper(private val context: Context) {
                         },
                     )
                 } ?: error(GuestPayloads.lastFailure() ?: "Download failed")
-
-                publishProgress(index, pack, PayloadBootstrapPhase.VERIFY, 0L, pack.bytes)
-                withContext(Dispatchers.IO) {
-                    if (archive.length() != pack.bytes || sha256(archive) { verified, total ->
+                try {
+                    publishProgress(index, pack, PayloadBootstrapPhase.VERIFY, 0L, pack.bytes)
+                    withContext(Dispatchers.IO) {
+                        if (archive.length() != pack.bytes || sha256(archive) { verified, total ->
+                                publishProgress(
+                                    index,
+                                    pack,
+                                    PayloadBootstrapPhase.VERIFY,
+                                    verified,
+                                    total,
+                                )
+                            } != pack.sha256
+                        ) {
+                            error("${pack.name} failed integrity verification")
+                        }
+                    }
+                    val expandedBytes = withContext(Dispatchers.IO) { expandedSize(archive) }
+                    val availableBytes = withContext(Dispatchers.IO) { StatFs(base.absolutePath).availableBytes }
+                    check(expandedBytes <= extractionByteBudget(availableBytes, STORAGE_RESERVE)) {
+                        "Not enough free space to install ${friendlyName(pack.name)}"
+                    }
+                    publishProgress(index, pack, PayloadBootstrapPhase.INSTALL, 0L, expandedBytes)
+                    val staging = File(base, "staging-${pack.root}-${UUID.randomUUID()}")
+                    withContext(Dispatchers.IO) {
+                        check(staging.mkdirs()) { "Could not create payload staging" }
+                        extractZipSafely(archive, staging, pack.root) { installed, total ->
                             publishProgress(
                                 index,
                                 pack,
-                                PayloadBootstrapPhase.VERIFY,
-                                verified,
+                                PayloadBootstrapPhase.INSTALL,
+                                installed,
                                 total,
                             )
-                        } != pack.sha256
-                    ) {
-                        GuestPayloads.release(archive)
-                        error("${pack.name} failed integrity verification")
+                        }
+                        publishPackRoot(current, staging, pack.root)
                     }
+                    packState[pack.root] = pack.sha256
+                    withContext(Dispatchers.IO) { writePackStateAtomically(current, packState) }
+                    Log.i(TAG, "Published ${pack.root} payload ${pack.name} sha256=${pack.sha256}")
+                    completedPackBytes += pack.bytes
+                } finally {
+                    withContext(NonCancellable + Dispatchers.IO) { GuestPayloads.release(archive) }
                 }
-                val expandedBytes = withContext(Dispatchers.IO) { expandedSize(archive) }
-                val availableBytes = withContext(Dispatchers.IO) { StatFs(base.absolutePath).availableBytes }
-                check(expandedBytes <= extractionByteBudget(availableBytes, STORAGE_RESERVE)) {
-                    "Not enough free space to install ${friendlyName(pack.name)}"
-                }
-                publishProgress(index, pack, PayloadBootstrapPhase.INSTALL, 0L, expandedBytes)
-                val staging = File(base, "staging-${pack.root}-${UUID.randomUUID()}")
-                withContext(Dispatchers.IO) {
-                    check(staging.mkdirs()) { "Could not create payload staging" }
-                    extractZipSafely(archive, staging, pack.root) { installed, total ->
-                        publishProgress(
-                            index,
-                            pack,
-                            PayloadBootstrapPhase.INSTALL,
-                            installed,
-                            total,
-                        )
-                    }
-                    publishPackRoot(current, staging, pack.root)
-                    GuestPayloads.release(archive)
-                }
-                packState[pack.root] = pack.sha256
-                withContext(Dispatchers.IO) { writePackStateAtomically(current, packState) }
-                Log.i(TAG, "Published ${pack.root} payload ${pack.name} sha256=${pack.sha256}")
-                completedPackBytes += pack.bytes
             }
 
             withContext(Dispatchers.IO) {
@@ -477,9 +489,9 @@ internal class PayloadBootstrapper(private val context: Context) {
         packState: Map<String, String>,
         pack: PayloadPack,
     ): Boolean {
-        if (packState[pack.root] == pack.sha256) return true
         val root = File(current, pack.root)
-        val legacyInstallIsPresent = root.isDirectory && !root.list().isNullOrEmpty()
+        val legacyInstallIsPresent = payloadRootPresent(root)
+        if (packState[pack.root] == pack.sha256) return legacyInstallIsPresent
         return packState[pack.root] == null &&
             currentVersion != null &&
             pack.name.contains(currentVersion) &&
@@ -626,5 +638,31 @@ internal class PayloadBootstrapper(private val context: Context) {
         const val REMOTE_CONNECT_TIMEOUT_MS = 5_000
         const val REMOTE_READ_TIMEOUT_MS = 8_000
         const val REMOTE_CHECK_INTERVAL_MS = 60_000L
+    }
+}
+
+internal fun payloadRootPresent(root: File): Boolean =
+    root.isDirectory && !root.list().isNullOrEmpty()
+
+/** Restores the last complete pack after power loss between the two atomic renames. */
+internal fun recoverPayloadPackRoot(current: File, rootName: String) {
+    require(rootName.matches(Regex("[A-Za-z0-9._-]+"))) { "Unsafe payload root" }
+    val base = current.parentFile ?: return
+    val target = File(current, rootName)
+    val rollbacks = base.listFiles()
+        ?.filter { candidate ->
+            candidate.name.startsWith("rollback-$rootName-") &&
+                candidate.canonicalFile.parentFile == base.canonicalFile
+        }
+        ?.sortedByDescending(File::lastModified)
+        .orEmpty()
+    if (!target.exists() && rollbacks.isNotEmpty()) {
+        check(target.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
+            "Could not restore the $rootName payload parent"
+        }
+        check(rollbacks.first().renameTo(target)) { "Could not restore the $rootName payload" }
+    }
+    rollbacks.filter(File::exists).forEach { stale ->
+        check(stale.deleteRecursively()) { "Could not clear an old $rootName payload rollback" }
     }
 }

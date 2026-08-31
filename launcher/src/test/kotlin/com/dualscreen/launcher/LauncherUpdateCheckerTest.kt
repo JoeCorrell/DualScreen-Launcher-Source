@@ -20,6 +20,6 @@ class LauncherUpdateCheckerTest {
         )
 
         assertThat(release.version).isEqualTo("1.2.0")
-        assertThat(release.preferredDownloadUrl).endsWith("dualscreen-launcher-1.2.0.apk")
+        assertThat(release.apkUrl).endsWith("dualscreen-launcher-1.2.0.apk")
     }
 }

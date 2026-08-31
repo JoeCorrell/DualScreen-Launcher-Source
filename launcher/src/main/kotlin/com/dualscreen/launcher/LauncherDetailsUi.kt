@@ -1,6 +1,7 @@
 package com.dualscreen.launcher
 
 import androidx.compose.foundation.Image
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -15,9 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.FolderZip
 import androidx.compose.material.icons.filled.PlayArrow
@@ -25,7 +26,6 @@ import androidx.compose.material.icons.filled.SettingsApplications
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.io.File
 
 @Composable
 internal fun GameDetailsPage(
@@ -48,6 +49,7 @@ internal fun GameDetailsPage(
     installed: InstalledGame?,
     progress: InstallProgress?,
     saveProgress: SaveImportProgress?,
+    operationBusy: Boolean,
     onBack: () -> Unit,
     onInstall: () -> Unit,
     onImportSave: () -> Unit,
@@ -55,17 +57,19 @@ internal fun GameDetailsPage(
     onConfigure: () -> Unit,
 ) {
     val state = resolveGameInstallState(installed, progress, saveProgress)
-    val busy = state == GameInstallState.INSTALLING || state == GameInstallState.IMPORTING_SAVE
+    val busy = operationBusy ||
+        state == GameInstallState.INSTALLING ||
+        state == GameInstallState.IMPORTING_SAVE
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
             start = 16.dp,
-            end = 16.dp,
-            top = 8.dp,
-            bottom = 16.dp,
+            end = 18.dp,
+            top = 10.dp,
+            bottom = 18.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
             Row(
@@ -76,11 +80,11 @@ internal fun GameDetailsPage(
                     onClick = onBack,
                     modifier = Modifier
                         .size(38.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RectangleShape)
                         .background(Color(0xFF202119))
-                        .border(1.dp, Color(0xFF3B3C33), RoundedCornerShape(10.dp)),
+                        .border(1.dp, Color(0xFF3B3C33), RectangleShape),
                 ) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back to games", modifier = Modifier.size(19.dp))
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to games", modifier = Modifier.size(19.dp))
                 }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -95,7 +99,7 @@ internal fun GameDetailsPage(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             gameShortTitle(game.id),
-                            modifier = Modifier.weight(0.46f),
+                            modifier = Modifier.weight(0.44f),
                             fontSize = 25.sp,
                             lineHeight = 27.sp,
                             fontWeight = FontWeight.Bold,
@@ -105,10 +109,10 @@ internal fun GameDetailsPage(
                         Spacer(Modifier.width(11.dp))
                         Text(
                             game.summary,
-                            modifier = Modifier.weight(0.54f),
+                            modifier = Modifier.weight(0.56f),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 10.sp,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
@@ -173,16 +177,27 @@ internal fun GameDetailsPage(
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         InformationRow("Executable", game.executableCandidates.firstOrNull() ?: "Not configured")
-                        InformationRow("Required build", game.requiredBuild, emphasized = true)
+                        InformationRow("Recommended build", game.requiredBuild, emphasized = true)
                         InformationRow(
                             "Game launcher",
-                            if (game.configurationLauncherCandidates.isEmpty()) "Not required" else "Available",
+                            when {
+                                game.configurationLauncherCandidates.isEmpty() -> "Not required"
+                                installed == null -> "Detected during setup"
+                                resolveConfigurationLauncherExecutable(File(installed.hostDirectory), game) != null -> "Available"
+                                else -> "Not included (optional)"
+                            },
                         )
                         InformationRow("Save location", game.saveDirectory)
+                        InformationRow("Shared folder", "/Dualscreen/Games/${game.storageName}")
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         InformationRow("Container", "Verified preset")
                         InformationRow("Dual-screen mod", installed?.payloadVersion ?: "Installed during setup")
+                        InformationRow(
+                            "Compatibility",
+                            if (installed?.untestedBuild == true) "Untested build" else "Recommended build",
+                            emphasized = installed != null && !installed.untestedBuild,
+                        )
                         InformationRow("Installed data", installed?.let { formatBytes(it.installedBytes) } ?: "—")
                     }
                 }
@@ -193,12 +208,25 @@ internal fun GameDetailsPage(
 
 @Composable
 private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
-    LauncherCard(modifier = Modifier.width(156.dp)) {
+    LauncherCard(modifier = Modifier.width(164.dp)) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(3.dp)
+                .background(
+                    when (state) {
+                        GameInstallState.READY -> LauncherSuccess
+                        GameInstallState.ERROR -> LauncherDanger
+                        GameInstallState.INSTALLING, GameInstallState.IMPORTING_SAVE -> LauncherAccent
+                        GameInstallState.NOT_INSTALLED -> LauncherOutline
+                    },
+                ),
+        )
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(194.dp)
-                .clip(RoundedCornerShape(9.dp))
+                .height(202.dp)
+                .clip(RectangleShape)
                 .background(Color.Black),
         ) {
             Image(
@@ -215,18 +243,10 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xD9000000)))),
             )
             if (game.isBeta) {
-                Text(
-                    "BETA",
+                BetaBadge(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(7.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(LauncherAccent)
-                        .padding(horizontal = 7.dp, vertical = 3.dp),
-                    color = Color(0xFF17120A),
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 8.sp,
+                        .padding(8.dp),
                 )
             }
         }
@@ -267,7 +287,10 @@ private fun ActionPanel(
     onConfigure: () -> Unit,
 ) {
     val ready = installed != null
-    LauncherCard {
+    val launcherAvailable = installed?.let { readyGame ->
+        resolveConfigurationLauncherExecutable(File(readyGame.hostDirectory), game) != null
+    } == true
+    LauncherCard(modifier = Modifier.animateContentSize()) {
         SectionTitle(
             if (ready) "Play & manage" else "Install this game",
             if (ready) "Launch, update, or import a save" else "Choose the ZIP containing your game files",
@@ -282,7 +305,7 @@ private fun ActionPanel(
                 modifier = Modifier.fillMaxWidth(),
             )
             Text(
-                "REQUIRED  ${game.requiredBuild}",
+                "RECOMMENDED  ${game.requiredBuild}",
                 color = LauncherAccent,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
@@ -303,7 +326,7 @@ private fun ActionPanel(
                     primary = true,
                     modifier = Modifier.weight(1f),
                 )
-                if (game.configurationLauncherCandidates.isNotEmpty()) {
+                if (launcherAvailable) {
                     PrimaryAction(
                         label = "Open Game Launcher",
                         icon = Icons.Default.SettingsApplications,
@@ -362,7 +385,7 @@ private fun SetupFeedback(
         else -> progress?.log.orEmpty()
     }
 
-    LauncherCard {
+    LauncherCard(modifier = Modifier.animateContentSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -373,6 +396,8 @@ private fun SetupFeedback(
                 Text(
                     when {
                         error != null -> error
+                        state == GameInstallState.READY && installed?.untestedBuild == true ->
+                            "Installed with an untested game build. The compatibility warning remains in effect."
                         state == GameInstallState.READY -> "Dual-screen mod ${installed?.payloadVersion.orEmpty()} is installed."
                         state == GameInstallState.NOT_INSTALLED -> "ZIP ${game.title} with its executable and data folders included."
                         else -> "Live progress and full setup logs remain visible on the lower screen."
@@ -396,11 +421,9 @@ private fun SetupFeedback(
             }
         }
         if (state == GameInstallState.INSTALLING || state == GameInstallState.IMPORTING_SAVE) {
-            LinearProgressIndicator(
-                progress = { activeFraction },
-                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(4.dp)),
-                color = LauncherAccent,
-                trackColor = Color(0xFF35362E),
+            LauncherProgress(
+                fraction = activeFraction,
+                modifier = Modifier.fillMaxWidth().height(5.dp),
             )
         }
         activeLog.takeLast(2).forEach { line ->

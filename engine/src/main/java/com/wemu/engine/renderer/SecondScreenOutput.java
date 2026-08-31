@@ -45,8 +45,8 @@ import java.util.concurrent.Executors;
 public final class SecondScreenOutput {
 
     private static final String TAG = "SecondScreenOutput";
-    /** Launcher-specific port; full WEMU deliberately retains 7788. */
-    private static final int NATIVE_PANEL_INPUT_PORT = 17788;
+    /** WEMU-compatible input channel opened by the native guest panels. */
+    private static final int NATIVE_PANEL_INPUT_PORT = 7788;
     private static final ExecutorService NATIVE_PANEL_INPUT =
             Executors.newSingleThreadExecutor(runnable -> {
                 Thread thread = new Thread(runnable, "NativePanelControllerInput");

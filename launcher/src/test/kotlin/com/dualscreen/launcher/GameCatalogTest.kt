@@ -62,12 +62,40 @@ class GameCatalogTest {
     }
 
     @Test
-    fun onlySkyrimAndDeusExAreNotMarkedBeta() {
+    fun releaseReadyGamesAreNotMarkedBeta() {
         val releaseGames = GameCatalog.games.filterNot { it.isBeta }.map { it.id }
-        assertThat(releaseGames).containsExactly("skyrim-se", "deus-ex-hrdc")
+        assertThat(releaseGames).containsExactly(
+            "skyrim-se",
+            "fallout3",
+            "deus-ex-hrdc",
+            "stardew-valley",
+        )
         assertThat(GameCatalog.byId("fallout3")).isNotNull()
         assertThat(GameCatalog.byId("fallout4")).isNotNull()
         assertThat(GameCatalog.byId("grim-dawn")).isNotNull()
+    }
+
+    @Test
+    fun publicStorageNamesAreStableAndWindowsSafe() {
+        assertThat(GameCatalog.byId("skyrim-se")?.storageName).isEqualTo("Skyrim Special Edition")
+        assertThat(GameCatalog.byId("fallout3")?.storageName).isEqualTo("Fallout 3")
+        GameCatalog.games.forEach { game ->
+            assertThat(game.storageName).doesNotContain(":")
+            assertThat(game.storageName).doesNotContain("/")
+            assertThat(game.storageName).doesNotContain("\\")
+        }
+        assertThat(safeStorageSegment("..", "Preset")).isEqualTo("Preset")
+        assertThat(safeStorageSegment("  .My: Preset.  ", "Preset")).isEqualTo("My Preset")
+    }
+
+    @Test
+    fun publicSavesReplaceOnlyAnEmptyPrivatePlaceholder() {
+        assertThat(saveExposurePlan(publicHasFiles = true, privateHasFiles = false))
+            .isEqualTo(SaveExposurePlan.PREFER_PUBLIC)
+        assertThat(saveExposurePlan(publicHasFiles = true, privateHasFiles = true))
+            .isEqualTo(SaveExposurePlan.PRESERVE_PRIVATE)
+        assertThat(saveExposurePlan(publicHasFiles = false, privateHasFiles = true))
+            .isEqualTo(SaveExposurePlan.MIGRATE_PRIVATE)
     }
 
     @Test

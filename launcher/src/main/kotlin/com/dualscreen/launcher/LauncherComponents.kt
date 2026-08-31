@@ -1,7 +1,10 @@
 package com.dualscreen.launcher
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,18 +19,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Gamepad
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.SportsEsports
@@ -36,6 +38,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -61,8 +64,11 @@ import androidx.compose.ui.unit.sp
 internal val LauncherAccent = Color(0xFFF4AA43)
 internal val LauncherSuccess = Color(0xFF83C99A)
 internal val LauncherDanger = Color(0xFFE97A69)
-internal val LauncherPanel = Color(0xFF171812)
-internal val LauncherPanelRaised = Color(0xFF202119)
+internal val LauncherPanel = Color(0xFF151711)
+internal val LauncherPanelRaised = Color(0xFF1D2018)
+internal val LauncherBackground = Color(0xFF090B09)
+internal val LauncherOutline = Color(0xFF34372D)
+internal val LauncherTextMuted = Color(0xFFA09D92)
 
 @Composable
 internal fun LauncherHeader(
@@ -74,17 +80,22 @@ internal fun LauncherHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(56.dp)
-            .background(Color(0xEA11120F))
-            .border(0.5.dp, Color(0xFF32332A))
+            .height(58.dp)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(Color(0xFF15170F), Color(0xFF0E100D)),
+                ),
+            )
+            .border(1.dp, LauncherOutline)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .size(30.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFFFFC15C), Color(0xFFD88428)))),
+                .clip(RectangleShape)
+                .background(Brush.linearGradient(listOf(Color(0xFFFFC15C), Color(0xFFD88428))))
+                .border(1.dp, Color(0xFFFFD58D), RectangleShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -114,14 +125,14 @@ internal fun LauncherHeader(
             selected = selected == LauncherNavItem.GAMES,
             onClick = onGames,
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(4.dp))
         HeaderDestination(
             label = "Guide",
-            icon = Icons.Default.MenuBook,
+            icon = Icons.AutoMirrored.Filled.MenuBook,
             selected = selected == LauncherNavItem.GUIDE,
             onClick = onGuide,
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(4.dp))
         HeaderDestination(
             label = "Settings",
             icon = Icons.Default.Settings,
@@ -146,18 +157,34 @@ private fun HeaderDestination(
         if (selected) LauncherAccent else MaterialTheme.colorScheme.onSurfaceVariant,
         label = "navigation-foreground",
     )
-    Row(
+    val indicatorWidth by animateDpAsState(
+        targetValue = if (selected) 22.dp else 0.dp,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "navigation-indicator",
+    )
+    Box(
         modifier = Modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .height(38.dp)
+            .clip(RectangleShape)
             .background(background)
             .clickable(onClick = onClick)
             .padding(horizontal = 11.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(7.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
-        Text(label, color = foreground, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
+            Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+            Text(label, color = foreground, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+        }
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .width(indicatorWidth)
+                .height(2.dp)
+                .background(LauncherAccent),
+        )
     }
 }
 
@@ -195,8 +222,8 @@ internal fun LauncherCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Card(
-        modifier = modifier.border(1.dp, Color(0xFF35362D), RoundedCornerShape(13.dp)),
-        shape = RoundedCornerShape(13.dp),
+        modifier = modifier.border(1.dp, LauncherOutline, RectangleShape),
+        shape = RectangleShape,
         colors = CardDefaults.cardColors(containerColor = LauncherPanel),
     ) {
         Column(
@@ -234,14 +261,15 @@ internal fun StatusPill(state: GameInstallState) {
     }
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(50))
+            .clip(RectangleShape)
             .background(tint.copy(alpha = 0.13f))
-            .border(1.dp, tint.copy(alpha = 0.48f), RoundedCornerShape(50))
+            .border(1.dp, tint.copy(alpha = 0.48f), RectangleShape)
+            .widthIn(min = 74.dp)
             .padding(horizontal = 9.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(tint))
+        Box(Modifier.size(6.dp).background(tint))
         Text(
             label,
             color = tint,
@@ -255,20 +283,51 @@ internal fun StatusPill(state: GameInstallState) {
 }
 
 @Composable
+internal fun BetaBadge(modifier: Modifier = Modifier) {
+    Text(
+        "BETA",
+        modifier = modifier
+            .clip(RectangleShape)
+            .background(LauncherAccent)
+            .border(1.dp, Color(0xFFFFD48A), RectangleShape)
+            .widthIn(min = 58.dp)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        color = Color(0xFF17120A),
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Bold,
+        fontSize = 8.sp,
+        letterSpacing = 1.sp,
+        textAlign = TextAlign.Center,
+        maxLines = 1,
+    )
+}
+
+@Composable
 internal fun PrimaryAction(
     label: String,
     icon: ImageVector,
     onClick: () -> Unit,
     enabled: Boolean,
-    primary: Boolean = false,
     modifier: Modifier = Modifier,
+    primary: Boolean = false,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.985f else 1f,
+        animationSpec = tween(90),
+        label = "action-press",
+    )
+    val buttonModifier = modifier
+        .height(44.dp)
+        .graphicsLayer { scaleX = scale; scaleY = scale }
     if (primary) {
         Button(
             onClick = onClick,
             enabled = enabled,
-            modifier = modifier.height(44.dp),
-            shape = RoundedCornerShape(10.dp),
+            modifier = buttonModifier,
+            interactionSource = interaction,
+            shape = RectangleShape,
             colors = ButtonDefaults.buttonColors(
                 containerColor = LauncherAccent,
                 contentColor = Color(0xFF17120A),
@@ -291,8 +350,9 @@ internal fun PrimaryAction(
         OutlinedButton(
             onClick = onClick,
             enabled = enabled,
-            modifier = modifier.height(44.dp),
-            shape = RoundedCornerShape(10.dp),
+            modifier = buttonModifier,
+            interactionSource = interaction,
+            shape = RectangleShape,
             colors = ButtonDefaults.outlinedButtonColors(
                 containerColor = Color(0xFF1C1D17),
                 contentColor = MaterialTheme.colorScheme.onSurface,
@@ -315,11 +375,30 @@ internal fun PrimaryAction(
 }
 
 @Composable
+internal fun LauncherProgress(
+    fraction: Float,
+    modifier: Modifier = Modifier,
+    color: Color = LauncherAccent,
+) {
+    val animatedFraction by animateFloatAsState(
+        targetValue = fraction.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 320, easing = FastOutSlowInEasing),
+        label = "launcher-progress",
+    )
+    LinearProgressIndicator(
+        progress = { animatedFraction },
+        modifier = modifier.clip(RectangleShape),
+        color = color,
+        trackColor = Color(0xFF303329),
+    )
+}
+
+@Composable
 internal fun InformationRow(
     label: String,
     value: String,
-    emphasized: Boolean = false,
     modifier: Modifier = Modifier,
+    emphasized: Boolean = false,
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
@@ -410,9 +489,9 @@ private fun ScreenPreview(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(aspectRatio)
-                .clip(RoundedCornerShape(9.dp))
+                .clip(RectangleShape)
                 .background(Color.Black)
-                .border(2.dp, Color(0xFF46473D), RoundedCornerShape(9.dp)),
+                .border(2.dp, Color(0xFF46473D), RectangleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (top) {
@@ -494,7 +573,7 @@ internal fun PressScaleContainer(
     Box(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(13.dp))
+            .clip(RectangleShape)
             .clickable(interactionSource = source, indication = null, onClick = onClick)
             .focusable(),
     ) {

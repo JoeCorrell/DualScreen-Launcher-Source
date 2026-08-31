@@ -7,6 +7,23 @@ import org.junit.Test
 
 class ArchiveImportSafetyTest {
     @Test
+    fun skippedNativePatchIsRetriedWhenACompatibleInputAppears() {
+        val inputs = setOf("supported-input")
+        val outputs = setOf("patched-output")
+
+        assertThat(nativePatchTargetIsCurrent(null, inputs, outputs, previouslySkipped = true))
+            .isFalse()
+        assertThat(nativePatchTargetIsCurrent("unknown-build", inputs, outputs, previouslySkipped = true))
+            .isTrue()
+        assertThat(nativePatchTargetIsCurrent("supported-input", inputs, outputs, previouslySkipped = true))
+            .isFalse()
+        assertThat(nativePatchTargetIsCurrent("patched-output", inputs, outputs, previouslySkipped = true))
+            .isTrue()
+        assertThat(nativePatchTargetIsCurrent("unknown-build", inputs, outputs, previouslySkipped = false))
+            .isFalse()
+    }
+
+    @Test
     fun systemGpuDriverDoesNotRequireAProvisionedAdrenotoolsArchive() {
         assertThat(requiresAdrenotoolsProvisioning("System")).isFalse()
         assertThat(requiresAdrenotoolsProvisioning("system")).isFalse()
@@ -19,6 +36,10 @@ class ArchiveImportSafetyTest {
             .isEqualTo("wrapper/one/two/Fallout3.exe")
         assertThat(normalizeGameArchiveEntry("wrapper\\Data\\Fallout3.esm"))
             .isEqualTo("wrapper/Data/Fallout3.esm")
+        assertThat(normalizeGameArchiveEntry("./Fallout 3/./Data/Fallout3.esm"))
+            .isEqualTo("Fallout 3/Data/Fallout3.esm")
+        assertThat(normalizeGameArchiveEntry("./")).isEmpty()
+        assertThat(normalizeGameArchiveEntry(".")).isEmpty()
     }
 
     @Test
@@ -52,17 +73,43 @@ class ArchiveImportSafetyTest {
     }
 
     @Test
-    fun fallout3OldBuildMessageExplainsTheRealCompatibilityFailure() {
+    fun untestedBuildMessageWarnsWithoutCallingTheArchiveInvalid() {
         val game = checkNotNull(GameCatalog.byId("fallout3"))
-        val message = unsupportedBuildSizeMessage(
-            game = game,
-            path = "Fallout3.exe",
-            expected = 16_855_040L,
-            observed = 15_044_024L,
+        val message = untestedVersionMessage(
+            game,
+            listOf("Fallout3.exe differs from the recommended build"),
         )
-        assertThat(message).contains("1.7.0.3 was detected")
-        assertThat(message).contains("requires Fallout 3 1.7.0.4")
-        assertThat(message).contains("create a new ZIP")
+        assertThat(message).contains("has not been tested")
+        assertThat(message).contains("For the best compatibility")
+        assertThat(message).contains("Fallout 3 1.7.0.4")
+    }
+
+    @Test
+    fun gameRootDetectionAcceptsDirectSingleWrapperAndNestedLayouts() {
+        val required = listOf("Fallout3.exe", "Data/Fallout3.esm")
+        assertThat(detectArchiveGameRoot(required, required)).isEqualTo("")
+        assertThat(
+            detectArchiveGameRoot(
+                listOf("Fallout 3/Fallout3.exe", "Fallout 3/Data/Fallout3.esm"),
+                required,
+            ),
+        ).isEqualTo("Fallout 3")
+        assertThat(
+            detectArchiveGameRoot(
+                listOf("Backup/Games/Fallout 3/Fallout3.exe", "Backup/Games/Fallout 3/Data/Fallout3.esm"),
+                required,
+            ),
+        ).isEqualTo("Backup/Games/Fallout 3")
+    }
+
+    @Test
+    fun gameRootDetectionDoesNotCombineFilesFromDifferentFolders() {
+        assertThat(
+            detectArchiveGameRoot(
+                listOf("one/Fallout3.exe", "two/Data/Fallout3.esm"),
+                listOf("Fallout3.exe", "Data/Fallout3.esm"),
+            ),
+        ).isNull()
     }
 
     @Test
@@ -71,6 +118,9 @@ class ArchiveImportSafetyTest {
         try {
             assertThat(safeZipTarget(root, "Saves/Save 1.fos"))
                 .isEqualTo(File(root, "Saves/Save 1.fos").canonicalFile)
+            assertThat(safeZipTarget(root, "./Saves/Save 2.fos"))
+                .isEqualTo(File(root, "Saves/Save 2.fos").canonicalFile)
+            assertThat(safeZipTarget(root, "./")).isEqualTo(root.canonicalFile)
             listOf("/outside.fos", "../outside.fos", "C:/outside.fos").forEach { path ->
                 val failure = runCatching { safeZipTarget(root, path) }.exceptionOrNull()
                 assertThat(failure).isInstanceOf(IllegalArgumentException::class.java)

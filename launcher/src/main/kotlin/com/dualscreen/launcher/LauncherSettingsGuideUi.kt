@@ -1,5 +1,10 @@
 package com.dualscreen.launcher
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -11,14 +16,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
@@ -36,12 +43,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -101,7 +110,7 @@ internal fun SettingsPage(
                 fontSize = 8.sp,
             )
         }
-        Spacer(Modifier.height(7.dp))
+        Spacer(Modifier.height(9.dp))
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -157,8 +166,8 @@ internal fun SettingsPage(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(LauncherAccent.copy(alpha = 0.08f), RoundedCornerShape(8.dp))
-                            .border(1.dp, LauncherAccent.copy(alpha = 0.26f), RoundedCornerShape(8.dp))
+                            .background(LauncherAccent.copy(alpha = 0.08f), RectangleShape)
+                            .border(1.dp, LauncherAccent.copy(alpha = 0.26f), RectangleShape)
                             .padding(horizontal = 10.dp, vertical = 7.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
@@ -197,7 +206,7 @@ internal fun SettingsPage(
                         onClick = onImportGpuDriver,
                         enabled = gpuDriverImportState !is GpuDriverImportState.Importing,
                         modifier = Modifier.fillMaxWidth().height(39.dp),
-                        shape = RoundedCornerShape(9.dp),
+                        shape = RectangleShape,
                     ) {
                         Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(7.dp))
@@ -219,13 +228,15 @@ internal fun SettingsPage(
                     SettingsSectionHeading(
                         icon = Icons.Default.Archive,
                         title = "Library & payloads",
-                        detail = "Private, managed launcher storage",
+                        detail = "Game data you can reach from any file manager",
                     )
                     InformationRow("Ready to play", "${installed.size} of ${GameCatalog.games.size}", emphasized = installed.isNotEmpty())
                     InformationRow("Managed game data", formatBytes(installed.values.sumOf { it.installedBytes }))
-                    InformationRow("Runtime delivery", "Verified on first boot")
+                    InformationRow("Shared root", "/Dualscreen")
+                    InformationRow("Game folders", "Game / Mods / Saves / Config / Logs")
+                    InformationRow("Runtime delivery", "Protected and verified")
                     InformationRow("Game mods", "SHA-256 verified")
-                    InformationRow("Save imports", "Documents / My Games")
+                    InformationRow("Save imports", "Live public Saves folders")
                 }
             }
 
@@ -250,15 +261,19 @@ internal fun SettingsPage(
 @Composable
 private fun SettingsSectionHeading(icon: ImageVector, title: String, detail: String) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF191B15))
+            .border(1.dp, LauncherOutline, RectangleShape)
+            .padding(7.dp),
         horizontalArrangement = Arrangement.spacedBy(9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
                 .size(31.dp)
-                .background(LauncherAccent.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
-                .border(1.dp, LauncherAccent.copy(alpha = 0.35f), RoundedCornerShape(8.dp)),
+                .background(LauncherAccent.copy(alpha = 0.12f), RectangleShape)
+                .border(1.dp, LauncherAccent.copy(alpha = 0.35f), RectangleShape),
             contentAlignment = Alignment.Center,
         ) {
             Icon(icon, contentDescription = null, tint = LauncherAccent, modifier = Modifier.size(17.dp))
@@ -277,6 +292,26 @@ private fun CompactSwitch(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
+    val track by animateColorAsState(
+        if (checked) LauncherAccent.copy(alpha = 0.24f) else Color(0xFF24251E),
+        animationSpec = tween(160),
+        label = "switch-track",
+    )
+    val outline by animateColorAsState(
+        if (checked) LauncherAccent else Color(0xFF555449),
+        animationSpec = tween(160),
+        label = "switch-outline",
+    )
+    val thumb by animateColorAsState(
+        if (checked) LauncherAccent else Color(0xFF77756C),
+        animationSpec = tween(160),
+        label = "switch-thumb",
+    )
+    val thumbOffset by animateDpAsState(
+        if (checked) 20.dp else 0.dp,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "switch-offset",
+    )
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -286,7 +321,26 @@ private fun CompactSwitch(
             Text(title, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, modifier = Modifier.size(width = 47.dp, height = 28.dp))
+        Box(
+            modifier = Modifier
+                .size(width = 44.dp, height = 24.dp)
+                .background(track)
+                .border(1.dp, outline)
+                .toggleable(
+                    value = checked,
+                    role = Role.Switch,
+                    onValueChange = onCheckedChange,
+                )
+                .padding(3.dp),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .size(16.dp)
+                    .offset { IntOffset(thumbOffset.roundToPx(), 0) }
+                    .background(thumb),
+            )
+        }
     }
 }
 
@@ -297,25 +351,36 @@ private fun CompactChoice(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (selected) {
-        Button(
-            onClick = onClick,
-            modifier = modifier.height(38.dp),
-            shape = RoundedCornerShape(9.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = LauncherAccent, contentColor = Color(0xFF17120A)),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-        ) {
-            Text(label, fontSize = 9.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    } else {
-        OutlinedButton(
-            onClick = onClick,
-            modifier = modifier.height(38.dp),
-            shape = RoundedCornerShape(9.dp),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
-        ) {
-            Text(label, fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+    val background by animateColorAsState(
+        if (selected) LauncherAccent else Color(0xFF191B15),
+        animationSpec = tween(150),
+        label = "choice-background",
+    )
+    val foreground by animateColorAsState(
+        if (selected) Color(0xFF17120A) else MaterialTheme.colorScheme.onSurface,
+        animationSpec = tween(150),
+        label = "choice-foreground",
+    )
+    val border by animateColorAsState(
+        if (selected) LauncherAccent else LauncherOutline,
+        animationSpec = tween(150),
+        label = "choice-border",
+    )
+    Button(
+        onClick = onClick,
+        modifier = modifier.height(38.dp),
+        shape = RectangleShape,
+        colors = ButtonDefaults.buttonColors(containerColor = background, contentColor = foreground),
+        border = BorderStroke(1.dp, border),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp),
+    ) {
+        Text(
+            label,
+            fontSize = 9.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -363,7 +428,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
             top = 8.dp,
             bottom = 16.dp,
         ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(11.dp),
     ) {
         item {
             Row(
@@ -379,7 +444,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
                 Button(
                     onClick = onBrowseGames,
                     modifier = Modifier.height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RectangleShape,
                 ) {
                     Icon(Icons.Default.Gamepad, contentDescription = null, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(7.dp))
@@ -398,7 +463,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
                     number = "01",
                     icon = Icons.Default.Archive,
                     title = "Prepare your ZIP",
-                    body = "ZIP the game folder you legally own. The game executable and data folder may be at the ZIP root or inside one wrapper folder.",
+                    body = "ZIP the game folder you legally own. Files may be at the ZIP root or inside a top-level game folder; the launcher finds the real root automatically.",
                     modifier = Modifier.weight(1f),
                 )
                 GuideStep(
@@ -412,7 +477,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
                     number = "03",
                     icon = Icons.Default.RocketLaunch,
                     title = "Let setup finish",
-                    body = "The launcher validates, extracts, configures the tested container, installs the dual-screen mod, and verifies the result automatically.",
+                    body = "The launcher validates critical files, warns instead of blocking an untested version, extracts, configures, installs the mod, and verifies the result.",
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -442,7 +507,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
                     number = "06",
                     icon = Icons.Default.Save,
                     title = "Import saves",
-                    body = "Create a ZIP beginning with the game's folder inside Documents/My Games, then choose Import Save ZIP. Existing data is backed up when needed.",
+                    body = "Choose Import Save ZIP from Game Details. Common wrapper layouts are detected, existing data is backed up, and live saves remain under /Dualscreen.",
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -454,7 +519,7 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
                     Icon(Icons.Default.Troubleshoot, contentDescription = null, tint = LauncherAccent, modifier = Modifier.size(22.dp))
                     SectionTitle("Troubleshooting", "The lower-screen console always shows the current setup or launch stage")
                 }
-                InformationRow("Archive rejected", "Confirm the title and required executable")
+                InformationRow("Archive rejected", "Confirm critical files exist; version differences only warn")
                 InformationRow("Game returns immediately", "Open the console and read the final launch error")
                 InformationRow("Wrong resolution", "Choose a tested resolution in Settings")
                 InformationRow("Graphics problem", "Select another installed GPU driver")
@@ -472,7 +537,8 @@ private fun GuideStep(
     body: String,
     modifier: Modifier = Modifier,
 ) {
-    LauncherCard(modifier.height(136.dp), compact = true) {
+    LauncherCard(modifier.height(140.dp), compact = true) {
+        Box(Modifier.fillMaxWidth().height(2.dp).background(LauncherAccent.copy(alpha = 0.65f)))
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -481,8 +547,8 @@ private fun GuideStep(
             Box(
                 modifier = Modifier
                     .size(31.dp)
-                    .background(LauncherAccent.copy(alpha = 0.13f), RoundedCornerShape(8.dp))
-                    .border(1.dp, LauncherAccent.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
+                    .background(LauncherAccent.copy(alpha = 0.13f), RectangleShape)
+                    .border(1.dp, LauncherAccent.copy(alpha = 0.4f), RectangleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(icon, contentDescription = null, tint = LauncherAccent, modifier = Modifier.size(17.dp))

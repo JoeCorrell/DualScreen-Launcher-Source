@@ -3,6 +3,8 @@ package com.dualscreen.launcher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,10 +13,19 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,6 +33,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private sealed interface LauncherPage {
@@ -38,7 +53,6 @@ internal fun LauncherScreen(
     model: LauncherViewModel,
     onPlay: (SupportedGame, InstalledGame) -> Unit,
     onConfigure: (SupportedGame, InstalledGame) -> Unit,
-    onOpenUpdate: (String) -> Unit,
 ) {
     val installed by model.installed.collectAsStateWithLifecycle()
     val progress by model.progress.collectAsStateWithLifecycle()
@@ -49,6 +63,9 @@ internal fun LauncherScreen(
     val gpuDriverMessage by model.gpuDriverMessage.collectAsStateWithLifecycle()
     val payloadState by model.payloadState.collectAsStateWithLifecycle()
     val updateState by model.updateState.collectAsStateWithLifecycle()
+    val archiveReview by model.archiveReview.collectAsStateWithLifecycle()
+    val operationBusy = progress.values.any(InstallProgress::running) ||
+        saveProgress.values.any(SaveImportProgress::running)
     var pendingGame by remember { mutableStateOf<SupportedGame?>(null) }
     var pendingSaveGame by remember { mutableStateOf<Pair<SupportedGame, InstalledGame>?>(null) }
     var page by remember { mutableStateOf<LauncherPage>(LauncherPage.Games) }
@@ -94,8 +111,8 @@ internal fun LauncherScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0xFF171811), Color(0xFF0C0D0B)),
+                    Brush.linearGradient(
+                        listOf(Color(0xFF181A12), LauncherBackground, Color(0xFF10120E)),
                     ),
                 ),
         ) {
@@ -112,13 +129,25 @@ internal fun LauncherScreen(
                 onGuide = { page = LauncherPage.Guide },
                 onSettings = { page = LauncherPage.Settings },
             )
-            LauncherUpdateBanner(updateState, onOpenUpdate)
+            LauncherUpdateBanner(
+                state = updateState,
+                onInstall = model::installLauncherUpdate,
+                onRetry = model::retryLauncherUpdate,
+                onRequestPermission = model::requestLauncherUpdatePermission,
+            )
             AnimatedContent(
                 targetState = page,
                 modifier = Modifier.weight(1f),
                 transitionSpec = {
-                    (slideInHorizontally { it / 8 } + fadeIn()) togetherWith
-                        (slideOutHorizontally { -it / 8 } + fadeOut()) using
+                    val forward = launcherPageRank(targetState) >= launcherPageRank(initialState)
+                    val enterDirection = if (forward) 1 else -1
+                    val exitDirection = -enterDirection
+                    (slideInHorizontally(
+                        animationSpec = tween(220, easing = FastOutSlowInEasing),
+                    ) { enterDirection * it / 7 } + fadeIn(tween(160))) togetherWith
+                        (slideOutHorizontally(
+                            animationSpec = tween(180, easing = FastOutSlowInEasing),
+                        ) { exitDirection * it / 7 } + fadeOut(tween(120))) using
                         SizeTransform(clip = false)
                 },
                 label = "launcher-page",
@@ -134,13 +163,14 @@ internal fun LauncherScreen(
                     is LauncherPage.GameDetails -> {
                         val game = GameCatalog.byId(destination.gameId)
                         if (game == null) {
-                            page = LauncherPage.Games
+                            LaunchedEffect(destination.gameId) { page = LauncherPage.Games }
                         } else {
                             GameDetailsPage(
                                 game = game,
                                 installed = installed[game.id],
                                 progress = progress[game.id],
                                 saveProgress = saveProgress[game.id],
+                                operationBusy = operationBusy,
                                 onBack = { page = LauncherPage.Games },
                                 onInstall = { chooseGameArchive(game) },
                                 onImportSave = {
@@ -176,5 +206,115 @@ internal fun LauncherScreen(
                 }
             }
         }
+        ArchiveReviewDialog(
+            state = archiveReview,
+            onContinue = model::continueUntestedInstall,
+            onDismiss = model::dismissArchiveReview,
+        )
     }
+}
+
+private fun launcherPageRank(page: LauncherPage): Int = when (page) {
+    LauncherPage.Games -> 0
+    is LauncherPage.GameDetails -> 1
+    LauncherPage.Guide -> 2
+    LauncherPage.Settings -> 3
+}
+
+@Composable
+private fun ArchiveReviewDialog(
+    state: ArchiveReviewState,
+    onContinue: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (state == ArchiveReviewState.Idle) return
+    val game = GameCatalog.byId(
+        when (state) {
+            ArchiveReviewState.Idle -> null
+            is ArchiveReviewState.Inspecting -> state.gameId
+            is ArchiveReviewState.VersionWarning -> state.gameId
+            is ArchiveReviewState.Rejected -> state.gameId
+        },
+    )
+    AlertDialog(
+        onDismissRequest = {
+            if (state !is ArchiveReviewState.Inspecting) onDismiss()
+        },
+        shape = RectangleShape,
+        containerColor = LauncherPanelRaised,
+        tonalElevation = 0.dp,
+        title = {
+            Text(
+                when (state) {
+                    ArchiveReviewState.Idle -> ""
+                    is ArchiveReviewState.Inspecting -> "Inspecting game archive"
+                    is ArchiveReviewState.VersionWarning -> "Untested game version"
+                    is ArchiveReviewState.Rejected -> "Archive cannot be installed"
+                },
+                fontWeight = FontWeight.Bold,
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(9.dp),
+            ) {
+                when (state) {
+                    ArchiveReviewState.Idle -> Unit
+                    is ArchiveReviewState.Inspecting -> {
+                        Text(
+                            "Checking the ZIP structure, critical files, and game version before setup begins.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    is ArchiveReviewState.VersionWarning -> {
+                        Text(
+                            "This game version has not been tested and may not work correctly with the " +
+                                "dual-screen mod. For the best compatibility, use the recommended version.",
+                            color = LauncherAccent,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Recommended: ${game?.requiredBuild.orEmpty()}",
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                        )
+                        state.inspection.versionWarnings.forEach { warning ->
+                            Text("- $warning", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(
+                            "You can continue anyway. Native or address-sensitive parts of the mod may be " +
+                                "skipped when no compatible patch exists.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    is ArchiveReviewState.Rejected -> {
+                        Text(state.message, color = MaterialTheme.colorScheme.error)
+                        Text(
+                            "Only corrupt archives, unsafe paths, or missing critical game files are blocked.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            when (state) {
+                is ArchiveReviewState.VersionWarning -> Button(
+                    onClick = onContinue,
+                    shape = RectangleShape,
+                ) { Text("Continue anyway") }
+                is ArchiveReviewState.Rejected -> Button(
+                    onClick = onDismiss,
+                    shape = RectangleShape,
+                ) { Text("Choose another ZIP") }
+                else -> Unit
+            }
+        },
+        dismissButton = {
+            if (state is ArchiveReviewState.VersionWarning) {
+                OutlinedButton(onClick = onDismiss, shape = RectangleShape) { Text("Cancel") }
+            }
+        },
+    )
 }

@@ -48,11 +48,11 @@ object SecondScreen {
     private const val TAG = "SecondScreenInput"
 
     const val PORT = 7786
-    // Launcher owns a distinct loopback port from full WEMU (7788). Android
-    // applications share the device network namespace, so using WEMU's port
-    // made the second process fail WSA bind with 10048 and silently disabled
-    // every lower-panel touch/keyboard packet.
-    private const val GUEST_INPUT_PORT = 17788
+    // Native Skyrim and the other WEMU-compatible guest panels bind this
+    // established input channel. The sender uses an ephemeral local port, so
+    // it must target the listener's real port instead of a launcher-only port
+    // which no guest ever opens.
+    private const val GUEST_INPUT_PORT = 7788
 
     private val scope = backgroundScope("SecondScreen", Dispatchers.Default)
 

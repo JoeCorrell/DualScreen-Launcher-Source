@@ -3,6 +3,7 @@ package com.dualscreen.launcher.session
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.view.InputDevice
@@ -22,6 +23,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import com.dualscreen.launcher.CompanionTheme
 import com.dualscreen.launcher.DualScreenLauncherApplication
+import com.dualscreen.launcher.DualscreenStorage
 import com.dualscreen.launcher.GameCatalog
 import com.dualscreen.launcher.Fallout3LaunchConfiguration
 import com.dualscreen.launcher.GameResolution
@@ -189,6 +191,15 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             finishWithMessage("The tested container or launch entry is missing")
             return
         }
+        runCatching {
+            withContext(Dispatchers.IO) {
+                DualscreenStorage().prepareSaveDirectory(container, game)
+            }
+        }.onSuccess { saves ->
+            launchStatus.record("STORAGE", "Live saves: ${saves.absolutePath}")
+        }.onFailure { failure ->
+            launchStatus.record("STORAGE", "Public save exposure skipped safely: ${failure.message}")
+        }
         val shortcut = if (configurationLauncher) {
             createConfigurationShortcut(container, game, directShortcut)
                 ?: run {
@@ -341,6 +352,10 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     "changed=${gamepad.changed} bridgeInputType=${container.inputType} " +
                     "fullscreen=borderless resolution=${selectedResolution.containerValue}",
             )
+        }
+
+        withContext(Dispatchers.IO) {
+            DualscreenStorage().exposeConfigurationFiles(container, game)
         }
 
         // Migrate shortcuts created by earlier launcher builds as well as new
@@ -643,7 +658,10 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             ?: return@withContext null
         val relative = resolveConfigurationLauncherExecutable(gameRoot, game)
             ?: return@withContext null
-        val guestPath = "C:\\Games\\${game.id}\\${relative.replace('/', '\\')}"
+        val guestRoot = directShortcut.path.trim().trim('"')
+            .substringBeforeLast('\\', missingDelimiterValue = "")
+        if (guestRoot.isBlank()) return@withContext null
+        val guestPath = "$guestRoot\\${relative.replace('/', '\\')}"
         val shortcutFile = File(
             directShortcut.file.parentFile,
             "${game.id}-configuration-launcher.desktop",
@@ -729,10 +747,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         val match = Regex("^([A-Za-z]):[\\\\/](.*)$").matchEntire(clean) ?: return@runCatching null
         val drive = match.groupValues[1].lowercase(Locale.ROOT)
         val relative = match.groupValues[2].replace('\\', File.separatorChar).replace('/', File.separatorChar)
-        val root = if (drive == "c") {
-            File(container.rootDir, ".wine/drive_c")
-        } else {
-            File(container.rootDir, ".wine/dosdevices/$drive:").canonicalFile
+        val root = when (drive) {
+            "c" -> File(container.rootDir, ".wine/drive_c")
+            "f" -> Environment.getExternalStorageDirectory()
+            "d" -> Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            else -> File(container.rootDir, ".wine/dosdevices/$drive:").canonicalFile
         }
         File(root, relative).canonicalFile
     }.getOrNull()

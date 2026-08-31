@@ -17,19 +17,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -53,7 +53,7 @@ internal fun GamesPage(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(start = 16.dp, end = 16.dp, top = 7.dp, bottom = 8.dp),
+            .padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 10.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -70,8 +70,8 @@ internal fun GamesPage(
                     letterSpacing = 1.6.sp,
                 )
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Games", fontSize = 24.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(11.dp))
+                    Text("Games", fontSize = 25.sp, lineHeight = 27.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(12.dp))
                     Text(
                         "Select a title to install, configure, or play.",
                         modifier = Modifier.weight(1f),
@@ -82,17 +82,28 @@ internal fun GamesPage(
                     )
                 }
             }
-            Text(
-                "${installed.size} READY  •  ${GameCatalog.games.size} SUPPORTED",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 9.sp,
-            )
+            Row(
+                modifier = Modifier
+                    .background(LauncherPanelRaised)
+                    .border(1.dp, LauncherOutline, RectangleShape)
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.size(6.dp).background(if (installed.isEmpty()) LauncherTextMuted else LauncherSuccess))
+                Text(
+                    "${installed.size} READY  •  ${GameCatalog.games.size} SUPPORTED",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 8.sp,
+                )
+            }
         }
-        Spacer(Modifier.height(7.dp))
+        Spacer(Modifier.height(9.dp))
         LazyRow(
             modifier = Modifier.fillMaxWidth().weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(11.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.Top,
         ) {
             items(GameCatalog.games, key = { it.id }) { game ->
@@ -101,7 +112,7 @@ internal fun GamesPage(
                     installed = installed[game.id],
                     progress = progress[game.id],
                     saveProgress = saveProgress[game.id],
-                    modifier = Modifier.width(158.dp).fillParentMaxHeight(),
+                    modifier = Modifier.width(164.dp).fillParentMaxHeight(),
                     onClick = { onSelectGame(game) },
                 )
             }
@@ -126,6 +137,15 @@ private fun BrowseGameCard(
         else -> 0f
     }
     val desaturated = ColorMatrix().apply { setToSaturation(if (inactive) 0.08f else 0.84f) }
+    val borderColor by animateColorAsState(
+        targetValue = when (state) {
+            GameInstallState.READY -> LauncherSuccess.copy(alpha = 0.58f)
+            GameInstallState.INSTALLING, GameInstallState.IMPORTING_SAVE -> LauncherAccent.copy(alpha = 0.72f)
+            GameInstallState.ERROR -> LauncherDanger.copy(alpha = 0.72f)
+            GameInstallState.NOT_INSTALLED -> LauncherOutline
+        },
+        label = "game-card-border",
+    )
 
     BoxWithConstraints(modifier = modifier) {
         val coverHeight = browseCoverHeight(maxHeight)
@@ -134,21 +154,18 @@ private fun BrowseGameCard(
             modifier = Modifier.fillMaxSize(),
         ) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF171812)),
-            shape = RoundedCornerShape(13.dp),
+            colors = CardDefaults.cardColors(containerColor = LauncherPanel),
+            shape = RectangleShape,
             modifier = Modifier
                 .fillMaxSize()
-                .border(
-                    1.dp,
-                    if (state == GameInstallState.READY) Color(0xFF545140) else Color(0xFF37372F),
-                    RoundedCornerShape(13.dp),
-                ),
+                .border(1.dp, borderColor, RectangleShape),
         ) {
             Column(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxWidth().height(3.dp).background(borderColor))
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(coverHeight)
+                        .height((coverHeight - 3.dp).coerceAtLeast(85.dp))
                         .background(Color.Black),
                 ) {
                     Image(
@@ -177,18 +194,10 @@ private fun BrowseGameCard(
                             ),
                     )
                     if (game.isBeta) {
-                        Text(
-                            "BETA",
+                        BetaBadge(
                             modifier = Modifier
                                 .align(Alignment.TopEnd)
-                                .padding(7.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFFE6A144))
-                                .padding(horizontal = 7.dp, vertical = 3.dp),
-                            color = Color(0xFF17120A),
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 8.sp,
+                                .padding(8.dp),
                         )
                     }
                 }
@@ -196,7 +205,7 @@ private fun BrowseGameCard(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                        .padding(horizontal = 11.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -212,23 +221,45 @@ private fun BrowseGameCard(
                         StatusPill(state)
                     }
                     if (state == GameInstallState.INSTALLING || state == GameInstallState.IMPORTING_SAVE) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            LinearProgressIndicator(
-                                progress = { fraction },
-                                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(3.dp)),
-                                color = LauncherAccent,
-                                trackColor = Color(0xFF34342C),
+                        Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            LauncherProgress(
+                                fraction = fraction,
+                                modifier = Modifier.fillMaxWidth().height(4.dp),
                             )
-                            Text(
-                                "${installPercent(fraction)}%  •  VIEW DETAILS",
-                                color = LauncherAccent,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 8.sp,
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Text(
+                                    "${installPercent(fraction)}%",
+                                    color = LauncherAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 8.sp,
+                                )
+                                Text(
+                                    "VIEW DETAILS",
+                                    color = LauncherAccent,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 8.sp,
+                                )
+                            }
                         }
                     } else {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(31.dp)
+                                .background(
+                                    if (inactive) Color(0xFF1B1D18) else LauncherAccent.copy(alpha = 0.10f),
+                                )
+                                .border(
+                                    1.dp,
+                                    if (inactive) LauncherOutline else LauncherAccent.copy(alpha = 0.35f),
+                                    RectangleShape,
+                                )
+                                .padding(horizontal = 8.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -261,4 +292,4 @@ private fun BrowseGameCard(
  * and the bottom action/progress row. Only the artwork contracts.
  */
 internal fun browseCoverHeight(cardHeight: Dp): Dp =
-    (cardHeight - 116.dp).coerceAtLeast(120.dp)
+    (cardHeight - 132.dp).coerceAtLeast(88.dp)

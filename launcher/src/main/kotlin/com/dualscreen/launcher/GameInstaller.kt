@@ -44,6 +44,22 @@ import java.util.zip.ZipFile
 import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 
+data class GameArchiveInspection(
+    val gameId: String,
+    val gameRoot: String,
+    val files: Int,
+    val versionWarnings: List<String>,
+    val notes: List<String> = emptyList(),
+) {
+    val requiresVersionConfirmation: Boolean get() = versionWarnings.isNotEmpty()
+}
+
+private data class InspectedArchiveEntry(
+    val path: String,
+    val bytes: Long,
+    val sha256: String? = null,
+)
+
 class GameInstaller(
     private val context: Context,
     private val registry: InstallRegistry,
@@ -54,9 +70,115 @@ class GameInstaller(
     private val mutableProgress = MutableStateFlow<Map<String, InstallProgress>>(emptyMap())
     val progress: StateFlow<Map<String, InstallProgress>> = mutableProgress.asStateFlow()
 
-    suspend fun install(game: SupportedGame, archive: Uri): Result<InstalledGame> =
+    suspend fun inspectArchive(game: SupportedGame, archive: Uri): Result<GameArchiveInspection> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                inspectSeekableArchive(game, archive) ?: inspectStreamingArchive(game, archive)
+            }
+        }
+
+    /** Safely brings pre-1.6 private game folders into /Dualscreen without orphaning them. */
+    suspend fun migrateLegacyInstalls(): Result<Map<String, InstalledGame>> = installLock.withLock {
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val storage = DualscreenStorage()
+                if (!storage.ensureCatalogLayout()) return@withContext registry.all()
+                registry.all().forEach { (gameId, installed) ->
+                    val game = GameCatalog.byId(gameId) ?: return@forEach
+                    val container = preset.find(installed.containerId) ?: return@forEach
+                    val source = File(installed.hostDirectory).canonicalFile
+                    val target = preset.gameDirectory(container, game).canonicalFile
+                    if (!source.isDirectory || source == target) return@forEach
+                    target.parentFile?.listFiles()
+                        ?.filter { stale ->
+                            stale.name.startsWith(".Game-migrating-") &&
+                                stale.canonicalFile.parentFile == target.parentFile?.canonicalFile
+                        }
+                        ?.forEach { stale ->
+                            check(stale.deleteRecursively()) {
+                                "Could not clear an interrupted ${game.title} migration"
+                            }
+                        }
+                    if (target.exists()) {
+                        if (target.isDirectory && target.listFiles().orEmpty().isEmpty()) {
+                            check(target.delete()) { "Could not remove an empty public Game folder" }
+                        } else {
+                            Log.w(
+                                LOG_TAG,
+                                "Public Game folder already contains data for $gameId; preserving legacy install",
+                            )
+                            return@forEach
+                        }
+                    }
+                    val bytes = source.walkTopDown().filter(File::isFile).sumOf(File::length)
+                    val available = StatFs(checkNotNull(target.parentFile).absolutePath).availableBytes
+                    if (available <= bytes + STORAGE_RESERVE) {
+                        Log.w(LOG_TAG, "Not enough space to migrate $gameId safely; preserving legacy install")
+                        return@forEach
+                    }
+                    publish(
+                        game.id,
+                        InstallStage.CONFIGURING,
+                        InstallStage.CONFIGURING.baseProgress,
+                        "Moving existing game into /Dualscreen safely",
+                    )
+                    val staging = File(target.parentFile, ".Game-migrating-${UUID.randomUUID()}")
+                    var published = false
+                    try {
+                        copyGameTree(source, staging, bytes) { copied ->
+                            val local = if (bytes > 0L) copied.toFloat() / bytes else 1f
+                            publish(
+                                game.id,
+                                InstallStage.CONFIGURING,
+                                stageProgress(InstallStage.CONFIGURING, local * 0.8f),
+                                "Migrating game files to shared storage",
+                                addLog = false,
+                            )
+                        }
+                        validateCriticalGameFiles(game, staging)
+                        check(staging.renameTo(target)) { "Could not publish migrated game files" }
+                        published = true
+                        val executable = resolveLaunchExecutable(target, game)
+                            ?: error("Migrated game executable is missing")
+                        val shortcut = preset.createShortcut(container, game, executable, target)
+                        val migrated = installed.copy(
+                            shortcutPath = shortcut.file.absolutePath,
+                            hostDirectory = target.absolutePath,
+                            installedBytes = bytes,
+                        )
+                        registry.put(migrated)
+
+                        // Keep the previous private copy. Migration runs while the library is
+                        // interactive, so deleting it could invalidate a session launched just
+                        // before the registry switch. The public copy becomes authoritative;
+                        // retaining the inaccessible rollback is preferable to risking data loss.
+                        publish(
+                            game.id,
+                            InstallStage.COMPLETE,
+                            1f,
+                            "Game files are available in /Dualscreen/Games/${game.storageName}",
+                            running = false,
+                        )
+                    } catch (failure: Throwable) {
+                        if (staging.exists()) staging.deleteRecursively()
+                        if (published && registry.get(game.id)?.hostDirectory != target.absolutePath) {
+                            target.deleteRecursively()
+                        }
+                        Log.e(LOG_TAG, "Could not migrate $gameId; the existing installation is unchanged", failure)
+                    }
+                }
+                registry.all()
+            }
+        }
+    }
+
+    suspend fun install(
+        game: SupportedGame,
+        archive: Uri,
+        allowUntestedVersion: Boolean = false,
+    ): Result<InstalledGame> =
         installLock.withLock {
-            val result = runCatching { installInternal(game, archive) }
+            val result = runCatching { installInternal(game, archive, allowUntestedVersion) }
             result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
             result.onFailure { failure ->
                     val previous = mutableProgress.value[game.id]
@@ -87,7 +209,7 @@ class GameInstaller(
                 check(root.isDirectory) { "The installed game directory is missing" }
                 val bundled = readPayloadManifest(game)
                 val currentFilesMatch = withContext(Dispatchers.IO) {
-                    payloadIsCurrent(root, bundled)
+                    payloadIsCurrent(root, bundled, installed.skippedPayloadTargets)
                 }
                 if (installed.payloadVersion == bundled.version && currentFilesMatch) {
                     Log.i(LOG_TAG, "Verified ${game.id} payload ${bundled.version}")
@@ -108,11 +230,28 @@ class GameInstaller(
                     "Updating ${game.title} dual-screen mod",
                 )
                 val applied = withContext(Dispatchers.IO) {
-                    applyPayload(game, root, 0f, 1f)
+                    applyPayload(
+                        game,
+                        root,
+                        0f,
+                        1f,
+                        allowUnsupportedPatches = installed.untestedBuild,
+                    )
                 }
-                withContext(Dispatchers.IO) { verify(game, root, applied) }
-                installed.copy(payloadVersion = applied.version).also(registry::put).also {
-                    Log.i(LOG_TAG, "Updated ${game.id} payload to ${applied.version}")
+                withContext(Dispatchers.IO) {
+                    verify(
+                        game,
+                        root,
+                        applied.manifest,
+                        allowUntestedVersion = installed.untestedBuild,
+                        skippedPatchTargets = applied.skippedPatchTargets,
+                    )
+                }
+                installed.copy(
+                    payloadVersion = applied.manifest.version,
+                    skippedPayloadTargets = applied.skippedPatchTargets,
+                ).also(registry::put).also {
+                    Log.i(LOG_TAG, "Updated ${game.id} payload to ${applied.manifest.version}")
                     publish(
                         game.id,
                         InstallStage.COMPLETE,
@@ -136,7 +275,11 @@ class GameInstaller(
                 }
         }
 
-    private suspend fun installInternal(game: SupportedGame, archive: Uri): InstalledGame {
+    private suspend fun installInternal(
+        game: SupportedGame,
+        archive: Uri,
+        allowUntestedVersion: Boolean,
+    ): InstalledGame {
         begin(game)
         val installStartedAt = SystemClock.elapsedRealtime()
         val setupStartedAt = installStartedAt
@@ -151,14 +294,14 @@ class GameInstaller(
             "Container setup ready in ${formatDuration(SystemClock.elapsedRealtime() - setupStartedAt)}",
         )
         publish(game.id, InstallStage.VALIDATING, 0.24f, "Opening the selected ZIP")
-        val parent = preset.gameDirectory(container, game).parentFile
+        val target = preset.gameDirectory(container, game)
+        val parent = target.parentFile
             ?: error("The games directory is unavailable")
         withContext(Dispatchers.IO) {
             check(parent.isDirectory || parent.mkdirs()) { "Could not create $parent" }
         }
 
-        val target = File(parent, game.id)
-        val rollback = File(parent, ".rollback-${game.id}")
+        val rollback = File(parent, ".rollback-Game")
         withContext(Dispatchers.IO) {
             recoverInterruptedPublish(parent, target, rollback, game.id)
         }
@@ -168,18 +311,41 @@ class GameInstaller(
             extract(game, archive, staging)
             val gameRoot = locateGameRoot(staging, game)
                 ?: error("This ZIP does not contain a supported ${game.title} installation")
-            withContext(Dispatchers.IO) { validateGameBuild(game, gameRoot) }
+            val compatibilityWarnings = withContext(Dispatchers.IO) {
+                validateCriticalGameFiles(game, gameRoot)
+                gameBuildWarnings(game, gameRoot)
+            }
+            check(compatibilityWarnings.isEmpty() || allowUntestedVersion) {
+                untestedVersionMessage(game, compatibilityWarnings)
+            }
+            compatibilityWarnings.forEach { warning ->
+                publish(game.id, InstallStage.VALIDATING, 0.29f, "Compatibility warning: $warning")
+            }
 
             publish(game.id, InstallStage.PATCHING, 0.82f, "Preparing verified game prerequisites")
             withContext(Dispatchers.IO) { applyPrerequisites(game, gameRoot) }
             val payloadStart = if (game.prerequisites.isEmpty()) 0f else 0.58f
             val payload = withContext(Dispatchers.IO) {
-                applyPayload(game, gameRoot, payloadStart, 1f)
+                applyPayload(
+                    game,
+                    gameRoot,
+                    payloadStart,
+                    1f,
+                    allowUnsupportedPatches = compatibilityWarnings.isNotEmpty() && allowUntestedVersion,
+                )
             }
 
             publish(game.id, InstallStage.CONFIGURING, 0.91f, "Preparing the direct launch entry")
             publish(game.id, InstallStage.VERIFYING, 0.96f, "Checking game and mod files")
-            val executable = withContext(Dispatchers.IO) { verify(game, gameRoot, payload) }
+            val executable = withContext(Dispatchers.IO) {
+                verify(
+                    game,
+                    gameRoot,
+                    payload.manifest,
+                    allowUntestedVersion = allowUntestedVersion,
+                    skippedPatchTargets = payload.skippedPatchTargets,
+                )
+            }
 
             publish(game.id, InstallStage.VERIFYING, 0.985f, "Publishing the verified installation")
             withContext(Dispatchers.IO) {
@@ -197,7 +363,7 @@ class GameInstaller(
                 if (staging.exists()) staging.deleteRecursively()
             }
 
-            val shortcut = preset.createShortcut(container, game, executable)
+            val shortcut = preset.createShortcut(container, game, executable, target)
             val installedBytes = withContext(Dispatchers.IO) {
                 target.walkTopDown().filter(File::isFile).sumOf(File::length)
             }
@@ -207,7 +373,11 @@ class GameInstaller(
                 shortcutPath = shortcut.file.absolutePath,
                 hostDirectory = target.absolutePath,
                 installedBytes = installedBytes,
-                payloadVersion = payload.version,
+                payloadVersion = payload.manifest.version,
+                untestedBuild = compatibilityWarnings.isNotEmpty(),
+                compatibilityWarning = compatibilityWarnings.takeIf(List<String>::isNotEmpty)
+                    ?.joinToString("; "),
+                skippedPayloadTargets = payload.skippedPatchTargets,
             )
             withContext(Dispatchers.IO) { registry.put(installed) }
             withContext(Dispatchers.IO) {
@@ -275,7 +445,7 @@ class GameInstaller(
         return withContext(Dispatchers.IO) {
             val source = File(installed.hostDirectory).canonicalFile
             val destination = preset.gameDirectory(destinationContainer, game).canonicalFile
-            check(!(source.isDirectory && destination.exists())) {
+            check(source == destination || !(source.isDirectory && destination.exists())) {
                 "The dedicated ${game.title} destination already contains files"
             }
             // A process death may happen after the atomic directory move but
@@ -300,7 +470,7 @@ class GameInstaller(
             var savesMoved = false
             try {
                 destination.parentFile?.let { check(it.isDirectory || it.mkdirs()) }
-                if (activeRoot == source) {
+                if (activeRoot == source && source != destination) {
                     check(source.renameTo(destination)) {
                         "Could not move ${game.title} into its dedicated container"
                     }
@@ -313,11 +483,17 @@ class GameInstaller(
                     }
                     savesMoved = true
                 }
-                val shortcut = preset.createShortcut(destinationContainer, game, executable)
+                val publishedRoot = if (destination.isDirectory) destination else activeRoot
+                val shortcut = preset.createShortcut(
+                    destinationContainer,
+                    game,
+                    executable,
+                    publishedRoot,
+                )
                 installed.copy(
                     containerId = destinationContainer.id,
                     shortcutPath = shortcut.file.absolutePath,
-                    hostDirectory = destination.absolutePath,
+                    hostDirectory = publishedRoot.absolutePath,
                 ).also(registry::put)
             } catch (failure: Throwable) {
                 if (savesMoved) destinationSaveRoot.renameTo(checkNotNull(sourceSaveRoot))
@@ -410,6 +586,7 @@ class GameInstaller(
                     val entry = enumeration.nextElement()
                     check(++entries <= MAX_ENTRIES) { "Archive contains too many files" }
                     val relative = normalizeGameArchiveEntry(entry.name)
+                    if (relative.isEmpty()) continue
                     val pathKey = relative.lowercase(Locale.ROOT).trimEnd('/')
                     val previousWasDirectory = windowsPaths[pathKey]
                     check(previousWasDirectory == null || (previousWasDirectory && entry.isDirectory)) {
@@ -499,6 +676,177 @@ class GameInstaller(
         }
     }
 
+    private fun inspectSeekableArchive(game: SupportedGame, source: Uri): GameArchiveInspection? {
+        val descriptor = context.contentResolver.openFileDescriptor(source, "r") ?: return null
+        descriptor.use { parcel ->
+            val zip = try {
+                ZipFile("/proc/self/fd/${parcel.fd}")
+            } catch (unavailable: IOException) {
+                Log.i(LOG_TAG, "ZIP provider is not seekable; inspecting as a stream")
+                return null
+            }
+            zip.use { archive ->
+                val entries = ArrayList<Pair<ZipEntry, InspectedArchiveEntry>>()
+                val windowsPaths = mutableMapOf<String, Boolean>()
+                var entryCount = 0
+                val enumeration = archive.entries()
+                while (enumeration.hasMoreElements()) {
+                    val entry = enumeration.nextElement()
+                    check(++entryCount <= MAX_ENTRIES) { "Archive contains too many files" }
+                    val relative = normalizeGameArchiveEntry(entry.name)
+                    if (relative.isEmpty()) continue
+                    registerArchivePath(windowsPaths, relative, entry.isDirectory, entry.name)
+                    if (!entry.isDirectory) {
+                        check(entry.size >= 0L) { "Archive entry has no declared size: ${entry.name}" }
+                        entries += entry to InspectedArchiveEntry(relative, entry.size)
+                    }
+                }
+                check(entries.isNotEmpty()) { "The selected ZIP contains no files" }
+                val root = detectArchiveGameRoot(
+                    entries.map { it.second.path },
+                    game.requiredFiles,
+                ) ?: error(
+                    "Missing critical ${game.title} files: ${game.requiredFiles.joinToString()}",
+                )
+                val inspected = entries.map { (entry, metadata) ->
+                    if (isVersionedArchivePath(metadata.path, root, game.fileRules)) {
+                        metadata.copy(sha256 = archive.getInputStream(entry).use(::sha256))
+                    } else {
+                        metadata
+                    }
+                }
+                return buildArchiveInspection(game, root, inspected)
+            }
+        }
+    }
+
+    private fun inspectStreamingArchive(game: SupportedGame, source: Uri): GameArchiveInspection {
+        val input = context.contentResolver.openInputStream(source)
+            ?: error("The selected archive could not be opened")
+        val entries = ArrayList<InspectedArchiveEntry>()
+        val windowsPaths = mutableMapOf<String, Boolean>()
+        var entryCount = 0
+        ZipInputStream(input.buffered(INPUT_BUFFER_SIZE)).use { zip ->
+            val buffer = ByteArray(BUFFER_SIZE)
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                check(++entryCount <= MAX_ENTRIES) { "Archive contains too many files" }
+                val relative = normalizeGameArchiveEntry(entry.name)
+                if (relative.isEmpty()) {
+                    zip.closeEntry()
+                    continue
+                }
+                registerArchivePath(windowsPaths, relative, entry.isDirectory, entry.name)
+                if (!entry.isDirectory) {
+                    var bytes = 0L
+                    val digest = if (game.fileRules.any { rule ->
+                            archivePathEndsWith(relative, rule.path)
+                        }
+                    ) MessageDigest.getInstance("SHA-256") else null
+                    while (true) {
+                        val count = zip.read(buffer)
+                        if (count < 0) break
+                        bytes = Math.addExact(bytes, count.toLong())
+                        digest?.update(buffer, 0, count)
+                    }
+                    entries += InspectedArchiveEntry(
+                        path = relative,
+                        bytes = bytes,
+                        sha256 = digest?.digest()?.toHex(),
+                    )
+                }
+                zip.closeEntry()
+            }
+        }
+        check(entries.isNotEmpty()) { "The selected ZIP contains no files" }
+        val root = detectArchiveGameRoot(entries.map(InspectedArchiveEntry::path), game.requiredFiles)
+            ?: error("Missing critical ${game.title} files: ${game.requiredFiles.joinToString()}")
+        return buildArchiveInspection(game, root, entries)
+    }
+
+    private fun buildArchiveInspection(
+        game: SupportedGame,
+        root: String,
+        entries: List<InspectedArchiveEntry>,
+    ): GameArchiveInspection {
+        val filesByPath = entries.groupBy { it.path.lowercase(Locale.ROOT) }
+        val warnings = game.fileRules.mapNotNull { rule ->
+            val path = archivePath(root, rule.path).lowercase(Locale.ROOT)
+            val file = filesByPath[path]?.singleOrNull()
+                ?: return@mapNotNull "Could not verify ${rule.path}; this build is untested"
+            compatibilityWarning(rule, file.bytes, file.sha256)
+        }
+        val notes = buildList {
+            if (game.configurationLauncherCandidates.isNotEmpty() &&
+                game.configurationLauncherCandidates.none { candidate ->
+                    filesByPath.containsKey(archivePath(root, candidate).lowercase(Locale.ROOT))
+                }
+            ) {
+                add("The optional game settings launcher is not included; direct Play remains available")
+            }
+        }
+        return GameArchiveInspection(
+            gameId = game.id,
+            gameRoot = root.ifBlank { "ZIP root" },
+            files = entries.size,
+            versionWarnings = warnings,
+            notes = notes,
+        )
+    }
+
+    private fun registerArchivePath(
+        paths: MutableMap<String, Boolean>,
+        relative: String,
+        directory: Boolean,
+        original: String,
+    ) {
+        val key = relative.lowercase(Locale.ROOT).trimEnd('/')
+        val previousWasDirectory = paths[key]
+        check(previousWasDirectory == null || (previousWasDirectory && directory)) {
+            "Archive contains a duplicate Windows path: $original"
+        }
+        paths[key] = directory
+    }
+
+    private fun copyGameTree(
+        source: File,
+        target: File,
+        expectedBytes: Long,
+        onProgress: (Long) -> Unit,
+    ) {
+        check(!target.exists() && target.mkdirs()) { "Could not create game migration staging" }
+        var copied = 0L
+        var files = 0L
+        source.walkTopDown().forEach { item ->
+            val relative = item.relativeTo(source).invariantSeparatorsPath
+            if (relative.isEmpty()) return@forEach
+            check(!Files.isSymbolicLink(item.toPath())) { "The legacy game contains an unsafe link" }
+            val output = File(target, relative)
+            if (item.isDirectory) {
+                check(output.isDirectory || output.mkdirs()) { "Could not create $relative" }
+            } else {
+                output.parentFile?.let { check(it.isDirectory || it.mkdirs()) }
+                item.inputStream().buffered(INPUT_BUFFER_SIZE).use { input ->
+                    output.outputStream().buffered(INPUT_BUFFER_SIZE).use { file ->
+                        val buffer = ByteArray(EXTRACTION_BUFFER_SIZE)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            file.write(buffer, 0, count)
+                            copied += count
+                            onProgress(copied)
+                        }
+                    }
+                }
+                files++
+            }
+        }
+        val outputs = target.walkTopDown().filter(File::isFile).toList()
+        check(copied == expectedBytes && outputs.size.toLong() == files && outputs.sumOf(File::length) == copied) {
+            "Game migration verification failed"
+        }
+    }
+
     /** Safe fallback for cloud/document providers which expose a pipe, not a file. */
     private fun extractStreaming(
         game: SupportedGame,
@@ -521,6 +869,10 @@ class GameInstaller(
                 val entry = zip.nextEntry ?: break
                 check(++entries <= MAX_ENTRIES) { "Archive contains too many files" }
                 val relative = normalizeGameArchiveEntry(entry.name)
+                if (relative.isEmpty()) {
+                    zip.closeEntry()
+                    continue
+                }
                 val pathKey = relative.lowercase(Locale.ROOT).trimEnd('/')
                 val previousWasDirectory = windowsPaths[pathKey]
                 check(previousWasDirectory == null || (previousWasDirectory && entry.isDirectory)) {
@@ -610,49 +962,36 @@ class GameInstaller(
         // Some archives contain documentation or backup wrappers with another
         // executable. Prefer the one that passes the complete build contract.
         val compatible = candidates.filter { candidate ->
-            runCatching { validateGameBuild(game, candidate) }.isSuccess
+            runCatching {
+                validateCriticalGameFiles(game, candidate)
+                check(gameBuildWarnings(game, candidate).isEmpty())
+            }.isSuccess
         }
         return (compatible.ifEmpty { candidates }).minByOrNull { candidate ->
             candidate.relativeTo(staging).invariantSeparatorsPath.count { it == '/' }
         }
     }
 
-    private fun validateGameBuild(game: SupportedGame, root: File) {
+    private fun validateCriticalGameFiles(game: SupportedGame, root: File) {
         game.requiredFiles.forEach { path ->
             check(resolveWindowsFile(root, path)?.isFile == true) {
-                "Missing game file: $path. Required build: ${game.requiredBuild}"
-            }
-        }
-        game.fileRules.forEach { rule ->
-            val file = resolveWindowsFile(root, rule.path)
-                ?.takeIf(File::isFile)
-                ?: error("Missing versioned game file: ${rule.path}")
-            rule.bytes?.let { expected ->
-                check(file.length() == expected) {
-                    unsupportedBuildSizeMessage(game, rule.path, expected, file.length())
-                }
-            }
-            rule.sha256?.let { expected ->
-                val observed = sha256(file)
-                check(observed == expected) {
-                    "Unsupported ${rule.path}: SHA-256 ${observed.take(12)}... does not match the " +
-                        "verified ${game.requiredBuild} build required by this dual-screen mod"
-                }
-            }
-            if (rule.sha256AnyOf.isNotEmpty()) {
-                val observed = sha256(file)
-                check(observed in rule.sha256AnyOf) {
-                    "Unsupported ${rule.path}: SHA-256 ${observed.take(12)}... is not one of " +
-                        "the verified ${game.requiredBuild} builds supported by this dual-screen mod"
-                }
-            }
-        }
-        if (game.configurationLauncherCandidates.isNotEmpty()) {
-            check(resolveConfigurationLauncherExecutable(root, game) != null) {
-                "Missing settings launcher: ${game.configurationLauncherCandidates.joinToString(" or ")}"
+                "Missing critical game file: $path"
             }
         }
     }
+
+    private fun gameBuildWarnings(game: SupportedGame, root: File): List<String> =
+        game.fileRules.mapNotNull { rule ->
+            val file = resolveWindowsFile(root, rule.path)
+                ?.takeIf(File::isFile)
+                ?: return@mapNotNull "Could not verify ${rule.path}; this build is untested"
+            val needsHash = rule.sha256 != null || rule.sha256AnyOf.isNotEmpty()
+            compatibilityWarning(
+                rule = rule,
+                observedBytes = file.length(),
+                observedSha256 = if (needsHash) sha256(file) else null,
+            )
+        }
 
     private fun applyPrerequisites(game: SupportedGame, root: File) {
         game.prerequisites.forEachIndexed { index, prerequisite ->
@@ -857,8 +1196,10 @@ class GameInstaller(
         root: File,
         progressStart: Float,
         progressEnd: Float,
-    ): PayloadManifest {
+        allowUnsupportedPatches: Boolean = false,
+    ): AppliedPayload {
         val manifest = readPayloadManifest(game)
+        val skippedPatchTargets = linkedSetOf<String>()
         val canonicalRoot = root.canonicalFile
         val patchTargets = manifest.patches.groupBy(PayloadPatch::target)
         val operationCount = manifest.files.size + patchTargets.size + manifest.removals.size
@@ -896,10 +1237,14 @@ class GameInstaller(
             val alreadyCurrent = candidates.any { it.outputSha256 == observed }
             if (!alreadyCurrent) {
                 val selected = candidates.firstOrNull { it.inputSha256 == observed }
-                    ?: error(
-                        "Unsupported $relativeTarget: SHA-256 ${observed.take(12)}... has no " +
-                            "matching native patch",
-                    )
+                if (selected == null && allowUnsupportedPatches) {
+                    skippedPatchTargets += relativeTarget
+                    report("Skipped incompatible native patch for $relativeTarget")
+                    return@forEach
+                }
+                checkNotNull(selected) {
+                    "Unsupported $relativeTarget: SHA-256 ${observed.take(12)}... has no matching native patch"
+                }
                 applyBinaryPatch(game, selected, target)
             }
             check(candidates.any { it.outputSha256 == sha256(target) }) {
@@ -925,10 +1270,14 @@ class GameInstaller(
             }?.delete()
             report("Removed retired $relativeTarget")
         }
-        return manifest
+        return AppliedPayload(manifest, skippedPatchTargets)
     }
 
-    private fun payloadIsCurrent(root: File, manifest: PayloadManifest): Boolean {
+    private fun payloadIsCurrent(
+        root: File,
+        manifest: PayloadManifest,
+        skippedPatchTargets: Set<String> = emptySet(),
+    ): Boolean {
         val canonicalRoot = root.canonicalFile
         val filesCurrent = manifest.files.all { entry ->
             val target = File(canonicalRoot, entry.target).canonicalFile
@@ -949,7 +1298,12 @@ class GameInstaller(
                 false
             } else {
                 val observed = sha256(target)
-                patches.any { it.outputSha256 == observed }
+                nativePatchTargetIsCurrent(
+                    observedSha256 = observed,
+                    inputSha256 = patches.mapTo(linkedSetOf(), PayloadPatch::inputSha256),
+                    outputSha256 = patches.mapTo(linkedSetOf(), PayloadPatch::outputSha256),
+                    previouslySkipped = relativeTarget in skippedPatchTargets,
+                )
             }
         }
     }
@@ -1146,8 +1500,18 @@ class GameInstaller(
         return manifest
     }
 
-    private fun verify(game: SupportedGame, root: File, payload: PayloadManifest): String {
-        validateGameBuild(game, root)
+    private fun verify(
+        game: SupportedGame,
+        root: File,
+        payload: PayloadManifest,
+        allowUntestedVersion: Boolean = false,
+        skippedPatchTargets: Set<String> = emptySet(),
+    ): String {
+        validateCriticalGameFiles(game, root)
+        val compatibilityWarnings = gameBuildWarnings(game, root)
+        check(allowUntestedVersion || compatibilityWarnings.isEmpty()) {
+            untestedVersionMessage(game, compatibilityWarnings)
+        }
         game.prerequisites.forEach { prerequisite ->
             prerequisite.installedFiles.forEach { path ->
                 check(resolveWindowsFile(root, path)?.isFile == true) {
@@ -1164,6 +1528,7 @@ class GameInstaller(
             }
         }
         payload.patches.groupBy(PayloadPatch::target).forEach { (target, patches) ->
+            if (target in skippedPatchTargets) return@forEach
             val installed = File(root, target)
             val observed = installed.takeIf(File::isFile)?.let(::sha256)
             check(observed != null && patches.any { it.outputSha256 == observed }) {
@@ -1237,7 +1602,9 @@ class GameInstaller(
     }
 
     private fun installLogFile(gameId: String): File =
-        File(context.filesDir, "install-logs/${safeName(gameId)}-latest.log")
+        GameCatalog.byId(gameId)?.let { game ->
+            runCatching { DualscreenStorage().installLog(game) }.getOrNull()
+        } ?: File(context.filesDir, "install-logs/${safeName(gameId)}-latest.log")
 
     private fun stageProgress(stage: InstallStage, local: Float): Float {
         val next = InstallStage.entries.getOrNull(stage.ordinal + 1)?.baseProgress ?: 1f
@@ -1296,6 +1663,10 @@ class GameInstaller(
         val patches: List<PayloadPatch>,
         val removals: List<String>,
     )
+    private data class AppliedPayload(
+        val manifest: PayloadManifest,
+        val skippedPatchTargets: Set<String>,
+    )
     private data class SeekableZipEntry(val entry: ZipEntry, val output: File)
     private data class ExtractionResult(val entries: Int, val bytes: Long)
 
@@ -1338,16 +1709,111 @@ class GameInstaller(
     }
 }
 
+/**
+ * A deliberately skipped patch stays current while the executable remains an
+ * unknown, untested build. If the user later supplies a supported input build,
+ * return false so the normal payload update path gets another chance to patch
+ * it. Missing targets are never current, even when an earlier build skipped
+ * them.
+ */
+internal fun nativePatchTargetIsCurrent(
+    observedSha256: String?,
+    inputSha256: Set<String>,
+    outputSha256: Set<String>,
+    previouslySkipped: Boolean,
+): Boolean = when {
+    observedSha256 == null -> false
+    observedSha256 in outputSha256 -> true
+    !previouslySkipped -> false
+    observedSha256 in inputSha256 -> false
+    else -> true
+}
+
 internal fun normalizeGameArchiveEntry(entryName: String): String {
     require('\u0000' !in entryName) { "Archive contains an invalid filename" }
     val normalized = entryName.replace('\\', '/')
     require(!normalized.startsWith('/')) { "Archive contains an absolute path: $entryName" }
-    val segments = normalized.split('/').filter(String::isNotBlank)
-    require(segments.isNotEmpty() && segments.none { it == "." || it == ".." || ':' in it }) {
+    val rawSegments = normalized.split('/').filter(String::isNotBlank)
+    require(rawSegments.none { it == ".." || ':' in it }) {
         "Archive contains an unsafe path: $entryName"
     }
+    val segments = rawSegments.filter { it != "." }
+    if (segments.isEmpty()) return ""
     return segments.joinToString("/") + if (normalized.endsWith('/')) "/" else ""
 }
+
+internal fun detectArchiveGameRoot(entries: Collection<String>, requiredFiles: List<String>): String? {
+    if (entries.isEmpty() || requiredFiles.isEmpty()) return null
+    val files = entries
+        .map { it.replace('\\', '/').trim('/') }
+        .filter(String::isNotBlank)
+    val fileKeys = files.groupBy { it.lowercase(Locale.ROOT) }
+    val firstRequired = requiredFiles.first().replace('\\', '/').trim('/')
+    val suffix = firstRequired.lowercase(Locale.ROOT)
+    return files.asSequence()
+        .filter { candidate ->
+            val lower = candidate.lowercase(Locale.ROOT)
+            lower == suffix || lower.endsWith("/$suffix")
+        }
+        .map { candidate ->
+            if (candidate.length == firstRequired.length) "" else {
+                candidate.dropLast(firstRequired.length).trimEnd('/')
+            }
+        }
+        .distinctBy { it.lowercase(Locale.ROOT) }
+        .filter { prefix ->
+            requiredFiles.all { required ->
+                fileKeys[archivePath(prefix, required).lowercase(Locale.ROOT)]?.size == 1
+            }
+        }
+        .minWithOrNull(
+            compareBy<String> { it.count { character -> character == '/' } }
+                .thenBy(String::length),
+        )
+}
+
+private fun archivePath(root: String, relative: String): String =
+    listOf(root.trim('/'), relative.replace('\\', '/').trim('/'))
+        .filter(String::isNotBlank)
+        .joinToString("/")
+
+private fun archivePathEndsWith(path: String, expectedRelative: String): Boolean {
+    val normalized = path.replace('\\', '/').trim('/').lowercase(Locale.ROOT)
+    val expected = expectedRelative.replace('\\', '/').trim('/').lowercase(Locale.ROOT)
+    return normalized == expected || normalized.endsWith("/$expected")
+}
+
+private fun isVersionedArchivePath(
+    path: String,
+    root: String,
+    rules: List<FileRule>,
+): Boolean = rules.any { rule ->
+    path.equals(archivePath(root, rule.path), ignoreCase = true)
+}
+
+private fun compatibilityWarning(
+    rule: FileRule,
+    observedBytes: Long,
+    observedSha256: String?,
+): String? {
+    val sizeMismatch = rule.bytes?.let { it != observedBytes } == true
+    val hashMismatch = when {
+        rule.sha256 != null -> observedSha256 != rule.sha256
+        rule.sha256AnyOf.isNotEmpty() -> observedSha256 !in rule.sha256AnyOf
+        else -> false
+    }
+    if (!sizeMismatch && !hashMismatch) return null
+    val evidence = buildList {
+        if (sizeMismatch) add("$observedBytes bytes")
+        if (hashMismatch) add("SHA-256 ${observedSha256?.take(12) ?: "unavailable"}...")
+    }.joinToString(", ")
+    return "${rule.path} differs from the recommended build ($evidence)"
+}
+
+internal fun untestedVersionMessage(game: SupportedGame, warnings: List<String>): String =
+    "This game version has not been tested and may not work correctly with the dual-screen mod. " +
+        "For the best compatibility, use the recommended version (${game.requiredBuild}). " +
+        warnings.joinToString("; ")
 
 /** Returns the writable extraction budget without overflow in reserve arithmetic. */
 internal fun extractionByteBudget(availableBytes: Long, reserveBytes: Long): Long {
@@ -1366,17 +1832,4 @@ internal fun safeGameArchiveTarget(root: File, normalizedRelativePath: String): 
         "Archive entry escapes the extraction directory: $normalizedRelativePath"
     }
     return target
-}
-
-internal fun unsupportedBuildSizeMessage(
-    game: SupportedGame,
-    path: String,
-    expected: Long,
-    observed: Long,
-): String = if (game.id == "fallout3" && observed == 15_044_024L && expected == 16_855_040L) {
-    "Fallout 3 1.7.0.3 was detected ($observed-byte $path). The dual-screen bridge requires " +
-        "Fallout 3 1.7.0.4 ($expected bytes). Update the game first, then create a new ZIP from " +
-        "that updated game folder."
-} else {
-    "Unsupported $path: ${game.requiredBuild} is required; expected $expected bytes, found $observed"
 }

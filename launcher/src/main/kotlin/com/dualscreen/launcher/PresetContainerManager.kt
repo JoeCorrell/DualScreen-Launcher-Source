@@ -2,6 +2,7 @@ package com.dualscreen.launcher
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import com.wemu.engine.container.Container
 import com.wemu.engine.container.ContainerManager
 import com.wemu.engine.container.Shortcut
@@ -30,6 +31,7 @@ internal typealias ProgressReporter = (InstallStage, Float, String) -> Unit
 /** Owns immutable app-private presets, with Stardew isolated from every other game. */
 class PresetContainerManager(private val context: Context) {
     private val preferences = context.getSharedPreferences("preset_container", Context.MODE_PRIVATE)
+    private val sharedStorage = DualscreenStorage()
 
     suspend fun prepare(game: SupportedGame, reporter: ProgressReporter): Container {
         prepareRuntime(reporter)
@@ -52,6 +54,7 @@ class PresetContainerManager(private val context: Context) {
             if (existing != null && existing.configFile.isFile) {
                 synchronizePresetConfiguration(existing, baseProfile, selectedDriver, specification)
                 preferences.edit().putString(fingerprintKey(specification), fingerprint).apply()
+                sharedStorage.exportContainerSnapshot(existing)
                 reporter(InstallStage.CONTAINER, 1f, "Using tested container ${existing.name}")
                 return existing
             }
@@ -71,6 +74,7 @@ class PresetContainerManager(private val context: Context) {
             .putInt(containerIdKey(specification), created.id)
             .putString(fingerprintKey(specification), fingerprint)
             .apply()
+        sharedStorage.exportContainerSnapshot(created)
         reporter(InstallStage.CONTAINER, 1f, "Container ${created.name} is ready")
         return created
     }
@@ -167,7 +171,7 @@ class PresetContainerManager(private val context: Context) {
 
     suspend fun gameDirectory(container: Container, game: SupportedGame): File =
         withContext(Dispatchers.IO) {
-            File(container.rootDir, ".wine/drive_c/Games/${game.id}").apply {
+            sharedStorage.gameFilesOrLegacy(container, game).apply {
                 parentFile?.mkdirs()
             }
         }
@@ -176,11 +180,12 @@ class PresetContainerManager(private val context: Context) {
         container: Container,
         game: SupportedGame,
         executable: String,
+        gameRoot: File,
     ): Shortcut = withContext(Dispatchers.IO) {
         val desktop = container.desktopDir
         check(desktop.isDirectory || desktop.mkdirs()) { "Could not create the launch directory" }
         val file = File(desktop, "${safeName(game.title)}.desktop")
-        val guestPath = "C:\\Games\\${game.id}\\${executable.replace('/', '\\')}"
+        val guestPath = guestPathForHost(container, gameRoot, executable)
         file.writeText(
             buildString {
                 appendLine("[Desktop Entry]")
@@ -387,6 +392,20 @@ class PresetContainerManager(private val context: Context) {
             "startupSelection",
         )
     }
+}
+
+internal fun guestPathForHost(container: Container, hostRoot: File, relative: String): String {
+    val root = hostRoot.canonicalFile
+    val external = Environment.getExternalStorageDirectory().canonicalFile
+    val driveC = File(container.rootDir, ".wine/drive_c").canonicalFile
+    val guestRoot = when {
+        root == external || root.path.startsWith(external.path + File.separator) ->
+            "F:\\" + root.relativeTo(external).invariantSeparatorsPath.replace('/', '\\')
+        root == driveC || root.path.startsWith(driveC.path + File.separator) ->
+            "C:\\" + root.relativeTo(driveC).invariantSeparatorsPath.replace('/', '\\')
+        else -> error("Game storage is outside the mounted container drives")
+    }.trimEnd('\\')
+    return "$guestRoot\\${relative.replace('/', '\\').trimStart('\\')}"
 }
 
 private data class PresetSpecification(

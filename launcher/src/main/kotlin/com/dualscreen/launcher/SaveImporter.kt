@@ -100,18 +100,23 @@ class SaveImporter(private val context: Context) {
             ?: error("The tested game container is missing")
         val userRoot = File(container.rootDir, ".wine/drive_c/users/xuser").canonicalFile
         check(userRoot.isDirectory || userRoot.mkdirs()) { "The Wine user profile is unavailable" }
-        val destination = safeProfileDirectory(userRoot, game.saveDirectory)
+        val storage = DualscreenStorage()
+        val sharedStorageReady = storage.ensureCatalogLayout()
+        val destination = storage.prepareSaveDirectory(container, game)
         val parent = destination.parentFile ?: error("The save directory has no parent")
         check(parent.isDirectory || parent.mkdirs()) { "Could not create the save directory parent" }
 
         val raw = File(parent, ".dualscreen-import-${game.id}-raw")
         val payload = File(parent, ".dualscreen-import-${game.id}-payload")
         val rollback = File(parent, ".dualscreen-rollback-${game.id}")
+        val backupBase = if (sharedStorageReady) storage.gameHome(game) else parent
         val backupRoot = File(
-            userRoot,
-            "Documents/Dualscreen Launcher Save Backups/${game.id}",
+            backupBase,
+            if (sharedStorageReady) "Save Backups" else ".dualscreen-save-backups",
         ).canonicalFile
-        check(backupRoot.path.startsWith(userRoot.path + File.separator)) { "Unsafe backup path" }
+        check(backupRoot.path.startsWith(backupBase.canonicalPath + File.separator)) {
+            "Unsafe backup path"
+        }
         recoverInterruptedImport(destination, raw, payload, rollback, backupRoot)
 
         var oldMoved = false
@@ -210,6 +215,7 @@ class SaveImporter(private val context: Context) {
             ?: error("The selected save ZIP could not be opened")
         val counted = CountingInputStream(input)
         var files = 0
+        var entries = 0
         var unpacked = 0L
         var lastReportedBytes = 0L
         val windowsPaths = hashSetOf<String>()
@@ -218,7 +224,13 @@ class SaveImporter(private val context: Context) {
         ZipInputStream(counted.buffered(BUFFER_SIZE)).use { zip ->
             while (true) {
                 val entry = zip.nextEntry ?: break
+                check(++entries <= MAX_ENTRIES) { "The save ZIP contains too many entries" }
                 val target = safeZipTarget(raw, entry.name)
+                if (target == raw.canonicalFile) {
+                    check(entry.isDirectory) { "The ZIP contains an invalid root file entry" }
+                    zip.closeEntry()
+                    continue
+                }
                 val pathKey = target.relativeTo(raw).invariantSeparatorsPath.lowercase(Locale.ROOT)
                 check(windowsPaths.add(pathKey) || (entry.isDirectory && target.isDirectory)) {
                     "The ZIP contains duplicate Windows path: ${entry.name}"
@@ -356,6 +368,7 @@ class SaveImporter(private val context: Context) {
     private companion object {
         const val BUFFER_SIZE = 512 * 1024
         const val MAX_FILES = 25_000
+        const val MAX_ENTRIES = 100_000
         const val MAX_UNPACKED_BYTES = 8L * 1024L * 1024L * 1024L
         const val REPORT_INTERVAL_BYTES = 512L * 1024L
         const val MAX_LOG_LINES = 160
@@ -370,21 +383,25 @@ internal fun safeProfileDirectory(userRoot: File, relative: String): File {
     require(segments.isNotEmpty() && segments.none { it == "." || it == ".." || ':' in it }) {
         "Unsafe predefined save directory"
     }
-    val root = userRoot.canonicalFile
-    val destination = segments.fold(root, ::File).canonicalFile
-    require(destination.path.startsWith(root.path + File.separator)) { "Unsafe predefined save directory" }
-    return destination
+    val root = userRoot.absoluteFile
+    val lexical = segments.fold(root, ::File).absoluteFile
+    require(lexical.path.startsWith(root.path + File.separator)) { "Unsafe predefined save directory" }
+    // Catalog paths are trusted and may intentionally end in a symlink to the
+    // user-visible /Dualscreen tree. Validate lexically before resolving it.
+    return lexical.canonicalFile
 }
 
 internal fun safeZipTarget(root: File, entryName: String): File {
     require('\u0000' !in entryName) { "The ZIP contains an invalid filename" }
     val normalized = entryName.replace('\\', '/')
     require(!normalized.startsWith('/')) { "The ZIP contains an absolute path: $entryName" }
-    val segments = normalized.split('/').filter(String::isNotBlank)
-    require(segments.isNotEmpty() && segments.none { it == "." || it == ".." || ':' in it }) {
+    val rawSegments = normalized.split('/').filter(String::isNotBlank)
+    require(rawSegments.none { it == ".." || ':' in it }) {
         "The ZIP contains an unsafe path: $entryName"
     }
+    val segments = rawSegments.filter { it != "." }
     val canonicalRoot = root.canonicalFile
+    if (segments.isEmpty()) return canonicalRoot
     val target = segments.fold(canonicalRoot, ::File).canonicalFile
     require(target.path.startsWith(canonicalRoot.path + File.separator)) {
         "The ZIP contains an unsafe path: $entryName"

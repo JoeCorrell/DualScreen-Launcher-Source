@@ -8,7 +8,19 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
+
+sealed interface ArchiveReviewState {
+    data object Idle : ArchiveReviewState
+    data class Inspecting(val gameId: String) : ArchiveReviewState
+    data class VersionWarning(
+        val gameId: String,
+        val inspection: GameArchiveInspection,
+    ) : ArchiveReviewState
+    data class Rejected(val gameId: String, val message: String) : ArchiveReviewState
+}
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as DualScreenLauncherApplication
@@ -21,7 +33,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     internal val payloadState = app.payloads.state
     internal val updateState = app.updates.state
     private var synchronizedPayloadVersion: String? = null
+    private val refreshLock = Mutex()
     private val archiveOperationInFlight = AtomicBoolean(false)
+    private var pendingUntestedArchive: Pair<SupportedGame, Uri>? = null
+    private val mutableArchiveReview = MutableStateFlow<ArchiveReviewState>(ArchiveReviewState.Idle)
+    val archiveReview: StateFlow<ArchiveReviewState> = mutableArchiveReview.asStateFlow()
 
     private val mutableGpuDriverMessage = MutableStateFlow<String?>(null)
     val gpuDriverMessage: StateFlow<String?> = mutableGpuDriverMessage.asStateFlow()
@@ -30,21 +46,47 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val installed: StateFlow<Map<String, InstalledGame>> = mutableInstalled.asStateFlow()
 
     init {
-        refreshUpdates()
         viewModelScope.launch { app.gpuDrivers.refresh() }
     }
 
     fun refreshUpdates() {
         viewModelScope.launch {
-            app.payloads.ensureReady()
-            synchronizeInstalledMods()
+            refreshLock.withLock {
+                app.payloads.ensureReady()
+                synchronizeInstalledMods()
+                checkAndInstallLauncherUpdateNow(force = false)
+            }
         }
-        viewModelScope.launch { app.updates.check() }
+    }
+
+    fun installLauncherUpdate() {
+        viewModelScope.launch { app.updates.downloadAndInstall() }
+    }
+
+    fun requestLauncherUpdatePermission() = app.updates.requestInstallerPermission()
+
+    fun retryLauncherUpdate() {
+        checkAndInstallLauncherUpdate(force = true)
+    }
+
+    private fun checkAndInstallLauncherUpdate(force: Boolean) {
+        viewModelScope.launch { checkAndInstallLauncherUpdateNow(force) }
+    }
+
+    private suspend fun checkAndInstallLauncherUpdateNow(force: Boolean) {
+        app.updates.check(force)
+        when (app.updates.state.value) {
+            is LauncherUpdateState.Available,
+            is LauncherUpdateState.PermissionRequired,
+            -> app.updates.downloadAndInstall()
+            else -> Unit
+        }
     }
 
     private suspend fun synchronizeInstalledMods() {
         val ready = payloadState.value as? PayloadBootstrapState.Ready ?: return
         if (synchronizedPayloadVersion == ready.version) return
+        app.installer.migrateLegacyInstalls()
         app.registry.all().values.forEach { installed ->
             GameCatalog.byId(installed.gameId)?.let { game ->
                 app.installer.ensureCurrentPayload(game)
@@ -61,13 +103,52 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         ) return
         if (!archiveOperationInFlight.compareAndSet(false, true)) return
         app.saveImporter.clear()
+        mutableArchiveReview.value = ArchiveReviewState.Inspecting(game.id)
         viewModelScope.launch {
-            try {
-                app.installer.install(game, archive)
-                mutableInstalled.value = app.registry.all()
-            } finally {
+            val inspection = app.installer.inspectArchive(game, archive)
+            val checked = inspection.getOrElse { failure ->
+                mutableArchiveReview.value = ArchiveReviewState.Rejected(
+                    game.id,
+                    failure.message ?: "The selected ZIP could not be validated",
+                )
                 archiveOperationInFlight.set(false)
+                return@launch
             }
+            if (checked.requiresVersionConfirmation) {
+                pendingUntestedArchive = game to archive
+                mutableArchiveReview.value = ArchiveReviewState.VersionWarning(game.id, checked)
+                return@launch
+            }
+            installReviewed(game, archive, allowUntestedVersion = false)
+        }
+    }
+
+    fun continueUntestedInstall() {
+        val pending = pendingUntestedArchive ?: return
+        pendingUntestedArchive = null
+        mutableArchiveReview.value = ArchiveReviewState.Idle
+        viewModelScope.launch {
+            installReviewed(pending.first, pending.second, allowUntestedVersion = true)
+        }
+    }
+
+    fun dismissArchiveReview() {
+        pendingUntestedArchive = null
+        mutableArchiveReview.value = ArchiveReviewState.Idle
+        archiveOperationInFlight.set(false)
+    }
+
+    private suspend fun installReviewed(
+        game: SupportedGame,
+        archive: Uri,
+        allowUntestedVersion: Boolean,
+    ) {
+        try {
+            mutableArchiveReview.value = ArchiveReviewState.Idle
+            app.installer.install(game, archive, allowUntestedVersion)
+            mutableInstalled.value = app.registry.all()
+        } finally {
+            archiveOperationInFlight.set(false)
         }
     }
 
@@ -115,9 +196,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun retryPayloadBootstrap() {
         viewModelScope.launch {
-            app.payloads.ensureReady(force = true)
-            synchronizedPayloadVersion = null
-            synchronizeInstalledMods()
+            refreshLock.withLock {
+                app.payloads.ensureReady(force = true)
+                synchronizedPayloadVersion = null
+                synchronizeInstalledMods()
+            }
         }
     }
 }

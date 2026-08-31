@@ -48,6 +48,9 @@ data class InstalledGame(
     val hostDirectory: String,
     val installedBytes: Long,
     val payloadVersion: String,
+    val untestedBuild: Boolean = false,
+    val compatibilityWarning: String? = null,
+    val skippedPayloadTargets: Set<String> = emptySet(),
 )
 
 class InstallRegistry(context: Context) {
@@ -64,6 +67,15 @@ class InstallRegistry(context: Context) {
                 hostDirectory = data.getString("hostDirectory"),
                 installedBytes = data.optLong("installedBytes"),
                 payloadVersion = data.optString("payloadVersion"),
+                untestedBuild = data.optBoolean("untestedBuild", false),
+                compatibilityWarning = data.optString("compatibilityWarning")
+                    .takeIf(String::isNotBlank),
+                skippedPayloadTargets = buildSet {
+                    val values = data.optJSONArray("skippedPayloadTargets")
+                    for (index in 0 until (values?.length() ?: 0)) {
+                        add(checkNotNull(values).getString(index))
+                    }
+                },
             )
         }.getOrNull()
     }
@@ -79,6 +91,12 @@ class InstallRegistry(context: Context) {
             .put("hostDirectory", value.hostDirectory)
             .put("installedBytes", value.installedBytes)
             .put("payloadVersion", value.payloadVersion)
+            .put("untestedBuild", value.untestedBuild)
+            .put("compatibilityWarning", value.compatibilityWarning ?: "")
+            .put(
+                "skippedPayloadTargets",
+                org.json.JSONArray(value.skippedPayloadTargets.sorted()),
+            )
         check(preferences.edit().putString(value.gameId, data.toString()).commit()) {
             "Could not persist the installed game state"
         }

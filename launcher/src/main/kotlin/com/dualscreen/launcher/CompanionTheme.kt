@@ -1,6 +1,5 @@
 package com.dualscreen.launcher
 
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
@@ -10,6 +9,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -206,33 +207,30 @@ val CompanionType = CompanionTypography(
 )
 
 /**
- * Corner radii, in three sizes and no more.
- *
- * The reference uses one radius per role — sheet, card, control — and reuses it
- * everywhere that role appears. Two cards with different corners on one shelf is
- * the single fastest way to make a grid look assembled rather than designed.
+ * Geometry tokens by role. The launcher deliberately uses one strict,
+ * rectangular silhouette for sheets, cards, and controls.
  */
 @Immutable
 data class CompanionShapes(
     /** The app sheet and any full-height panel. */
-    val sheet: RoundedCornerShape,
+    val sheet: Shape,
     /** Cards, preview boxes, the art block inside a card. */
-    val card: RoundedCornerShape,
+    val card: Shape,
     /** Every button and pill. */
-    val control: RoundedCornerShape,
+    val control: Shape,
 )
 
 val CompanionShapeSet = CompanionShapes(
-    sheet = RoundedCornerShape(24.dp),
-    card = RoundedCornerShape(14.dp),
-    control = RoundedCornerShape(12.dp),
+    sheet = RectangleShape,
+    card = RectangleShape,
+    control = RectangleShape,
 )
 
 /** WEMU's in-session console is deliberately rectilinear, not launcher chrome. */
 val CompanionConsoleShapeSet = CompanionShapes(
-    sheet = RoundedCornerShape(0.dp),
-    card = RoundedCornerShape(0.dp),
-    control = RoundedCornerShape(0.dp),
+    sheet = RectangleShape,
+    card = RectangleShape,
+    control = RectangleShape,
 )
 
 /**

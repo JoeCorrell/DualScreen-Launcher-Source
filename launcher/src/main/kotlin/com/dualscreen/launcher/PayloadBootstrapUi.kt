@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -43,8 +43,8 @@ internal fun PayloadBootstrapPage(
         modifier = Modifier
             .fillMaxSize()
             .background(
-                Brush.radialGradient(
-                    listOf(Color(0xFF242116), Color(0xFF0C0D0B)),
+                Brush.linearGradient(
+                    listOf(Color(0xFF211F15), LauncherBackground, Color(0xFF12140F)),
                 ),
             )
             .padding(24.dp),
@@ -52,20 +52,21 @@ internal fun PayloadBootstrapPage(
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.58f)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xE8171813))
-                .border(1.dp, Color(0xFF414036), RoundedCornerShape(18.dp))
-                .padding(horizontal = 25.dp, vertical = 22.dp),
+                .fillMaxWidth(0.62f)
+                .clip(RectangleShape)
+                .background(LauncherPanel)
+                .border(1.dp, LauncherOutline, RectangleShape)
+                .padding(horizontal = 26.dp, vertical = 23.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(11.dp),
         ) {
+            Box(Modifier.fillMaxWidth().height(3.dp).background(LauncherAccent))
             Box(
                 modifier = Modifier
                     .size(52.dp)
-                    .clip(RoundedCornerShape(15.dp))
+                    .clip(RectangleShape)
                     .background(LauncherAccent.copy(alpha = 0.13f))
-                    .border(1.dp, LauncherAccent.copy(alpha = 0.48f), RoundedCornerShape(15.dp)),
+                    .border(1.dp, LauncherAccent.copy(alpha = 0.48f), RectangleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -112,7 +113,7 @@ private fun CheckingPayloads() {
         fontSize = 12.sp,
     )
     LinearProgressIndicator(
-        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(6.dp)),
+        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RectangleShape),
         color = LauncherAccent,
         trackColor = Color(0xFF34342C),
     )
@@ -126,11 +127,9 @@ private fun PayloadProgress(state: PayloadBootstrapState.Progress) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontSize = 12.sp,
     )
-    LinearProgressIndicator(
-        progress = { state.fraction },
-        modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(7.dp)),
-        color = LauncherAccent,
-        trackColor = Color(0xFF34342C),
+    LauncherProgress(
+        fraction = state.fraction,
+        modifier = Modifier.fillMaxWidth().height(7.dp),
     )
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         Text(
@@ -177,7 +176,7 @@ private fun PayloadFailure(message: String, onRetry: () -> Unit) {
     Button(
         onClick = onRetry,
         modifier = Modifier.height(44.dp),
-        shape = RoundedCornerShape(10.dp),
+        shape = RectangleShape,
     ) {
         Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(7.dp))
@@ -205,7 +204,7 @@ private fun PayloadPhaseRail(active: PayloadBootstrapPhase) {
                 modifier = Modifier
                     .weight(1f)
                     .height(3.dp)
-                    .clip(RoundedCornerShape(3.dp))
+                    .clip(RectangleShape)
                     .background(
                         when {
                             complete -> LauncherSuccess

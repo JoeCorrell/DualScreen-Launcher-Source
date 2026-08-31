@@ -22,6 +22,8 @@ data class PrerequisitePackage(
 data class SupportedGame(
     val id: String,
     val title: String,
+    /** Stable, Windows-safe directory name under /Dualscreen/Games. */
+    val storageName: String = safeStorageSegment(title, "Game"),
     val summary: String,
     /** Player-facing build contract; validation below remains authoritative. */
     val requiredBuild: String,
@@ -52,6 +54,7 @@ object GameCatalog {
         SupportedGame(
             id = "skyrim-se",
             title = "The Elder Scrolls V: Skyrim Special Edition",
+            storageName = "Skyrim Special Edition",
             summary = "Live character, inventory, map, magic, and quest panel.",
             requiredBuild = "Skyrim Special Edition 1.5.97.0",
             isBeta = false,
@@ -74,6 +77,7 @@ object GameCatalog {
         SupportedGame(
             id = "fallout3",
             title = "Fallout 3",
+            isBeta = false,
             summary = "A permanent live Pip-Boy on the lower display.",
             requiredBuild = "Fallout 3 1.7.0.4",
             executableCandidates = listOf("Fallout3.exe"),
@@ -146,6 +150,7 @@ object GameCatalog {
         SupportedGame(
             id = "deus-ex-hrdc",
             title = "Deus Ex: Human Revolution Director's Cut",
+            storageName = "Deus Ex Human Revolution Directors Cut",
             summary = "Inventory, augmentations, maps, objectives, and data.",
             requiredBuild = "Director's Cut 2.0.66.0",
             isBeta = false,
@@ -206,6 +211,7 @@ object GameCatalog {
         SupportedGame(
             id = "stardew-valley",
             title = "Stardew Valley",
+            isBeta = false,
             summary = "Backpack, farm, crafting, map, journal, and relationships.",
             requiredBuild = "Stardew Valley 1.6.15.24356 (GOG or Steam)",
             executableCandidates = listOf("Stardew Valley.exe"),

@@ -1,5 +1,5 @@
 {
-    "version":  "launcher-2026.08.30-mod-sync-2",
+    "version":  "launcher-2026.08.31-mod-sync-4",
     "files":  [
                   {
                       "source":  "dxgi.dll",
@@ -649,7 +649,7 @@
                   {
                       "source":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
                       "target":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
-                      "sha256":  "4e5d10d6e8e6570d9f8e923d1d726cf79c827dfa27ee0f8c568bef2e498fc194"
+                      "sha256":  "12fbd55a03e094cadb468aa994975a74807fa0249e505d0e0c2deb84b24af3a7"
                   }
               ]
 }

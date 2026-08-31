@@ -191,7 +191,7 @@ class LauncherPanelPresentation(
         val consoleFrame = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(22), dp(18), dp(22), dp(18))
-            background = rounded(Color.rgb(10, 10, 7), 14, Color.rgb(72, 67, 48))
+            background = rectangle(Color.rgb(10, 10, 7), Color.rgb(72, 67, 48))
         }
         consoleFrame.addView(label("LIVE ACTIVITY LOG", 11f, Color.rgb(244, 170, 67), Typeface.BOLD))
         logView = label("", 13f, Color.rgb(205, 199, 184), Typeface.NORMAL).apply {
@@ -216,7 +216,7 @@ class LauncherPanelPresentation(
     private fun setBadge(text: String, color: Int, textColor: Int) {
         badge.text = text
         badge.setTextColor(textColor)
-        badge.background = rounded(color, 20)
+        badge.background = rectangle(color)
     }
 
     private fun setProgress(fraction: Float, color: Int) {
@@ -233,9 +233,9 @@ class LauncherPanelPresentation(
         gravity = Gravity.CENTER_VERTICAL
     }
 
-    private fun rounded(color: Int, radius: Int, stroke: Int? = null) = GradientDrawable().apply {
+    private fun rectangle(color: Int, stroke: Int? = null) = GradientDrawable().apply {
         setColor(color)
-        cornerRadius = dp(radius).toFloat()
+        cornerRadius = 0f
         stroke?.let { setStroke(dp(1), it) }
     }
 

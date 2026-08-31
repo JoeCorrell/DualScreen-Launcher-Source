@@ -1,20 +1,20 @@
 {
-    "version":  "launcher-2026.08.30-mod-sync-2",
+    "version":  "launcher-2026.08.31-mod-sync-4",
     "files":  [
                   {
                       "source":  "dxgi.dll",
                       "target":  "dxgi.dll",
-                      "sha256":  "79727f00e15ca4f5e14e53c08ae0caeb4e9ecd93a4388914a488348c3399ee15"
+                      "sha256":  "66c865272ac0d3faa7c8620724be98d10262e91152d0954da017d7f5c394ce02"
                   },
                   {
                       "source":  "Fallout4SecondScreen.ini",
                       "target":  "Fallout4SecondScreen.ini",
-                      "sha256":  "f5e26b1aad4c983c3a0903243705904c2d78af3670f2728204c28cd2a08971c5"
+                      "sha256":  "078e6c1bcedb03d5281f7a5d808f9d64e105473cc5c036c204832a35924e8851"
                   },
                   {
                       "source":  "Fallout4SecondScreen.owner",
                       "target":  "Fallout4SecondScreen.owner",
-                      "sha256":  "4b6e5a01e898b0da109bab1b2f5de04652f0c28567e9954540a4a45e032e6ae0"
+                      "sha256":  "1f499f247a52ac9d08f6f099dfee860ac9c5395275cf2795f15326b9ed11e235"
                   }
               ]
 }
