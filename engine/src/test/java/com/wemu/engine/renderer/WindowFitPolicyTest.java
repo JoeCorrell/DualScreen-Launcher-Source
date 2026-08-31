@@ -15,12 +15,14 @@ public class WindowFitPolicyTest {
     }
 
     @Test
-    public void smallerGameWindowsRemainEligible() {
+    public void gameWindowsRemainEligibleAtAnyValidSize() {
         assertTrue(WindowFitPolicy.shouldFit(true, 960, 540, 1280, 720,
                 "Fallout3.exe"));
         assertFalse(WindowFitPolicy.shouldFit(false, 960, 540, 1280, 720,
                 "Fallout3.exe"));
-        assertFalse(WindowFitPolicy.shouldFit(true, 1280, 720, 1280, 720,
+        assertTrue(WindowFitPolicy.shouldFit(true, 1280, 720, 1280, 720,
                 "Fallout3.exe"));
+        assertTrue(WindowFitPolicy.shouldFit(true, 1286, 755, 1280, 720,
+                "Stardew Valley.exe"));
     }
 }

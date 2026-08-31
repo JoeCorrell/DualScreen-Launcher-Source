@@ -1253,6 +1253,10 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
         }
 
         SecondScreenOutput.noteGuestWindow(window);
+        if (SecondScreenOutput.isStardewValleyPanelActive()) {
+            // The GDI-backed Stardew panel takes this CPU submission path.
+            setFitGuestWindow(true);
+        }
         synchronized (source.renderLock) {
             java.nio.ByteBuffer pixels = source.getBuffer();
             int stride = source.height > 0 && pixels != null
@@ -1288,6 +1292,9 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
             setFitGuestWindow(true);
         } else {
             SecondScreenOutput.noteGuestWindow(window);
+        }
+        if (SecondScreenOutput.isStardewValleyPanelActive()) {
+            setFitGuestWindow(true);
         }
 
         synchronized (source.renderLock) {

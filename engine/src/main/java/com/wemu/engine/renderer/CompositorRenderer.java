@@ -949,6 +949,11 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
         } else {
             SecondScreenOutput.noteGuestWindow(window);
         }
+        if (SecondScreenOutput.isStardewValleyPanelActive()) {
+            // Stardew centres its 1280x720 Wine window in the full stacked
+            // desktop. Fit the game client itself to the top panel.
+            setFitGuestWindow(true);
+        }
         final boolean submitted;
         if (source.getTexture() instanceof GPUImage) {
             // Existing native panels retain their zero-copy GPU path.

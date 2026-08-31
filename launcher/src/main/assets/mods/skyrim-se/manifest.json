@@ -1,5 +1,5 @@
 {
-    "version":  "launcher-2026.08.30-input-isolation",
+    "version":  "launcher-2026.08.30-mod-sync-2",
     "files":  [
                   {
                       "source":  "dxgi.dll",
@@ -24,7 +24,7 @@
                   {
                       "source":  "SkyrimSecondScreen.ini",
                       "target":  "SkyrimSecondScreen.ini",
-                      "sha256":  "3c3fc6b026dde4857c8c90d8508b4701edbda5b4be8f70a987e8bc26c0a4a40e"
+                      "sha256":  "08499a3e99706543bebb55e605c1bfa250601fea7c586e9438488f5061e373a7"
                   },
                   {
                       "source":  "Data/Scripts/ActiveMagicEffect.pex",

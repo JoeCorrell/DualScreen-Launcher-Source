@@ -2,7 +2,8 @@ param(
     [string]$Version = "2026.08.30.1",
     [string]$Repository = "JoeCorrell/DualScreen-Launcher-Payloads",
     [string]$Tag = "launcher-payloads-v1",
-    [string]$OutputDirectory = "payload-release/launcher-payloads-v1"
+    [string]$OutputDirectory = "payload-release/launcher-payloads-v1",
+    [string]$ExistingRuntimePack = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +18,7 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 function New-PayloadPack {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Root,
         [Parameter(Mandatory = $true)][System.IO.FileInfo[]]$Files,
         [Parameter(Mandatory = $true)][System.IO.Compression.CompressionLevel]$Compression
     )
@@ -64,24 +66,55 @@ function New-PayloadPack {
     $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
     [ordered]@{
         name = $result.Name
+        root = $Root
         bytes = $result.Length
         sha256 = $hash
         url = "https://github.com/$Repository/releases/download/$Tag/$($result.Name)"
     }
 }
 
-$componentFiles = @(
-    Get-ChildItem -LiteralPath (Join-Path $assetsRoot "components") -File |
-        Where-Object { $_.Extension -eq ".tgz" }
-)
+function Get-PayloadPackDescriptor {
+    param(
+        [Parameter(Mandatory = $true)][System.IO.FileInfo]$File,
+        [Parameter(Mandatory = $true)][string]$Root
+    )
+
+    [ordered]@{
+        name = $File.Name
+        root = $Root
+        bytes = $File.Length
+        sha256 = (Get-FileHash -LiteralPath $File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        url = "https://github.com/$Repository/releases/download/$Tag/$($File.Name)"
+    }
+}
+
+$componentsRoot = Join-Path $assetsRoot "components"
+$componentFiles = if (Test-Path -LiteralPath $componentsRoot) {
+    @(Get-ChildItem -LiteralPath $componentsRoot -File |
+        Where-Object { $_.Extension -eq ".tgz" })
+} else {
+    @()
+}
 $modFiles = @(
     Get-ChildItem -LiteralPath (Join-Path $assetsRoot "mods") -Recurse -File |
-        Where-Object { $_.FullName.Replace('\', '/') -match '/payload/' }
+        Where-Object {
+            $normalized = $_.FullName.Replace('\', '/')
+            $normalized -match '/payload/' -or $_.Name -eq 'manifest.json'
+        }
 )
 
+$runtimePack = if ($componentFiles.Count -gt 0) {
+    New-PayloadPack -Name "runtime-components-$Version.zip" -Root "components" -Files $componentFiles -Compression ([System.IO.Compression.CompressionLevel]::NoCompression)
+} elseif ($ExistingRuntimePack) {
+    $existing = Get-Item -LiteralPath $ExistingRuntimePack -ErrorAction Stop
+    Get-PayloadPackDescriptor -File $existing -Root "components"
+} else {
+    throw "No component archives were found. Supply -ExistingRuntimePack to reuse a verified runtime pack."
+}
+
 $packs = @(
-    New-PayloadPack -Name "runtime-components-$Version.zip" -Files $componentFiles -Compression ([System.IO.Compression.CompressionLevel]::NoCompression)
-    New-PayloadPack -Name "game-mods-$Version.zip" -Files $modFiles -Compression ([System.IO.Compression.CompressionLevel]::Optimal)
+    $runtimePack
+    New-PayloadPack -Name "game-mods-$Version.zip" -Root "mods" -Files $modFiles -Compression ([System.IO.Compression.CompressionLevel]::Optimal)
 )
 
 $manifest = [ordered]@{

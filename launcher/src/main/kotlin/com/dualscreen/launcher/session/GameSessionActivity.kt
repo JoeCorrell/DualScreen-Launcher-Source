@@ -38,6 +38,7 @@ import com.wemu.engine.container.Container
 import com.wemu.engine.container.Shortcut
 import com.wemu.engine.core.Callback
 import com.wemu.engine.core.ProcessHelper
+import com.wemu.engine.session.StardewDisplayCompatibility
 import com.wemu.engine.renderer.ASurfaceRenderer
 import com.wemu.engine.renderer.SecondScreenOutput
 import com.wemu.engine.widget.InputControlsView
@@ -212,7 +213,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         }
         launchStatus.record(
             "DISPLAY",
-            "fullscreen=borderless resolution=${selectedResolution.containerValue} " +
+            "fullscreen=${if (game.id == "stardew-valley") "exclusive" else "borderless"} " +
+                "resolution=${selectedResolution.containerValue} " +
                 "containerChanged=$resolutionChanged dpi=${container.dpi}",
         )
 
@@ -232,6 +234,36 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             )
         } else {
             launchStatus.record("CONTAINER", "Runtime materialization revision is current")
+        }
+
+        if (game.id == "stardew-valley") {
+            val display = withContext(Dispatchers.IO) {
+                StardewDisplayCompatibility.ensure(
+                    container.rootDir,
+                    selectedResolution.width,
+                    selectedResolution.height,
+                )
+            }
+            if (!display.successful) {
+                val detail = "Could not repair Stardew display profile at ${display.preferencesFile}"
+                Log.e(TAG, detail)
+                finishWithMessage(detail)
+                return
+            }
+            launchStatus.record(
+                "DISPLAY",
+                when {
+                    !display.profileExists ->
+                        "Stardew startup profile is not present yet; the game will create it at " +
+                            selectedResolution.containerValue
+                    display.changed ->
+                        "Repaired Stardew startup profile for ${selectedResolution.containerValue}; " +
+                            "fields=${display.matchedFields}/${display.expectedFields}"
+                    else ->
+                        "Verified Stardew startup profile for ${selectedResolution.containerValue}; " +
+                            "fields=${display.matchedFields}/${display.expectedFields}"
+                },
+            )
         }
 
         val target = resolveGuestTarget(container, shortcut.path)
@@ -270,6 +302,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                 "COMPATIBILITY",
                 "Fallout registry and launch profile verified; " +
                     "installedPath=${fallout.installedPath} " +
+                    "dinput8=${fallout.dinput8Override} " +
+                    "userReg=${fallout.userRegistry.absolutePath} " +
                     "falloutIni=${fallout.falloutIni.absolutePath} " +
                     "prefs=${fallout.preferencesFile.absolutePath} " +
                     "seededIni=${fallout.seededFalloutIni} " +

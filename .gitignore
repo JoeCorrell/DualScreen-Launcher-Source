@@ -10,6 +10,7 @@ externalNativeBuild/
 /artifacts/
 /backups/
 /payload-release/
+/launcher/src/main/assets/mods/*/payload/
 keystore.properties
 *.jks
 *.keystore

@@ -16,6 +16,8 @@ internal object Fallout3LaunchConfiguration {
     data class Result(
         val installedPath: String,
         val systemRegistry: File,
+        val userRegistry: File,
+        val dinput8Override: String,
         val falloutIni: File,
         val preferencesFile: File,
         val seededFalloutIni: Boolean,
@@ -36,6 +38,8 @@ internal object Fallout3LaunchConfiguration {
         val prefix = File(containerRoot, ".wine")
         val systemRegistry = File(prefix, "system.reg")
         check(systemRegistry.isFile) { "The Wine system registry is unavailable" }
+        val userRegistry = File(prefix, "user.reg")
+        check(userRegistry.isFile) { "The Wine user registry is unavailable" }
         val settings = File(containerRoot, SETTINGS_PATH)
         check(settings.isDirectory || settings.mkdirs()) {
             "Could not create Fallout 3's settings directory"
@@ -69,6 +73,23 @@ internal object Fallout3LaunchConfiguration {
                 "Fallout 3's Installed Path registry value could not be verified"
             }
         }
+        // The second-screen mod is an app-local dinput8 proxy. Wine prefers its
+        // builtin dinput8 unless this executable-scoped policy is present. Do
+        // this on every launch: a copied-container provisioning receipt is not
+        // proof that the private prefix's user.reg contains the policy, and a
+        // launcher/settings run may rewrite the registry after provisioning.
+        WineRegistryEditor(userRegistry).use { registry ->
+            Fallout3Compatibility.applyExecutableOverrides(registry)
+        }
+        val dinput8Override = WineRegistryEditor(userRegistry).use { registry ->
+            registry.getStringValue(
+                "Software\\Wine\\AppDefaults\\Fallout3.exe\\DllOverrides",
+                "dinput8",
+            )
+        }
+        check(dinput8Override.equals("native,builtin", ignoreCase = true)) {
+            "Fallout 3's second-screen DLL override could not be verified"
+        }
         check(Fallout3Compatibility.applyRuntimeSettings(prefix)) {
             "Fallout 3's controller and compatibility INIs could not be prepared"
         }
@@ -91,6 +112,8 @@ internal object Fallout3LaunchConfiguration {
         return Result(
             installedPath = installedPath,
             systemRegistry = systemRegistry,
+            userRegistry = userRegistry,
+            dinput8Override = dinput8Override,
             falloutIni = falloutIni,
             preferencesFile = preferencesFile,
             seededFalloutIni = seededFalloutIni,

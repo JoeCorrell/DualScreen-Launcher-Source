@@ -87,6 +87,7 @@ class GameInstaller(
                     payloadIsCurrent(root, bundled)
                 }
                 if (installed.payloadVersion == bundled.version && currentFilesMatch) {
+                    Log.i(LOG_TAG, "Verified ${game.id} payload ${bundled.version}")
                     publish(
                         game.id,
                         InstallStage.COMPLETE,
@@ -108,6 +109,7 @@ class GameInstaller(
                 }
                 withContext(Dispatchers.IO) { verify(game, root, applied) }
                 installed.copy(payloadVersion = applied.version).also(registry::put).also {
+                    Log.i(LOG_TAG, "Updated ${game.id} payload to ${applied.version}")
                     publish(
                         game.id,
                         InstallStage.COMPLETE,

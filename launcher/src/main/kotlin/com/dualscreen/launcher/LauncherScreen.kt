@@ -38,6 +38,7 @@ internal fun LauncherScreen(
     model: LauncherViewModel,
     onPlay: (SupportedGame, InstalledGame) -> Unit,
     onConfigure: (SupportedGame, InstalledGame) -> Unit,
+    onOpenUpdate: (String) -> Unit,
 ) {
     val installed by model.installed.collectAsStateWithLifecycle()
     val progress by model.progress.collectAsStateWithLifecycle()
@@ -47,6 +48,7 @@ internal fun LauncherScreen(
     val gpuDriverImportState by model.gpuDriverImportState.collectAsStateWithLifecycle()
     val gpuDriverMessage by model.gpuDriverMessage.collectAsStateWithLifecycle()
     val payloadState by model.payloadState.collectAsStateWithLifecycle()
+    val updateState by model.updateState.collectAsStateWithLifecycle()
     var pendingGame by remember { mutableStateOf<SupportedGame?>(null) }
     var pendingSaveGame by remember { mutableStateOf<Pair<SupportedGame, InstalledGame>?>(null) }
     var page by remember { mutableStateOf<LauncherPage>(LauncherPage.Games) }
@@ -110,6 +112,7 @@ internal fun LauncherScreen(
                 onGuide = { page = LauncherPage.Guide },
                 onSettings = { page = LauncherPage.Settings },
             )
+            LauncherUpdateBanner(updateState, onOpenUpdate)
             AnimatedContent(
                 targetState = page,
                 modifier = Modifier.weight(1f),

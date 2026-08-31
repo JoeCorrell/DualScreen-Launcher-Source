@@ -1,5 +1,5 @@
 {
-    "version":  "launcher-2026.08.30-input-isolation",
+    "version":  "launcher-2026.08.30-mod-sync-2",
     "files":  [
                   {
                       "source":  "dxgi.dll",
@@ -9,7 +9,7 @@
                   {
                       "source":  "Fallout4SecondScreen.ini",
                       "target":  "Fallout4SecondScreen.ini",
-                      "sha256":  "6e68ee64688a5c281aeedefdaeacef6d2aed5d35bbee548d312df8407b40a5f4"
+                      "sha256":  "f5e26b1aad4c983c3a0903243705904c2d78af3670f2728204c28cd2a08971c5"
                   },
                   {
                       "source":  "Fallout4SecondScreen.owner",

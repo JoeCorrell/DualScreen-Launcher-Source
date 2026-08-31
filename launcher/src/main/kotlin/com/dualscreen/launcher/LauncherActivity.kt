@@ -3,6 +3,7 @@ package com.dualscreen.launcher
 import android.content.Context
 import android.content.Intent
 import android.hardware.display.DisplayManager
+import android.net.Uri
 import android.os.Bundle
 import android.view.View
 import androidx.activity.ComponentActivity
@@ -32,6 +33,9 @@ class LauncherActivity : ComponentActivity() {
                     model = model,
                     onPlay = { game, installed -> launch(game, installed, configuration = false) },
                     onConfigure = { game, installed -> launch(game, installed, configuration = true) },
+                    onOpenUpdate = { url ->
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    },
                 )
             }
         }
@@ -60,6 +64,7 @@ class LauncherActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         window.decorView.systemUiVisibility = FULLSCREEN_FLAGS
+        model.refreshUpdates()
         showLowerPanel()
     }
 

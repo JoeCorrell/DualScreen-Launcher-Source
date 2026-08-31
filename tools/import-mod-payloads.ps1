@@ -1,12 +1,16 @@
 param(
     [Parameter(Mandatory = $false)]
-    [string]$WemuRoot = "C:\Projects\New folder (10)"
+    [string]$WemuRoot = "C:\Projects\New folder (10)",
+
+    [Parameter(Mandatory = $false)]
+    [string]$PayloadVersion = "launcher-2026.08.30-mod-sync-2"
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $assetRoot = Join-Path $projectRoot "launcher\src\main\assets\mods"
 $modRoot = Join-Path $WemuRoot "dualscreen\mods"
+$importedEntries = 0
 
 function Reset-Payload([string]$Id) {
     $directory = Join-Path $assetRoot $Id
@@ -54,7 +58,7 @@ function Write-Manifest(
     )
 }
 
-$version = "wemu-current-2026.08.30-player-magic-input"
+$version = $PayloadVersion
 
 # Skyrim ships the complete tested SKSE package, preserving every relative path.
 $directory = Reset-Payload "skyrim-se"
@@ -66,6 +70,20 @@ Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | ForEach-Object {
     Add-PayloadFile $entries $payload $_.FullName $relative $relative
 }
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
+
+# Fallout 3 uses a game-local dinput8 proxy. Keep it in the reproducible import
+# path with the other native payloads so a payload release can never retain an
+# older INI or accidentally omit the DLL override configuration.
+$directory = Reset-Payload "fallout3"
+$payload = Join-Path $directory "payload"
+$entries = [System.Collections.Generic.List[object]]::new()
+$sourceRoot = Join-Path $modRoot "Fallout3SecondScreen\package"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dinput8.dll") "dinput8.dll" "dinput8.dll"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "Fallout3SecondScreen.ini") "Fallout3SecondScreen.ini" "Fallout3SecondScreen.ini"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dxvk.conf") "dxvk.conf" "dxvk.conf"
+Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 $directory = Reset-Payload "fallout4"
 $payload = Join-Path $directory "payload"
@@ -75,6 +93,7 @@ Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dxgi.dll") "dxgi.dll" 
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "Fallout4SecondScreen.ini") "Fallout4SecondScreen.ini" "Fallout4SecondScreen.ini"
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "Fallout4SecondScreen.owner") "Fallout4SecondScreen.owner" "Fallout4SecondScreen.owner"
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 $directory = Reset-Payload "grim-dawn"
 $payload = Join-Path $directory "payload"
@@ -84,6 +103,7 @@ Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dxgi.dll") "dxgi.dll" 
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "GrimDawnSecondScreen.ini") "GrimDawnSecondScreen.ini" "GrimDawnSecondScreen.ini"
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "GrimDawnSecondScreen.owner") "GrimDawnSecondScreen.owner" "GrimDawnSecondScreen.owner"
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 $directory = Reset-Payload "deus-ex-hrdc"
 $payload = Join-Path $directory "payload"
@@ -91,6 +111,7 @@ $entries = [System.Collections.Generic.List[object]]::new()
 Add-PayloadFile $entries $payload (Join-Path $modRoot "DeusExSecondScreen\dist\DeusExSecondScreen-AYN-Thor\dxgi.dll") "dxgi.dll" "dxgi.dll"
 Add-PayloadFile $entries $payload (Join-Path $modRoot "DeusExSecondScreen\dist\DeusExSecondScreen-AYN-Thor\DeusExSecondScreen.ini") "DeusExSecondScreen.ini" "DeusExSecondScreen.ini"
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 $directory = Reset-Payload "dead-island-de"
 $payload = Join-Path $directory "payload"
@@ -98,14 +119,18 @@ $entries = [System.Collections.Generic.List[object]]::new()
 Add-PayloadFile $entries $payload (Join-Path $modRoot "DeadIslandSecondScreen\build\dxgi.dll") "dxgi.dll" "dxgi.dll"
 Add-PayloadFile $entries $payload (Join-Path $modRoot "DeadIslandSecondScreen\DeadIslandSecondScreen.ini") "DeadIslandSecondScreen.ini" "DeadIslandSecondScreen.ini"
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 $directory = Reset-Payload "valheim"
 $payload = Join-Path $directory "payload"
 $entries = [System.Collections.Generic.List[object]]::new()
 Add-PayloadFile $entries $payload (Join-Path $modRoot "ValheimSecondScreen\bin\Release\net471\ValheimSecondScreen.dll") "ValheimSecondScreen.dll" "BepInEx/plugins/ValheimSecondScreen/ValheimSecondScreen.dll"
 Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
 
 & (Join-Path $PSScriptRoot "import-stardew-native-payload.ps1") -WemuRoot $WemuRoot
 if ($LASTEXITCODE -ne 0) { throw "The Stardew native payload import failed" }
+$stardewManifest = Get-Content -Raw (Join-Path $assetRoot "stardew-valley\manifest.json") | ConvertFrom-Json
+$importedEntries += @($stardewManifest.files).Count + @($stardewManifest.patches).Count
 
-Write-Output "Imported $($entries.Count) final payload entries into $assetRoot"
+Write-Output "Imported $importedEntries payload entries into $assetRoot"

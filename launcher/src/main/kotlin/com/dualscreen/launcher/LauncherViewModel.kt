@@ -18,6 +18,8 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val gpuDrivers = app.gpuDrivers.drivers
     val gpuDriverImportState = app.gpuDrivers.importState
     internal val payloadState = app.payloads.state
+    internal val updateState = app.updates.state
+    private var synchronizedPayloadVersion: String? = null
 
     private val mutableGpuDriverMessage = MutableStateFlow<String?>(null)
     val gpuDriverMessage: StateFlow<String?> = mutableGpuDriverMessage.asStateFlow()
@@ -26,8 +28,28 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val installed: StateFlow<Map<String, InstalledGame>> = mutableInstalled.asStateFlow()
 
     init {
-        viewModelScope.launch { app.payloads.ensureReady() }
+        refreshUpdates()
         viewModelScope.launch { app.gpuDrivers.refresh() }
+    }
+
+    fun refreshUpdates() {
+        viewModelScope.launch {
+            app.payloads.ensureReady()
+            synchronizeInstalledMods()
+        }
+        viewModelScope.launch { app.updates.check() }
+    }
+
+    private suspend fun synchronizeInstalledMods() {
+        val ready = payloadState.value as? PayloadBootstrapState.Ready ?: return
+        if (synchronizedPayloadVersion == ready.version) return
+        app.registry.all().values.forEach { installed ->
+            GameCatalog.byId(installed.gameId)?.let { game ->
+                app.installer.ensureCurrentPayload(game)
+            }
+        }
+        mutableInstalled.value = app.registry.all()
+        synchronizedPayloadVersion = ready.version
     }
 
     fun install(game: SupportedGame, archive: Uri) {
@@ -80,6 +102,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun retryPayloadBootstrap() {
-        viewModelScope.launch { app.payloads.ensureReady(force = true) }
+        viewModelScope.launch {
+            app.payloads.ensureReady(force = true)
+            synchronizedPayloadVersion = null
+            synchronizeInstalledMods()
+        }
     }
 }

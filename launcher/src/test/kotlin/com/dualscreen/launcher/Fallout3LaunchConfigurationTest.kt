@@ -15,6 +15,7 @@ class Fallout3LaunchConfigurationTest {
         val prefix = container.resolve(".wine")
         prefix.mkdirs()
         prefix.resolve("system.reg").writeText("WINE REGISTRY Version 2\n")
+        prefix.resolve("user.reg").writeText("WINE REGISTRY Version 2\n")
         val game = temporary.newFolder("fallout3")
         game.resolve("Fallout.ini").writeText("[Controls]\nbUse Joystick=0\n")
         game.resolve("Fallout3").mkdirs()
@@ -38,6 +39,9 @@ class Fallout3LaunchConfigurationTest {
         assertThat(result.preferencesFile.readText()).contains("iSize H=720")
         assertThat(result.systemRegistry.readText()).contains("Installed Path")
         assertThat(result.systemRegistry.readText()).contains("C:\\\\Games\\\\fallout3\\\\")
+        assertThat(result.dinput8Override).isEqualTo("native,builtin")
+        assertThat(result.userRegistry.readText()).contains("Fallout3.exe")
+        assertThat(result.userRegistry.readText()).contains("\"dinput8\"=\"native,builtin\"")
     }
 
     @Test
@@ -46,6 +50,7 @@ class Fallout3LaunchConfigurationTest {
         val prefix = container.resolve(".wine")
         prefix.mkdirs()
         prefix.resolve("system.reg").writeText("WINE REGISTRY Version 2\n")
+        prefix.resolve("user.reg").writeText("WINE REGISTRY Version 2\n")
         val settings = container.resolve(
             ".wine/drive_c/users/xuser/Documents/My Games/Fallout3",
         )

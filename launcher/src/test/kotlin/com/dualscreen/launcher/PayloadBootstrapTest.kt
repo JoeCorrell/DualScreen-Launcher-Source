@@ -12,11 +12,14 @@ class PayloadBootstrapTest {
             {
               "schema": 1,
               "version": "v1",
+              "repository": "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads",
+              "tag": "launcher-payloads-v1",
               "packs": [{
                 "name": "runtime.zip",
+                "root": "components",
                 "bytes": 42,
                 "sha256": "${"a".repeat(64)}",
-                "url": "https://github.com/example/payloads/releases/download/v1/runtime.zip"
+                "url": "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/launcher-payloads-v1/runtime.zip"
               }]
             }
             """.trimIndent(),
@@ -34,8 +37,11 @@ class PayloadBootstrapTest {
                 {
                   "schema": 1,
                   "version": "v1",
+                  "repository": "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads",
+                  "tag": "launcher-payloads-v1",
                   "packs": [{
                     "name": "runtime.zip",
+                    "root": "components",
                     "bytes": 42,
                     "sha256": "${"a".repeat(64)}",
                     "url": "https://example.invalid/runtime.zip"
@@ -44,6 +50,14 @@ class PayloadBootstrapTest {
                 """.trimIndent(),
             )
         }
+    }
+
+    @Test
+    fun versionComparisonHandlesPayloadDatesAndLauncherTags() {
+        assertThat(isNewerVersion("2026.08.30.2", "2026.08.30.1")).isTrue()
+        assertThat(isNewerVersion("v1.1.0", "1.0.9")).isTrue()
+        assertThat(isNewerVersion("1.0.0", "v1.0.0")).isFalse()
+        assertThat(isNewerVersion("1.0.0", "1.0.1")).isFalse()
     }
 
     @Test

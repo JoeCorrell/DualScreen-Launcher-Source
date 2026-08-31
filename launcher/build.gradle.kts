@@ -17,7 +17,7 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 3
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 4
         versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
@@ -50,6 +50,7 @@ android {
     }
 
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
+    sourceSets["main"].assets.exclude("mods/**/payload/**")
     packaging { jniLibs { useLegacyPackaging = true } }
 }
 

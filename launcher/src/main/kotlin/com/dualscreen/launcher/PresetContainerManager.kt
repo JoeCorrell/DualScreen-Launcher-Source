@@ -380,6 +380,8 @@ class PresetContainerManager(private val context: Context) {
             "fexcoreVersion",
             "box64Version",
             "skyrimAudioProvisioning",
+            "fallout3Compatibility",
+            "bethesdaLauncherCompatibility",
             "audioDriver",
             "dpi",
             "startupSelection",
