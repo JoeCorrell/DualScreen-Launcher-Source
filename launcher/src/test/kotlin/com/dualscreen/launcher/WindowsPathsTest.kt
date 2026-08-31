@@ -50,4 +50,16 @@ class WindowsPathsTest {
         assertThat(resolveConfigurationLauncherExecutable(root, game))
             .isEqualTo(launcher.name)
     }
+
+    @Test
+    fun resolvesFallout3NamedLauncherRegardlessOfCapitalization() {
+        val root = temporaryFolder.newFolder("fallout3-named-launcher")
+        val launcher = root.resolve("FALLOUT3LAUNCHER.EXE").apply {
+            writeBytes(byteArrayOf(4))
+        }
+        val game = checkNotNull(GameCatalog.byId("fallout3"))
+
+        assertThat(resolveConfigurationLauncherExecutable(root, game))
+            .isEqualTo(launcher.name)
+    }
 }

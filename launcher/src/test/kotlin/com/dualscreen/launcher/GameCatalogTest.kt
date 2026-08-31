@@ -108,6 +108,7 @@ class GameCatalogTest {
         assertThat(skyrim.configurationLauncherCandidates).containsExactly("SkyrimSELauncher.exe")
         assertThat(fallout3.executableCandidates).containsExactly("Fallout3.exe")
         assertThat(fallout3.configurationLauncherCandidates).containsExactly(
+            "Fallout3Launcher.exe",
             "FalloutLauncher.exe",
             "FalloutLauncherSteam.exe",
             "FalloutLauncherEpic.exe",

@@ -18,8 +18,11 @@ public final class Fallout3Compatibility {
     private static final String GAME_EXECUTABLE = "fallout3.exe";
     private static final String[] LAUNCH_CHAIN = {
             GAME_EXECUTABLE,
+            "fallout3launcher.exe",
             "falloutlauncher.exe",
             "falloutlaunchersteam.exe",
+            "falloutlauncherepic.exe",
+            "falloutlaunchergog.exe",
     };
     private static final String FALLOUT_SETTINGS =
             "drive_c/users/xuser/Documents/My Games/Fallout3";

@@ -6,8 +6,11 @@ import com.wemu.engine.core.WineRegistryEditor;
 public final class BethesdaLauncherCompatibility {
     public static final String PROVISIONING_REVISION = "3";
     static final String[] LAUNCHER_EXECUTABLES = {
+            "Fallout3Launcher.exe",
             "FalloutLauncherSteam.exe",
             "FalloutLauncher.exe",
+            "FalloutLauncherEpic.exe",
+            "FalloutLauncherGOG.exe",
             "SkyrimSELauncher.exe"
     };
 

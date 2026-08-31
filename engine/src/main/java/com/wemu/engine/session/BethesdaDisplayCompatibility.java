@@ -24,7 +24,9 @@ public final class BethesdaDisplayCompatibility {
             "drive_c/users/xuser/Documents/My Games";
 
     private static final String[] SUPPORTED_EXECUTABLES = {
-            "fallout3.exe", "falloutlauncher.exe", "falloutlaunchersteam.exe",
+            "fallout3.exe", "fallout3launcher.exe", "falloutlauncher.exe",
+            "falloutlaunchersteam.exe", "falloutlauncherepic.exe",
+            "falloutlaunchergog.exe",
             "falloutnv.exe", "falloutnvlauncher.exe",
             "fallout4.exe", "fallout4launcher.exe",
             "fallout76.exe", "fallout76launcher.exe",

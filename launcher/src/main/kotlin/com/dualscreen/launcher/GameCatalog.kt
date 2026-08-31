@@ -82,6 +82,7 @@ object GameCatalog {
             requiredBuild = "Fallout 3 1.7.0.4",
             executableCandidates = listOf("Fallout3.exe"),
             configurationLauncherCandidates = listOf(
+                "Fallout3Launcher.exe",
                 "FalloutLauncher.exe",
                 "FalloutLauncherSteam.exe",
                 "FalloutLauncherEpic.exe",

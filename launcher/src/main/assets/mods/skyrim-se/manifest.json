@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.08.31-mod-sync-4",
+    "version":  "launcher-2026.08.31-mod-sync-5",
     "files":  [
                   {
                       "source":  "dxgi.dll",
                       "target":  "dxgi.dll",
-                      "sha256":  "9457ad5ee31a3e3291f4e9b92e74cebc6dee514ca2ac67c5ea449198cfb8b953"
+                      "sha256":  "8b57871bd5fb0c556d06d7a2af6b3a673548c120f6f373dbb2b698f94da6a74f"
                   },
                   {
                       "source":  "skse64_1_5_97.dll",
@@ -649,7 +649,7 @@
                   {
                       "source":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
                       "target":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
-                      "sha256":  "12fbd55a03e094cadb468aa994975a74807fa0249e505d0e0c2deb84b24af3a7"
+                      "sha256":  "47253cca267009a50b95237e1a8383ed7d05c7cd0a8e2d3a094870d46ae79657"
                   }
               ]
 }

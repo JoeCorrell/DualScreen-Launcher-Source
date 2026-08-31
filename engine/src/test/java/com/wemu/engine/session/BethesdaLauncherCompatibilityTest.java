@@ -13,6 +13,8 @@ public class BethesdaLauncherCompatibilityTest {
         assertTrue(Arrays.asList(BethesdaLauncherCompatibility.LAUNCHER_EXECUTABLES)
                 .contains("FalloutLauncherSteam.exe"));
         assertTrue(Arrays.asList(BethesdaLauncherCompatibility.LAUNCHER_EXECUTABLES)
+                .contains("Fallout3Launcher.exe"));
+        assertTrue(Arrays.asList(BethesdaLauncherCompatibility.LAUNCHER_EXECUTABLES)
                 .contains("FalloutLauncher.exe"));
         assertTrue(Arrays.asList(BethesdaLauncherCompatibility.LAUNCHER_EXECUTABLES)
                 .contains("SkyrimSELauncher.exe"));
