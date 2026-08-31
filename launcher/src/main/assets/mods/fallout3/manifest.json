@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.08.30-fo3-ui-alignment",
+    "version":  "launcher-2026.08.30-fo3-ui-stability",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "dinput8.dll",
-                      "sha256":  "35d0d2ba69c1f60ee1332b24a988fd4edfc0ae5c13d9a303f5cc6b6e77fc972b"
+                      "sha256":  "2e40303f21f22c1c1fd4cbde79e0a44d45e3346296b176ebca7037b2abf0b2a0"
                   },
                   {
                       "source":  "Fallout3SecondScreen.ini",
