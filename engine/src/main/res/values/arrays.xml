@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trimmed to what the engine still uses. -->
+<resources>
+    <string-array name="wrapper_graphics_driver_version_entries">
+        <item>System</item>
+        <item>v819</item>
+        <item>turnip26.2.0</item>
+    </string-array>
+    <string-array name="wine_entries">
+        <item>proton-9.0-arm64ec</item>
+    </string-array>
+    <string-array name="fexcore_version_entries">
+        <item>2601</item>
+    </string-array>
+    <!--
+        The DXVK and VKD3D builds this app offers.
+
+        These used to be discovered by listing `assets/dxwrapper`, which stopped
+        working the moment those archives moved out of the APK and onto the
+        release: the directory is empty, so the container editor offered no DXVK
+        and no VKD3D at all. The graphics driver list above never had that
+        problem because it was already an array, for the same reason it is one
+        now — what a container may be configured with is a decision, not a
+        side effect of which files happen to be lying around.
+
+        Every entry here must exist on the payload release as
+        `dxwrapper__dxvk-<version>.tzst`, because that is where it is fetched
+        from when a container first asks for it, so this list and that release
+        are one decision, not two. The extra builds that were briefly on both
+        were removed together.
+
+        `d8vk` is not here because it is not a choice: it is extracted alongside
+        whichever DXVK is selected, so it is prefetched rather than listed.
+    -->
+    <string-array name="dxvk_version_entries">
+        <item>2.3.1</item>
+    </string-array>
+    <string-array name="vkd3d_version_entries">
+        <item>2.8</item>
+    </string-array>
+</resources>

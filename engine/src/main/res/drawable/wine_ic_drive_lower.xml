@@ -1,0 +1,16 @@
+<!--
+  A drive as a stack of two plates: the lower one, in shadow.
+
+  The shipped icon is a beige slab in perspective, which reads as a drive only
+  because everyone learned it in 1995 and does not survive being 16 pixels wide.
+  Two plates and a lamp say storage without the perspective.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.2,24 h33.6 a3.2,3.2 0 0 1 3.2,3.2 v6.6 a3.2,3.2 0 0 1 -3.2,3.2 h-33.6 a3.2,3.2 0 0 1 -3.2,-3.2 v-6.6 a3.2,3.2 0 0 1 3.2,-3.2 z" />
+</vector>

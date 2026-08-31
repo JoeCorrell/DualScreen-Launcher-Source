@@ -1,0 +1,10 @@
+{
+  "capturedFrom": "WEMU containers xuser-2 (Games) and xuser-5 (proton 9) on AYN Thor",
+  "components": [
+    { "id": "Proton-10.0-arm64ec-0", "source": "Proton-10.0-arm64ec-0.tgz", "bytes": 475714223, "sha256": "0e886b6c3bb5ae500a6673e9dca55c94c1476e65fb39fdaca652f6da44227bf6" },
+    { "id": "Proton-11.0-5-arm64ec-6", "source": "Proton-11.0-5-arm64ec-6.tgz", "bytes": 152475728, "sha256": "8a6cc23f50711d8d7f4d3e5f9041d1a3cf90044520d6cdf5e6a2897cb32367e9" },
+    { "id": "FEXCore-FEXCore-2608-stable-0", "source": "FEXCore-FEXCore-2608-stable-0.tgz", "bytes": 1758922, "sha256": "baff99ec7dfe48be93f8e40ae6f20f822ddf2cc208192357a64c2583965c1d58" },
+    { "id": "DXVK-3.0-1-gplasync-0", "source": "DXVK-3.0-1-gplasync-0.tgz", "bytes": 17322039, "sha256": "bbc7336690f25ede5f220d1adcf80b8f10b02957dee8c91324047408129fb4cd" },
+    { "id": "VKD3D-2.9-0", "source": "VKD3D-2.9-0.tgz", "bytes": 2492457, "sha256": "58bb917b91c55bdade08ff90e67b2a5f6aa838a7ed6f3dd4c2ceb5d6d2326675" }
+  ]
+}

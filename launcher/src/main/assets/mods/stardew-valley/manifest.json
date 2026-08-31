@@ -1,0 +1,15 @@
+{
+    "version":  "wemu-current-2026.08.30-player-magic-input",
+    "files":  [
+                  {
+                      "source":  "StardewDualScreen.dll",
+                      "target":  "Mods/StardewDualScreen/StardewDualScreen.dll",
+                      "sha256":  "6c6d3c771dd527b20d400a863a58c09c0cc1729e8fbdf204b68de4e8c0f241c7"
+                  },
+                  {
+                      "source":  "manifest.json",
+                      "target":  "Mods/StardewDualScreen/manifest.json",
+                      "sha256":  "2d6f4b310c7932058a89dcc9a6afc75b3ca15367a38801c0b0967fdcafa3c5fa"
+                  }
+              ]
+}

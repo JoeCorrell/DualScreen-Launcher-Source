@@ -1,0 +1,14 @@
+<!--
+  The lamp: the only part of a drive that is the accent, and the only part that
+  changes when the drive is gone — WineIconTheme tints it with the alert colour
+  for DRIVE_OFFLINE and leaves every other layer alone.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M37.4,17.5 m-2.3,0 a2.3,2.3 0 1 0 4.6,0 a2.3,2.3 0 1 0 -4.6,0 z" />
+</vector>

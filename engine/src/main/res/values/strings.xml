@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trimmed to what the engine still uses. -->
+<resources>
+    <string name="xr" translatable="false">XR</string>
+    <string name="unable_to_install_system_files">Unable to install system files</string>
+    <string name="stability">Stability</string>
+    <string name="performance">Performance</string>
+    <string name="intermediate">Intermediate</string>
+
+    <!--
+        Presets named after what they are for rather than where they sit on a
+        speed dial, because that is how they get chosen correctly. "Unity" is a
+        question the user can answer about a game; "Level 5" is not.
+    -->
+    <string name="preset_performance_mali">Performance (Mali)</string>
+    <string name="preset_extreme">Extreme</string>
+    <string name="preset_unity">Unity</string>
+    <string name="preset_unity_mono">Unity (Mono bleeding edge)</string>
+    <string name="preset_denuvo">Denuvo</string>
+    <string name="installing_wine_files">Installing Wine Files...</string>
+    <string name="downloading_system_files">Downloading the system files…</string>
+    <string name="downloading_wine_files">Downloading Wine…</string>
+    <string name="downloading_container_files">Downloading graphics components…</string>
+    <string name="installing_system_files">Installing System Files…</string>
+    <string name="disabled">Disabled</string>
+    <string name="compatibility">Compatibility</string>
+    <string name="app_name">wemu</string>
+    <string name="_copy">copy</string>
+    <string name="cancel">Cancel</string>
+    <string name="downloading_file">Downloading File...</string>
+</resources>

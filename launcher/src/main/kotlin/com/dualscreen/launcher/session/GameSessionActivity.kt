@@ -1,0 +1,944 @@
+package com.dualscreen.launcher.session
+
+import android.content.Context
+import android.hardware.display.DisplayManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.view.InputDevice
+import android.view.View
+import android.view.KeyEvent
+import android.view.MotionEvent
+import android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+import android.util.Log
+import android.widget.FrameLayout
+import android.widget.TextView
+import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
+import androidx.preference.PreferenceManager
+import com.dualscreen.launcher.CompanionTheme
+import com.dualscreen.launcher.DualScreenLauncherApplication
+import com.dualscreen.launcher.GameCatalog
+import com.dualscreen.launcher.Fallout3LaunchConfiguration
+import com.dualscreen.launcher.GameResolution
+import com.dualscreen.launcher.LaunchStatusStore
+import com.dualscreen.launcher.LowerPanelMode
+import com.dualscreen.launcher.PresetContainerManager
+import com.dualscreen.launcher.SupportedGame
+import com.dualscreen.launcher.SkyrimGamepadConfiguration
+import com.dualscreen.launcher.resolveConfigurationLauncherExecutable
+import com.dualscreen.launcher.supportedGameLaunchEnvironment
+import com.thor.core.display.DisplayTopology
+import com.wemu.engine.XServerHost
+import com.wemu.engine.container.Container
+import com.wemu.engine.container.Shortcut
+import com.wemu.engine.core.Callback
+import com.wemu.engine.core.ProcessHelper
+import com.wemu.engine.renderer.ASurfaceRenderer
+import com.wemu.engine.renderer.SecondScreenOutput
+import com.wemu.engine.widget.InputControlsView
+import com.wemu.engine.widget.TouchpadView
+import com.wemu.engine.widget.XServerView
+import com.wemu.engine.inputcontrols.ExternalController
+import com.wemu.engine.xserver.Window
+import com.wemu.engine.xserver.WindowManager
+import com.wemu.engine.xserver.XServer
+import com.wemu.runtime.RuntimeSession
+import com.wemu.runtime.WemuRuntimeEngine
+import com.wemu.session.secondscreen.SecondScreen
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Fullscreen game-only host. It has no path that launches a bare container desktop. */
+class GameSessionActivity : AppCompatActivity(), XServerHost {
+    private lateinit var root: FrameLayout
+    private lateinit var loading: TextView
+    private var runtime: RuntimeSession? = null
+    private var serverView: XServerView? = null
+    private var touchpad: TouchpadView? = null
+    private var controlsView: InputControlsView? = null
+    private var runtimeControls by mutableStateOf<CompanionRuntimeControls?>(null)
+    private lateinit var runtimeMetrics: CompanionSessionMetrics
+    private lateinit var runtimeLog: CompanionSessionLog
+    private var secondaryDisplayId by mutableStateOf<Int?>(null)
+    private var sessionTitle by mutableStateOf("Game")
+    private var managedPanel by mutableStateOf(false)
+    private var nativeTextBridge = false
+    private var nativePanelModeModifierDown = false
+    private var nativePanelModeModifierUsed = false
+    private var windowListener: WindowManager.OnWindowModificationListener? = null
+    @Volatile private var keyboardTargetWindow: Window? = null
+    @Volatile private var keyboardTargetScore = Int.MIN_VALUE
+    @Volatile private var keyboardTargetIdentity = ""
+    private val keyboardFocusLogged = AtomicBoolean(false)
+    private val cursorShown = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val gameWindowVisible = AtomicBoolean(false)
+    private val terminationHandled = AtomicBoolean(false)
+    private lateinit var launchStatus: LaunchStatusStore
+    private var guestOutputCallback: Callback<String>? = null
+    private var launchStartedAt = 0L
+
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) = refreshSecondaryDisplay()
+        override fun onDisplayRemoved(displayId: Int) = refreshSecondaryDisplay()
+        override fun onDisplayChanged(displayId: Int) = refreshSecondaryDisplay()
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val app = application as DualScreenLauncherApplication
+        if (app.settings.settings.value.keepScreenAwake) window.addFlags(FLAG_KEEP_SCREEN_ON)
+        hideSystemUi()
+        root = FrameLayout(this)
+        loading = TextView(this).apply {
+            setBackgroundColor(0xFF090C0F.toInt())
+            setTextColor(0xFFE7DFC9.toInt())
+            textSize = 20f
+            gravity = android.view.Gravity.CENTER
+            text = "PREPARING GAME"
+        }
+        root.addView(loading, FrameLayout.LayoutParams(-1, -1))
+        runtimeMetrics = CompanionSessionMetrics(this)
+        runtimeLog = CompanionSessionLog().also { it.attach() }
+        getSystemService(DisplayManager::class.java)?.registerDisplayListener(
+            displayListener,
+            mainHandler,
+        )
+        refreshSecondaryDisplay()
+        setContent {
+            CompanionTheme {
+                CompanionSessionHost(
+                    gameRoot = root,
+                    secondaryDisplayId = secondaryDisplayId,
+                    title = sessionTitle,
+                    managedPanel = managedPanel,
+                    controls = runtimeControls,
+                    metrics = runtimeMetrics,
+                    log = runtimeLog,
+                    onExit = ::finish,
+                )
+            }
+        }
+        lifecycleScope.launch { runtimeLog.pumpForever() }
+        lifecycleScope.launch { runtimeMetrics.sampleForever() }
+
+        val game = GameCatalog.byId(intent.getStringExtra(EXTRA_GAME_ID))
+        val containerId = intent.getIntExtra(EXTRA_CONTAINER_ID, -1)
+        val shortcutPath = intent.getStringExtra(EXTRA_SHORTCUT_PATH)
+        val configurationLauncher = intent.getBooleanExtra(EXTRA_CONFIGURATION_LAUNCHER, false)
+        if (game == null || containerId <= 0 || shortcutPath.isNullOrBlank()) {
+            finishWithMessage("This game installation is incomplete")
+            return
+        }
+        sessionTitle = if (configurationLauncher) "${game.title} Launcher" else game.title
+        managedPanel = !configurationLauncher && (
+            game.panelMode == LowerPanelMode.STARDEW ||
+                game.panelMode == LowerPanelMode.VALHEIM
+            )
+        nativeTextBridge = !configurationLauncher && game.id == "skyrim-se"
+        launchStatus = app.launchStatus
+        val logFile = launchStatus.begin(game)
+        launchStatus.record(
+            "REQUEST",
+            "container=$containerId shortcut=$shortcutPath mode=" +
+                if (configurationLauncher) "configuration-launcher" else "direct-play",
+        )
+        launchStatus.record("LOG", "Persistent launch log: ${logFile.absolutePath}")
+        launchStartedAt = android.os.SystemClock.elapsedRealtime()
+        lifecycleScope.launch {
+            startGame(game, containerId, shortcutPath, configurationLauncher)
+        }
+    }
+
+    private suspend fun startGame(
+        game: SupportedGame,
+        containerId: Int,
+        shortcutPath: String,
+        configurationLauncher: Boolean,
+    ) {
+        val app = application as DualScreenLauncherApplication
+        updateStatus("VERIFYING DUAL-SCREEN MOD", "Checking the bundled payload against the installed game")
+        val payloadRefresh = app.installer.ensureCurrentPayload(game)
+        if (payloadRefresh.isFailure) {
+            val failure = payloadRefresh.exceptionOrNull()
+            Log.e(TAG, "Could not update the dual-screen payload", failure)
+            finishWithMessage("Dual-screen mod update failed: ${failure?.message ?: "unknown error"}")
+            return
+        }
+        val currentInstall = payloadRefresh.getOrNull()
+        currentInstall?.let { installed ->
+            launchStatus.record("MOD", "Verified payload ${installed.payloadVersion}")
+        }
+        val effectiveContainerId = currentInstall?.containerId ?: containerId
+        val effectiveShortcutPath = currentInstall?.shortcutPath ?: shortcutPath
+        updateStatus("VERIFYING COPIED CONTAINER", "Resolving container $effectiveContainerId")
+        val container = app.installerContainer(effectiveContainerId)
+        val directShortcut = container?.let { loadShortcut(it, effectiveShortcutPath) }
+        if (container == null || directShortcut == null) {
+            finishWithMessage("The tested container or launch entry is missing")
+            return
+        }
+        val shortcut = if (configurationLauncher) {
+            createConfigurationShortcut(container, game, directShortcut)
+                ?: run {
+                    finishWithMessage(
+                        "Configuration launcher is missing. Expected one of: " +
+                            game.configurationLauncherCandidates.joinToString(),
+                    )
+                    return
+                }
+        } else {
+            directShortcut
+        }
+
+        val selectedResolution = app.settings.settings.value.resolution
+        val resolutionChanged = withContext(Dispatchers.IO) {
+            if (container.screenSize == selectedResolution.containerValue) {
+                false
+            } else {
+                container.screenSize = selectedResolution.containerValue
+                container.dpi = Container.suggestedDPI(selectedResolution.containerValue)
+                check(container.saveData()) { "Could not save the selected game resolution" }
+                true
+            }
+        }
+        launchStatus.record(
+            "DISPLAY",
+            "fullscreen=borderless resolution=${selectedResolution.containerValue} " +
+                "containerChanged=$resolutionChanged dpi=${container.dpi}",
+        )
+
+        logContainerPlan(container, shortcut)
+        val preset = PresetContainerManager(this)
+        val repairStaged = runCatching {
+            preset.prepareForLaunch(container, game) { detail -> launchStatus.record("REPAIR", detail) }
+        }.getOrElse { failure ->
+            Log.e(TAG, "Could not stage the captured container", failure)
+            finishWithMessage("Container verification failed: ${failure.message}")
+            return
+        }
+        if (repairStaged) {
+            updateStatus(
+                "REPAIRING COPIED CONTAINER",
+                "Materializing the captured WEMU runtime into Companion's private prefix",
+            )
+        } else {
+            launchStatus.record("CONTAINER", "Runtime materialization revision is current")
+        }
+
+        val target = resolveGuestTarget(container, shortcut.path)
+        if (target == null || !target.isFile) {
+            val detail = "Launch executable is unavailable: guest=${shortcut.path} host=${target?.path ?: "unmapped"}"
+            finishWithMessage(detail)
+            return
+        }
+        launchStatus.record(
+            "TARGET",
+            "guest=${shortcut.path} host=${target.absolutePath} bytes=${target.length()} " +
+                "cwd=${target.parentFile?.absolutePath} readable=${target.canRead()}",
+        )
+
+        if (game.id == "fallout3") {
+            val gameRoot = target.parentFile
+            val guestGameRoot = shortcut.path
+                .trim('"')
+                .substringBeforeLast('\\', missingDelimiterValue = "C:\\Games\\fallout3")
+            val fallout = withContext(Dispatchers.IO) {
+                runCatching {
+                    Fallout3LaunchConfiguration.ensure(
+                        container.rootDir,
+                        checkNotNull(gameRoot) { "Fallout 3's game directory is unavailable" },
+                        guestGameRoot,
+                        selectedResolution.width,
+                        selectedResolution.height,
+                    )
+                }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not prepare Fallout 3's launcher configuration", failure)
+                finishWithMessage("Fallout 3 setup failed: ${failure.message}")
+                return
+            }
+            launchStatus.record(
+                "COMPATIBILITY",
+                "Fallout registry and launch profile verified; " +
+                    "installedPath=${fallout.installedPath} " +
+                    "falloutIni=${fallout.falloutIni.absolutePath} " +
+                    "prefs=${fallout.preferencesFile.absolutePath} " +
+                    "seededIni=${fallout.seededFalloutIni} " +
+                    "seededPrefs=${fallout.seededPreferences} controller=enabled " +
+                    "display=${fallout.displayWidth}x${fallout.displayHeight}",
+            )
+        }
+
+        if (game.id == "skyrim-se") {
+            val gameRoot = target.parentFile
+            val gamepad = withContext(Dispatchers.IO) {
+                runCatching {
+                    checkNotNull(gameRoot) { "Skyrim's game directory is unavailable" }
+                    val bundledOverride = assets.open(
+                        "mods/skyrim-se/payload/SkyrimGamepad.ini",
+                    ).bufferedReader().use { it.readText() }
+                    SkyrimGamepadConfiguration.ensureEnabled(
+                        container.rootDir,
+                        gameRoot,
+                        bundledOverride,
+                        selectedResolution,
+                    )
+                }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not enable Skyrim controller input", failure)
+                finishWithMessage("Skyrim controller setup failed: ${failure.message}")
+                return
+            }
+            launchStatus.record(
+                "INPUT",
+                "Skyrim gamepad enabled; prefs=${gamepad.preferencesFile.absolutePath} " +
+                    "changed=${gamepad.changed} bridgeInputType=${container.inputType} " +
+                    "fullscreen=borderless resolution=${selectedResolution.containerValue}",
+            )
+        }
+
+        // Migrate shortcuts created by earlier launcher builds as well as new
+        // installs. This keeps Wine's optional first-boot add-on dialogs from
+        // blocking invisibly in front of the game.
+        val launchEnvironment = supportedGameLaunchEnvironment()
+        if (shortcut.getExtra("envVars") != launchEnvironment) {
+            shortcut.putExtra("envVars", launchEnvironment)
+            shortcut.saveData()
+            launchStatus.record("SHORTCUT", "Migrated launch-only DLL overrides: $launchEnvironment")
+        }
+
+        guestOutputCallback = Callback<String> { line: String -> launchStatus.guest(line) }.also {
+            ProcessHelper.addDebugCallback(it)
+        }
+        updateStatus("INITIALIZING TESTED WINDOWS RUNTIME", "Preparing Wine, prefix, renderer and mounts")
+        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, shortcut)
+        runtime = session
+        if (game.id == "skyrim-se") {
+            session.setSkyrimAudioCompatibility(true)
+            session.setAudioGainDb(6f)
+        }
+        session.setTerminationListener { status ->
+            val elapsed = android.os.SystemClock.elapsedRealtime() - launchStartedAt
+            Log.i(TAG, "Runtime termination: status=$status elapsedMs=$elapsed gameWindow=${gameWindowVisible.get()}")
+            runOnUiThread {
+                if (!terminationHandled.compareAndSet(false, true) || isFinishing) return@runOnUiThread
+                if (gameWindowVisible.get()) {
+                    launchStatus.ended("Game process ended with status $status after ${elapsed}ms")
+                    finish()
+                } else {
+                    showLaunchFailure(
+                        "Guest exited before the game window was created\n" +
+                            "Process status: $status  ·  elapsed: ${elapsed}ms",
+                    )
+                }
+            }
+        }
+
+        val xServer = runCatching { session.prepare() }.getOrElse { failure ->
+            Log.e(TAG, "Runtime prepare failed", failure)
+            finishWithMessage("The game runtime could not be prepared: ${failure.message}")
+            return
+        }
+        launchStatus.record(
+            "PREPARE",
+            "X server ready; renderer=${session.displayRenderer} wine=${session.wineInfo?.identifier()}",
+        )
+        attachRenderer(xServer, session)
+        watchForGameWindow(xServer, game, configurationLauncher)
+        updateStatus(
+            if (configurationLauncher) {
+                "STARTING ${game.title.uppercase(Locale.ROOT)} LAUNCHER"
+            } else {
+                "STARTING ${game.title.uppercase(Locale.ROOT)}"
+            },
+            "Submitting the final guest command",
+        )
+
+        val started = withContext(Dispatchers.IO) { runCatching { session.start() } }
+        if (started.isFailure) {
+            val failure = started.exceptionOrNull()
+            Log.e(TAG, "Runtime start failed", failure)
+            finishWithMessage(failure?.message ?: "The game could not be started")
+            return
+        }
+        runCatching { preset.markLaunchMaterialized(container) }
+            .onFailure { Log.e(TAG, "Could not record runtime materialization", it) }
+        launchStatus.record("PROCESS", "Process creation returned successfully; waiting for the game window")
+    }
+
+    private fun attachRenderer(xServer: XServer, session: RuntimeSession) {
+        val view = XServerView(this, xServer, session.displayRenderer)
+        serverView = view
+        root.addView(view, 0, FrameLayout.LayoutParams(-1, -1))
+        val renderer = view.renderer
+        session.configureRenderer(renderer)
+        xServer.setRenderer(renderer)
+
+        val preferences = PreferenceManager.getDefaultSharedPreferences(this)
+        val pointer = TouchpadView(this, xServer, mainHandler, Runnable { }).apply {
+            setSensitivity(preferences.getFloat("cursor_speed", 1f))
+            isFocusable = true
+            isFocusableInTouchMode = true
+        }
+        touchpad = pointer
+        root.addView(pointer, 1, FrameLayout.LayoutParams(-1, -1))
+
+        val overlay = InputControlsView(this, mainHandler, Runnable { }).apply {
+            setTouchpadView(pointer)
+            setXServer(xServer)
+            visibility = View.GONE
+        }
+        controlsView = overlay
+        root.addView(overlay, 2, FrameLayout.LayoutParams(-1, -1))
+
+        val metrics = runtimeMetrics
+        view.compositorRenderer?.setFrameListener(metrics.frameListener)
+        (renderer as? ASurfaceRenderer)?.let { scanout ->
+            scanout.setScanoutFrameListener { _, _, _ ->
+                metrics.onFramePresented(scanout.isLastFrameZeroCopy)
+            }
+        }
+
+        runtimeControls = CompanionRuntimeControls(
+            context = this,
+            compositor = view.compositorRenderer,
+            activeRenderer = renderer,
+            touchpad = pointer,
+            inputControls = overlay,
+            winHandler = session.winHandler,
+            container = session.container,
+            preferences = preferences,
+            injectKey = { event ->
+                // Keep the built-in keyboard on the same X11 input path as a
+                // physical keyboard. The old Skyrim-only UDP branch discarded
+                // name-entry keys whenever Wine reported a helper/panel window
+                // as foreground (`[keyboard] ... sent=0`), even though Skyrim's
+                // X window still owned keyboard focus. XServer already routes
+                // these events to the focused guest window and correctly
+                // reaches Scaleform text fields, DirectInput, and Win32 controls.
+                focusGameWindowForKeyboard(xServer)
+                xServer.keyboard.onKeyEvent(event)
+            },
+            injectCharacter = { character ->
+                focusGameWindowForKeyboard(xServer)
+                xServer.keyboard.injectCharacter(character.code)
+            },
+        )
+        // Loading remains the last child and therefore completely covers Wine's
+        // desktop until an actual mapped game window proves the target is ready.
+        loading.bringToFront()
+    }
+
+    private fun watchForGameWindow(
+        xServer: XServer,
+        game: SupportedGame,
+        configurationLauncher: Boolean,
+    ) {
+        fun observe(window: Window) {
+            if (!window.attributes.isMapped) return
+            // Native lower-panel titles deliberately include the game name, so
+            // a loose game hint ("Fallout 4", "Grim Dawn", "Skyrim") also
+            // matches the mod window. That window proves the mod initialized,
+            // not that the playable upper window exists. Keep the launch cover
+            // up until a non-panel game window is actually mapped.
+            if (SecondScreenOutput.isEarlyClaimPanelWindow(
+                    window.className,
+                    window.name,
+                )) return
+            val identity = "${window.name} ${window.className}".lowercase(Locale.ROOT)
+            if (!matchesSessionWindow(identity, game, configurationLauncher)) return
+
+            // A configuration launcher and the actual game are two different X
+            // windows. Earlier code stopped observing after the launcher matched,
+            // leaving the built-in keyboard focused on SkyrimSELauncher.exe even
+            // after SkyrimSE.exe appeared. Prefer an exact direct-play executable
+            // identity, but keep the launcher as a temporary target so its text
+            // fields remain usable too.
+            val directExecutableMatch = game.executableCandidates.any { candidate ->
+                identity.contains(candidate.lowercase(Locale.ROOT))
+            }
+            val applicationBonus = if (window.isApplicationWindow) 10 else 0
+            val targetScore = (if (directExecutableMatch) 100 else 20) + applicationBonus
+            if (targetScore > keyboardTargetScore) {
+                keyboardTargetWindow = window
+                keyboardTargetScore = targetScore
+                keyboardTargetIdentity = identity
+                keyboardFocusLogged.set(false)
+                launchStatus.record(
+                    "INPUT",
+                    "Keyboard target updated: identity=$identity score=$targetScore " +
+                        "directExecutable=$directExecutableMatch window=${window.id}",
+                )
+            }
+            if (gameWindowVisible.compareAndSet(false, true)) {
+                runOnUiThread {
+                    stopGuestOutputCapture()
+                    launchStatus.ready("Game window matched: $identity")
+                    loading.animate()
+                        .alpha(0f)
+                        .setDuration(220)
+                        .withEndAction { loading.visibility = View.GONE }
+                        .start()
+                }
+            }
+        }
+
+        windowListener = object : WindowManager.OnWindowModificationListener {
+            override fun onMapWindow(window: Window) = observe(window)
+            override fun onUpdateWindowContent(window: Window) {
+                // Match WEMU's proven cursor lifecycle. RendererOptions hides
+                // the host cursor during empty Wine startup, then the first
+                // real guest draw makes it available. The guest window's own
+                // X cursor visibility still decides whether pixels are shown,
+                // so games which hide their pointer do not gain a duplicate.
+                if (cursorShown.compareAndSet(false, true) &&
+                    touchpad?.isSimTouchScreen != true
+                ) {
+                    serverView?.renderer?.isCursorVisible = true
+                    launchStatus.record("INPUT", "Guest cursor enabled after first window draw")
+                }
+                observe(window)
+            }
+            override fun onModifyWindowProperty(window: Window, property: com.wemu.engine.xserver.Property) =
+                observe(window)
+        }.also(xServer.windowManager::addOnWindowModificationListener)
+    }
+
+    /**
+     * Restores X11 and Win32 focus to the best mapped game window before a
+     * lower-display keyboard event is injected. Android Presentation touches do
+     * not update the guest pointer/focus, and a native second-screen HWND can be
+     * the last Wine foreground window even though the player is typing into a
+     * Scaleform field on the top screen.
+     */
+    private fun focusGameWindowForKeyboard(xServer: XServer) {
+        val target = keyboardTargetWindow
+            ?.takeIf { it.attributes.isMapped && it.attributes.isEnabled }
+            ?: return
+        var changed = false
+        xServer.lock(
+            XServer.Lockable.WINDOW_MANAGER,
+            XServer.Lockable.INPUT_DEVICE,
+        ).use {
+            if (xServer.windowManager.focusedWindow !== target) {
+                xServer.windowManager.setFocus(
+                    target,
+                    if (target.parent === xServer.windowManager.rootWindow) {
+                        WindowManager.FocusRevertTo.POINTER_ROOT
+                    } else {
+                        WindowManager.FocusRevertTo.PARENT
+                    },
+                )
+                changed = true
+            }
+        }
+        if (changed) {
+            xServer.winHandler.bringToFront(target.className, target.handle)
+        }
+        if (keyboardFocusLogged.compareAndSet(false, true)) {
+            launchStatus.record(
+                "INPUT",
+                "Keyboard injection focused identity=$keyboardTargetIdentity " +
+                    "window=${target.id} win32Handle=${target.handle} changed=$changed",
+            )
+        }
+    }
+
+    private fun loadShortcut(container: Container, path: String): Shortcut? = runCatching {
+        val file = File(path)
+        val rootPath = container.rootDir.canonicalPath + File.separator
+        if (!file.isFile || !file.canonicalPath.startsWith(rootPath)) null else Shortcut(container, file)
+    }.getOrNull()
+
+    /**
+     * Builds a separate launch entry for the vendor settings launcher. The
+     * installed direct-play shortcut is never rewritten, so PLAY continues to
+     * target the game executable even after the settings launcher is used.
+     */
+    private suspend fun createConfigurationShortcut(
+        container: Container,
+        game: SupportedGame,
+        directShortcut: Shortcut,
+    ): Shortcut? = withContext(Dispatchers.IO) {
+        val gameRoot = resolveGuestTarget(container, directShortcut.path)?.parentFile
+            ?: return@withContext null
+        val relative = resolveConfigurationLauncherExecutable(gameRoot, game)
+            ?: return@withContext null
+        val guestPath = "C:\\Games\\${game.id}\\${relative.replace('/', '\\')}"
+        val shortcutFile = File(
+            directShortcut.file.parentFile,
+            "${game.id}-configuration-launcher.desktop",
+        )
+        shortcutFile.writeText(
+            buildString {
+                appendLine("[Desktop Entry]")
+                appendLine("Name=${game.title} Launcher")
+                appendLine("Exec=$guestPath")
+                appendLine("Type=Application")
+                appendLine("StartupNotify=True")
+            },
+        )
+        Shortcut(container, shortcutFile).also { launcherShortcut ->
+            launcherShortcut.putExtra("envVars", supportedGameLaunchEnvironment())
+            // A vendor launcher starts as a CPU/GDI window and may replace that
+            // same X window with the game's DRI3/AHardwareBuffer swapchain when
+            // PLAY is pressed. SurfaceFlinger cannot draw the initial GDI
+            // window, while the GLES compositor accepts Fallout 3's imported
+            // buffers but samples them as black after that in-place hand-off.
+            // The Vulkan compositor supports both sources for the lifetime of
+            // one X server, so it is the only renderer that can carry the
+            // launcher -> game transition without recreating the session.
+            // Direct PLAY shortcuts still retain the container's zero-copy
+            // SurfaceFlinger renderer.
+            launcherShortcut.putExtra("displayRenderer", XServerView.RENDERER_VULKAN)
+            launcherShortcut.saveData()
+            launchStatus.record(
+                "TARGET",
+                "configurationLauncher=$guestPath host=${File(gameRoot, relative).absolutePath} " +
+                    "renderer=${XServerView.RENDERER_VULKAN}",
+            )
+        }
+    }
+
+    private fun finishWithMessage(message: String) {
+        Log.e(TAG, message)
+        if (::launchStatus.isInitialized) launchStatus.failed(message)
+        loading.text = "$message\n\nTAP TO RETURN"
+        loading.setTextColor(0xFFFF8A80.toInt())
+        loading.visibility = View.VISIBLE
+        loading.alpha = 1f
+        loading.bringToFront()
+        loading.setOnClickListener { if (!isFinishing) finish() }
+    }
+
+    private fun showLaunchFailure(detail: String) {
+        finishWithMessage(detail)
+    }
+
+    private fun updateStatus(title: String, detail: String) {
+        loading.text = title
+        if (::launchStatus.isInitialized) launchStatus.record(title, detail)
+    }
+
+    private fun logContainerPlan(container: Container, shortcut: Shortcut) {
+        launchStatus.record(
+            "CONTAINER",
+            "id=${container.id} name=${container.name} config=${container.configFile.absolutePath} " +
+                "screen=${container.screenSize}",
+        )
+        launchStatus.record(
+            "RUNTIME",
+            "wine=${container.wineVersion} emulator=${container.emulator} " +
+                "box64=${container.box64Version} fexcore=${container.fexCoreVersion}",
+        )
+        launchStatus.record(
+            "GRAPHICS",
+            "driver=${container.graphicsDriver}/${container.rendererDriverId} " +
+                "renderer=${container.displayRenderer} directx=${container.dxWrapper} " +
+                "config=${container.dxWrapperConfig}",
+        )
+        launchStatus.record(
+            "ENVIRONMENT",
+            "containerEnv=${container.envVars} shortcutEnv=${shortcut.getExtra("envVars")} " +
+                "audio=${container.audioDriver} drives=${container.drives}",
+        )
+        launchStatus.record("SHORTCUT", "file=${shortcut.file.absolutePath} exec=${shortcut.path}")
+    }
+
+    private fun resolveGuestTarget(container: Container, guestPath: String): File? = runCatching {
+        val clean = guestPath.trim().trim('"')
+        val match = Regex("^([A-Za-z]):[\\\\/](.*)$").matchEntire(clean) ?: return@runCatching null
+        val drive = match.groupValues[1].lowercase(Locale.ROOT)
+        val relative = match.groupValues[2].replace('\\', File.separatorChar).replace('/', File.separatorChar)
+        val root = if (drive == "c") {
+            File(container.rootDir, ".wine/drive_c")
+        } else {
+            File(container.rootDir, ".wine/dosdevices/$drive:").canonicalFile
+        }
+        File(root, relative).canonicalFile
+    }.getOrNull()
+
+    private fun stopGuestOutputCapture() {
+        guestOutputCallback?.let(ProcessHelper::removeDebugCallback)
+        guestOutputCallback = null
+    }
+
+    override fun onResume() {
+        super.onResume()
+        hideSystemUi()
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (dispatchKeyboardControllerKey(event)) return true
+        if (dispatchNativePanelModeKey(event)) return true
+        return dispatchGuestKeyEvent(event)
+    }
+
+    private fun isControllerEvent(event: KeyEvent): Boolean {
+        if (event.flags and KeyEvent.FLAG_SOFT_KEYBOARD != 0 &&
+            event.source and InputDevice.SOURCE_DPAD == InputDevice.SOURCE_DPAD
+        ) {
+            return false
+        }
+        if (ExternalController.isGameController(event.device)) return true
+        val sources = event.source or (event.device?.sources ?: 0)
+        return sources and InputDevice.SOURCE_GAMEPAD == InputDevice.SOURCE_GAMEPAD ||
+            sources and InputDevice.SOURCE_JOYSTICK == InputDevice.SOURCE_JOYSTICK
+    }
+
+    /** The controller belongs to the lower-screen keyboard while it is visible. */
+    private fun dispatchKeyboardControllerKey(event: KeyEvent): Boolean {
+        val keyboard = runtimeControls?.keyboard ?: return false
+        if (!keyboard.visible || !isControllerEvent(event)) return false
+        if (event.action == KeyEvent.ACTION_UP) return true
+        if (event.action != KeyEvent.ACTION_DOWN) return true
+
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> keyboard.move(com.thor.core.model.NavDirection.LEFT)
+            KeyEvent.KEYCODE_DPAD_RIGHT -> keyboard.move(com.thor.core.model.NavDirection.RIGHT)
+            KeyEvent.KEYCODE_DPAD_UP -> keyboard.move(com.thor.core.model.NavDirection.UP)
+            KeyEvent.KEYCODE_DPAD_DOWN -> keyboard.move(com.thor.core.model.NavDirection.DOWN)
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_DPAD_CENTER,
+            -> keyboard.pressFocused()
+            KeyEvent.KEYCODE_BUTTON_B -> keyboard.press(com.thor.core.model.KeyboardKey.Backspace)
+            KeyEvent.KEYCODE_BUTTON_X -> keyboard.press(com.thor.core.model.KeyboardKey.Space)
+            KeyEvent.KEYCODE_BUTTON_Y -> keyboard.press(com.thor.core.model.KeyboardKey.Shift)
+            KeyEvent.KEYCODE_BUTTON_L2,
+            KeyEvent.KEYCODE_BUTTON_R2,
+            -> keyboard.press(com.thor.core.model.KeyboardKey.Layer)
+            KeyEvent.KEYCODE_BUTTON_START,
+            KeyEvent.KEYCODE_BUTTON_MODE,
+            -> keyboard.hide()
+            else -> return false
+        }
+        return true
+    }
+
+    /** Normal WEMU route: touch overlay, Win32 controller bridge, then X keyboard. */
+    private fun dispatchGuestKeyEvent(event: KeyEvent): Boolean {
+        val overlay = controlsView
+        val active = runtime
+        val xServer = active?.xServer
+        val winHandler = active?.winHandler
+        if (overlay != null && winHandler != null && xServer != null) {
+            if (overlay.onKeyEvent(event) ||
+                winHandler.onKeyEvent(event) ||
+                xServer.keyboard.onKeyEvent(event)
+            ) {
+                return true
+            }
+            if (isControllerEvent(event)) return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    /** Select scopes controller navigation to a visible native lower panel. */
+    private fun dispatchNativePanelModeKey(event: KeyEvent): Boolean {
+        if (!isControllerEvent(event)) return false
+        if (!SecondScreenOutput.isNativePanelControllerActive() &&
+            !nativePanelModeModifierDown
+        ) {
+            return false
+        }
+        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                if (event.repeatCount == 0) {
+                    nativePanelModeModifierDown = true
+                    nativePanelModeModifierUsed = false
+                }
+                return nativePanelModeModifierDown
+            }
+            if (event.action == KeyEvent.ACTION_UP && nativePanelModeModifierDown) {
+                val used = nativePanelModeModifierUsed
+                nativePanelModeModifierDown = false
+                nativePanelModeModifierUsed = false
+                if (!used) {
+                    dispatchGuestKeyEvent(KeyEvent.changeAction(event, KeyEvent.ACTION_DOWN))
+                    dispatchGuestKeyEvent(event)
+                }
+                return true
+            }
+        }
+        if (nativePanelModeModifierDown &&
+            (event.keyCode == KeyEvent.KEYCODE_BUTTON_L2 ||
+                event.keyCode == KeyEvent.KEYCODE_BUTTON_R2)
+        ) {
+            nativePanelModeModifierUsed = true
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                SecondScreenOutput.sendNativePanelPage(
+                    event.keyCode == KeyEvent.KEYCODE_BUTTON_R2,
+                )
+            }
+            return true
+        }
+        if (nativePanelModeModifierDown) {
+            val action = when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+                KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+                KeyEvent.KEYCODE_DPAD_UP -> "up"
+                KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+                KeyEvent.KEYCODE_BUTTON_A -> "activate"
+                else -> null
+            }
+            if (action != null) {
+                nativePanelModeModifierUsed = true
+                if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                    SecondScreenOutput.sendNativePanelNavigation(action)
+                }
+                return true
+            }
+        }
+        return false
+    }
+
+    override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        // Route by the packet's source, not the device's combined capability
+        // mask. The Thor exposes separate mouse and joystick packets; joystick
+        // motion must reach XInput even if a future firmware combines devices.
+        if (event.isFromSource(android.view.InputDevice.SOURCE_JOYSTICK)) {
+            if (runtime?.winHandler?.onGenericMotionEvent(event) == true) return true
+        } else if (touchpad?.onExternalMouseEvent(event) == true) {
+            return true
+        }
+        return super.dispatchGenericMotionEvent(event)
+    }
+
+    /**
+     * The Thor's virtual mouse may deliver button down/up as touch events even
+     * though its hover and wheel packets use generic motion.  Keep both paths
+     * on the guest mouse bridge so launchers cannot lose clicks and look hung.
+     */
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (touchpad?.onExternalMouseEvent(event) == true) return true
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun onDestroy() {
+        stopGuestOutputCapture()
+        windowListener?.let { listener ->
+            runtime?.xServer?.windowManager?.removeOnWindowModificationListener(listener)
+        }
+        windowListener = null
+        // Retire the SurfaceView on the UI thread before the Activity exposes
+        // the library again. SurfaceFlinger's child scanout layers outlive an
+        // Android Activity unless XServerView.destroy() explicitly releases
+        // them; stopping Wine alone left a full-screen black layer covering the
+        // launcher after a vendor launcher or game exited.
+        val retiredRuntime = runtime
+        val retiredView = serverView
+        val retiredTouchpad = touchpad
+        val retiredControls = controlsView
+        retiredRuntime?.setTerminationListener(null)
+        retiredView?.detachForDestroy()
+        (retiredControls?.parent as? android.view.ViewGroup)?.removeView(retiredControls)
+        (retiredTouchpad?.parent as? android.view.ViewGroup)?.removeView(retiredTouchpad)
+        (retiredView?.parent as? android.view.ViewGroup)?.removeView(retiredView)
+        runtime = null
+        serverView = null
+        touchpad = null
+        controlsView = null
+        runtimeControls = null
+        runtimeLog.stop()
+        SecondScreen.shutdown()
+        SecondScreenOutput.detach()
+        if (retiredRuntime != null || retiredView != null) {
+            Thread({
+                runCatching { retiredRuntime?.stop() }
+                    .onFailure { Log.w(TAG, "Guest runtime teardown failed", it) }
+                runCatching { retiredView?.destroy() }
+                    .onFailure { Log.w(TAG, "Guest renderer teardown failed", it) }
+            }, "DualScreenLauncherSessionCleanup").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        getSystemService(DisplayManager::class.java)?.unregisterDisplayListener(displayListener)
+        mainHandler.removeCallbacksAndMessages(null)
+        super.onDestroy()
+    }
+
+    private fun refreshSecondaryDisplay() {
+        val manager = getSystemService(DisplayManager::class.java)
+        @Suppress("DEPRECATION")
+        val current = windowManager.defaultDisplay.displayId
+        secondaryDisplayId = manager?.displays?.firstOrNull { candidate ->
+            candidate.displayId != current && DisplayTopology.isUsableSecondary(candidate)
+        }?.displayId
+        Log.i(TAG, "Secondary display -> $secondaryDisplayId")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hideSystemUi() {
+        window.decorView.systemUiVisibility =
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+    }
+
+    override fun getHostContext(): Context = this
+    override fun getXServer(): XServer? = runtime?.xServer
+    override fun getXServerView(): XServerView? = serverView
+    override fun getInputControlsView(): InputControlsView? = controlsView
+
+    companion object {
+        private const val TAG = "DualScreenGameLaunch"
+        const val EXTRA_GAME_ID = "gameId"
+        const val EXTRA_CONTAINER_ID = "containerId"
+        const val EXTRA_SHORTCUT_PATH = "shortcutPath"
+        const val EXTRA_CONFIGURATION_LAUNCHER = "configurationLauncher"
+    }
+}
+
+/**
+ * Matches the executable class as well as a human-facing window title.
+ *
+ * Wine exposes Bethesda launcher windows by executable class (for example
+ * `FalloutLauncherSteam.exe`). That intentionally does not match Fallout 3's
+ * direct-play hints, and previously left the launch cover up forever even
+ * though the utility was already running. Punctuation-insensitive matching also
+ * handles launchers which publish "Fallout Launcher" as their title.
+ */
+internal fun matchesSessionWindow(
+    identity: String,
+    game: SupportedGame,
+    configurationLauncher: Boolean,
+): Boolean {
+    val loweredIdentity = identity.lowercase(Locale.ROOT)
+    val normalizedIdentity = loweredIdentity.filter(Char::isLetterOrDigit)
+    val candidates = if (configurationLauncher) {
+        game.windowHints + game.configurationLauncherCandidates
+    } else {
+        game.windowHints
+    }
+    return candidates.any { candidate ->
+        val loweredCandidate = candidate.lowercase(Locale.ROOT)
+        val normalizedCandidate = loweredCandidate
+            .removeSuffix(".exe")
+            .filter(Char::isLetterOrDigit)
+        loweredIdentity.contains(loweredCandidate) ||
+            (normalizedCandidate.isNotEmpty() && normalizedIdentity.contains(normalizedCandidate))
+    }
+}
+
+private suspend fun DualScreenLauncherApplication.installerContainer(id: Int): Container? =
+    PresetContainerAccessor(this).find(id)
+
+/** Narrow session lookup; keeping it here prevents the Activity from owning a manager. */
+private class PresetContainerAccessor(context: Context) {
+    private val manager = com.wemu.engine.container.ContainerManager(context)
+    suspend fun find(id: Int): Container? = withContext(Dispatchers.IO) { manager.getContainerById(id) }
+}

@@ -1,0 +1,20 @@
+{
+    "version":  "launcher-2026.08.30-input-isolation",
+    "files":  [
+                  {
+                      "source":  "dxgi.dll",
+                      "target":  "dxgi.dll",
+                      "sha256":  "3d006851bb7379e0e63837c1041af8c13efa2a9f9fd481eddab3c3980779f5be"
+                  },
+                  {
+                      "source":  "GrimDawnSecondScreen.ini",
+                      "target":  "GrimDawnSecondScreen.ini",
+                      "sha256":  "f706b38179887329b1bc8c119b9c656d4d498795fea97afb0896830760eef4dc"
+                  },
+                  {
+                      "source":  "GrimDawnSecondScreen.owner",
+                      "target":  "GrimDawnSecondScreen.owner",
+                      "sha256":  "46464dd21713533562edd77016fca5d2632db45ae89f02d2c85c1546f5808b05"
+                  }
+              ]
+}

@@ -1,0 +1,16 @@
+<!--
+  A page with the corner taken off.
+
+  The page is a neutral object, so it wears the icon face and takes the accent
+  only as a detail — the folded corner in wine_ic_document_fold. A page painted
+  in the accent would compete with every folder beside it in the same listing.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M11,4 h16.5 l9.5,9.5 v27.5 a3,3 0 0 1 -3,3 h-23 a3,3 0 0 1 -3,-3 v-34 a3,3 0 0 1 3,-3 z" />
+</vector>

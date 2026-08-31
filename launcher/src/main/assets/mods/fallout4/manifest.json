@@ -1,0 +1,20 @@
+{
+    "version":  "launcher-2026.08.30-input-isolation",
+    "files":  [
+                  {
+                      "source":  "dxgi.dll",
+                      "target":  "dxgi.dll",
+                      "sha256":  "79727f00e15ca4f5e14e53c08ae0caeb4e9ecd93a4388914a488348c3399ee15"
+                  },
+                  {
+                      "source":  "Fallout4SecondScreen.ini",
+                      "target":  "Fallout4SecondScreen.ini",
+                      "sha256":  "6e68ee64688a5c281aeedefdaeacef6d2aed5d35bbee548d312df8407b40a5f4"
+                  },
+                  {
+                      "source":  "Fallout4SecondScreen.owner",
+                      "target":  "Fallout4SecondScreen.owner",
+                      "sha256":  "4b6e5a01e898b0da109bab1b2f5de04652f0c28567e9954540a4a45e032e6ae0"
+                  }
+              ]
+}

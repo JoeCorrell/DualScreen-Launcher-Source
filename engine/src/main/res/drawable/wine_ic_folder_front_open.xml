@@ -1,0 +1,17 @@
+<!--
+  The open folder's front flap: the same shape, lower, so more of the back plate
+  shows above it.
+
+  Open is read from the gap, not from a perspective trick. A sheared front reads
+  as "open" on a 256px preview and as a smudge at 16, and 16 is the size a file
+  listing actually uses.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,23 h40 v13.4 a3.6,3.6 0 0 1 -3.6,3.6 h-32.8 a3.6,3.6 0 0 1 -3.6,-3.6 z" />
+</vector>

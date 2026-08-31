@@ -1,0 +1,44 @@
+wemu — a personal project
+Copyright (c) 2026 Joe Correll. All rights reserved.
+
+This is a private build for personal use. It is not published, not offered to
+anyone else, and no permission is granted to any other person to use, copy,
+modify or distribute it or any part of it.
+
+
+WHAT THIS NOTICE COVERS, AND WHAT IT DOES NOT
+
+The claim above covers the original work in this repository: the Compose
+interface, the session console, the container desktop, the theme and visual
+style generators, the preset system and the app's own service layers.
+
+It does not cover the whole tree, because the whole tree is not original work.
+The engine is derived from Winlator and from Winlator Ludashi, and parts of the
+Steam client layer are derived from Bannerlator. Those are released under the
+GNU General Public License, version 3. Other components carry licences of their
+own. NOTICE.md records what is in here and where each part came from.
+
+
+WHY A PRIVATE PROJECT CAN SAY THIS AT ALL
+
+The GPL places no conditions on private use. Its obligations — providing
+corresponding source, preserving copyright and licence notices, licensing the
+combined work under the same terms — apply when software is *conveyed*: given,
+sold, published or otherwise passed to another person. Nothing here is
+conveyed. The repository is private and the builds do not leave the developer's
+own devices.
+
+So this notice is accurate as long as that stays true, and only as long as that
+stays true.
+
+
+IF THAT EVER CHANGES
+
+Publishing this repository, sharing an APK, or giving a build to anyone else
+would make the GPL's terms apply to the result, and this notice would no longer
+describe it. At that point the licence for the distributed work would have to be
+GPL-3.0, with corresponding source made available and the upstream notices
+restored — not because of anything decided here, but because that is the licence
+the engine's authors chose and a fork cannot change it.
+
+This is written down so that it is a decision rather than a discovery.
