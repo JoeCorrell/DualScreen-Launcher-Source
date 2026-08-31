@@ -2,9 +2,12 @@ package com.dualscreen.launcher
 
 import android.content.Context
 import android.net.Uri
+import android.os.StatFs
 import android.provider.OpenableColumns
+import android.util.Log
 import com.wemu.engine.container.ContainerManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -65,8 +68,11 @@ class SaveImporter(private val context: Context) {
         archive: Uri,
     ): Result<ImportedSave> = lock.withLock {
         begin(game)
-        runCatching { withContext(Dispatchers.IO) { importInternal(game, installed, archive) } }
-            .onFailure { failure ->
+        val result = runCatching {
+            withContext(Dispatchers.IO) { importInternal(game, installed, archive) }
+        }
+        result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+        result.onFailure { failure ->
                 val previous = mutableProgress.value[game.id]
                 publish(
                     game = game,
@@ -113,7 +119,15 @@ class SaveImporter(private val context: Context) {
         try {
             publish(game, SaveImportStage.VALIDATING, 0.10f, "Inspecting ZIP entries")
             val archiveBytes = archiveLength(archive)
-            val extracted = extractArchive(game, archive, raw, archiveBytes)
+            val availableBytes = StatFs(parent.absolutePath).availableBytes
+            val extractionBudget = minOf(
+                MAX_UNPACKED_BYTES,
+                extractionByteBudget(availableBytes, STORAGE_RESERVE),
+            )
+            if (archiveBytes > extractionBudget) {
+                error("Not enough free space to import this save archive")
+            }
+            val extracted = extractArchive(game, archive, raw, archiveBytes, extractionBudget)
             val selected = selectSavePayloadRoot(
                 raw = raw,
                 destinationLeaf = destination.name,
@@ -166,10 +180,20 @@ class SaveImporter(private val context: Context) {
             )
             return result
         } catch (failure: Throwable) {
-            if (newPublished && destination.exists()) destination.deleteRecursively()
-            if (oldMoved && rollback.exists() && !destination.exists()) rollback.renameTo(destination)
-            if (raw.exists()) raw.deleteRecursively()
-            if (payload.exists()) payload.deleteRecursively()
+            val cleanupFailure = runCatching {
+                if (newPublished && destination.exists()) {
+                    check(destination.deleteRecursively()) { "Could not remove the incomplete save import" }
+                }
+                if (oldMoved && rollback.exists() && !destination.exists()) {
+                    check(rollback.renameTo(destination)) { "Could not restore the previous saves" }
+                }
+                if (raw.exists()) check(raw.deleteRecursively()) { "Could not clear save ZIP staging" }
+                if (payload.exists()) check(payload.deleteRecursively()) { "Could not clear save payload staging" }
+            }.exceptionOrNull()
+            if (cleanupFailure != null) {
+                failure.addSuppressed(cleanupFailure)
+                Log.e(LOG_TAG, "Save import rollback was incomplete", cleanupFailure)
+            }
             throw failure
         }
     }
@@ -179,6 +203,7 @@ class SaveImporter(private val context: Context) {
         archive: Uri,
         raw: File,
         archiveBytes: Long,
+        extractionBudget: Long,
     ): ExtractionResult {
         check(!raw.exists() && raw.mkdirs()) { "Could not create the save staging directory" }
         val input = context.contentResolver.openInputStream(archive)
@@ -216,7 +241,9 @@ class SaveImporter(private val context: Context) {
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         unpacked += count
-                        check(unpacked <= MAX_UNPACKED_BYTES) { "The save ZIP expands beyond the safety limit" }
+                        check(unpacked <= extractionBudget) {
+                            "The save ZIP is larger than the available storage"
+                        }
                     }
                 }
                 if (entry.time > 0) target.setLastModified(entry.time)
@@ -332,6 +359,8 @@ class SaveImporter(private val context: Context) {
         const val MAX_UNPACKED_BYTES = 8L * 1024L * 1024L * 1024L
         const val REPORT_INTERVAL_BYTES = 512L * 1024L
         const val MAX_LOG_LINES = 160
+        const val STORAGE_RESERVE = 256L * 1024L * 1024L
+        const val LOG_TAG = "DualscreenSaveImport"
         val BLOCKED_EXTENSIONS = setOf("exe", "dll", "com", "bat", "cmd", "msi", "lnk", "desktop")
     }
 }

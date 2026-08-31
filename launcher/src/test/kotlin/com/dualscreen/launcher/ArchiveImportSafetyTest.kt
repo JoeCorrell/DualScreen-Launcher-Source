@@ -30,6 +30,28 @@ class ArchiveImportSafetyTest {
     }
 
     @Test
+    fun extractionBudgetReservesSpaceWithoutOverflow() {
+        assertThat(extractionByteBudget(10_000L, 3_000L)).isEqualTo(7_000L)
+        assertThat(extractionByteBudget(Long.MAX_VALUE, 1L)).isEqualTo(Long.MAX_VALUE - 1L)
+
+        val failure = runCatching { extractionByteBudget(3_000L, 3_000L) }.exceptionOrNull()
+        assertThat(failure).isInstanceOf(IllegalStateException::class.java)
+    }
+
+    @Test
+    fun gameArchiveTargetCannotEscapeCanonicalExtractionRoot() {
+        val root = Files.createTempDirectory("game-import-safety").toFile()
+        try {
+            assertThat(safeGameArchiveTarget(root, "wrapper/Data/Fallout3.esm"))
+                .isEqualTo(File(root, "wrapper/Data/Fallout3.esm").canonicalFile)
+            val failure = runCatching { safeGameArchiveTarget(root, "../outside.exe") }.exceptionOrNull()
+            assertThat(failure).isInstanceOf(IllegalArgumentException::class.java)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun fallout3OldBuildMessageExplainsTheRealCompatibilityFailure() {
         val game = checkNotNull(GameCatalog.byId("fallout3"))
         val message = unsupportedBuildSizeMessage(

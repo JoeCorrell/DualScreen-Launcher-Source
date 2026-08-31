@@ -1,11 +1,14 @@
 package com.dualscreen.launcher
 
 import android.content.Context
+import android.os.StatFs
 import android.os.SystemClock
 import android.util.Log
 import com.wemu.engine.contents.GuestPayloads
 import com.wemu.engine.core.Callback
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -202,6 +205,7 @@ internal class PayloadBootstrapper(private val context: Context) {
             installManifest(selected, current, currentVersion, force)
             mutableState.value = PayloadBootstrapState.Ready(selected.version)
         } catch (failure: Throwable) {
+            if (failure is CancellationException) throw failure
             Log.e(TAG, "Payload bootstrap failed", failure)
             val message = failure.message?.takeIf(String::isNotBlank) ?: "Payload setup failed"
             mutableState.value = if (currentVersion != null) {
@@ -322,6 +326,10 @@ internal class PayloadBootstrapper(private val context: Context) {
                     }
                 }
                 val expandedBytes = withContext(Dispatchers.IO) { expandedSize(archive) }
+                val availableBytes = withContext(Dispatchers.IO) { StatFs(base.absolutePath).availableBytes }
+                check(expandedBytes <= extractionByteBudget(availableBytes, STORAGE_RESERVE)) {
+                    "Not enough free space to install ${friendlyName(pack.name)}"
+                }
                 publishProgress(index, pack, PayloadBootstrapPhase.INSTALL, 0L, expandedBytes)
                 val staging = File(base, "staging-${pack.root}-${UUID.randomUUID()}")
                 withContext(Dispatchers.IO) {
@@ -351,10 +359,14 @@ internal class PayloadBootstrapper(private val context: Context) {
             }
             Log.i(TAG, "Payload store updated to ${manifest.version}")
         } catch (failure: Throwable) {
-            withContext(Dispatchers.IO) {
+            withContext(NonCancellable + Dispatchers.IO) {
                 base.listFiles()
                     ?.filter { it.name.startsWith("staging-") }
-                    ?.forEach { it.deleteRecursively() }
+                    ?.forEach { staging ->
+                        if (!staging.deleteRecursively()) {
+                            Log.w(TAG, "Could not clear interrupted payload staging: $staging")
+                        }
+                    }
             }
             throw failure
         }
@@ -386,10 +398,20 @@ internal class PayloadBootstrapper(private val context: Context) {
     }
 
     private fun expandedSize(archive: File): Long = ZipFile(archive).use { zip ->
-        zip.entries().asSequence()
-            .filterNot { it.isDirectory }
-            .sumOf { it.size.coerceAtLeast(0L) }
-            .coerceAtLeast(1L)
+        var entries = 0
+        var total = 0L
+        val enumeration = zip.entries()
+        while (enumeration.hasMoreElements()) {
+            val entry = enumeration.nextElement()
+            check(++entries <= MAX_PAYLOAD_ENTRIES) { "Payload archive contains too many files" }
+            if (!entry.isDirectory) {
+                check(entry.size >= 0L) { "Payload archive contains an entry with no declared size" }
+                total = Math.addExact(total, entry.size)
+                check(total <= MAX_PAYLOAD_EXPANDED_BYTES) { "Payload archive expands beyond the safety limit" }
+            }
+        }
+        check(entries > 0) { "Payload archive is empty" }
+        total.coerceAtLeast(1L)
     }
 
     private fun extractZipSafely(
@@ -432,7 +454,10 @@ internal class PayloadBootstrapper(private val context: Context) {
                             val count = zip.read(buffer)
                             if (count < 0) break
                             output.write(buffer, 0, count)
-                            completedBytes += count
+                            completedBytes = Math.addExact(completedBytes, count.toLong())
+                            check(completedBytes <= totalBytes) {
+                                "Payload archive expanded beyond its verified directory size"
+                            }
                             report()
                         }
                     }
@@ -440,7 +465,9 @@ internal class PayloadBootstrapper(private val context: Context) {
                 zip.closeEntry()
             }
         }
-        completedBytes = totalBytes
+        check(completedBytes == totalBytes) {
+            "Payload extraction was incomplete: expected $totalBytes bytes, wrote $completedBytes"
+        }
         report(force = true)
     }
 
@@ -464,19 +491,38 @@ internal class PayloadBootstrapper(private val context: Context) {
         check(stagedRoot.isDirectory) { "Payload pack did not contain its $rootName root" }
         val target = File(current, rootName)
         val rollback = File(checkNotNull(current.parentFile), "rollback-$rootName-${UUID.randomUUID()}")
+        var published = false
         try {
             if (target.exists()) check(target.renameTo(rollback)) {
                 "Could not preserve the current $rootName payload"
             }
             if (!stagedRoot.renameTo(target)) {
-                if (rollback.exists()) rollback.renameTo(target)
                 error("Could not publish the $rootName payload update")
             }
-            if (rollback.exists()) check(rollback.deleteRecursively()) {
-                "Could not remove the replaced $rootName payload"
+            published = true
+            if (rollback.exists() && !rollback.deleteRecursively()) {
+                // The new verified pack is already live. Retrying removal on the next
+                // bootstrap is safer than rolling a valid update back for cleanup alone.
+                Log.w(TAG, "Could not remove the replaced $rootName payload")
             }
+        } catch (failure: Throwable) {
+            val restoreFailure = runCatching {
+                if (published && target.exists()) {
+                    check(target.deleteRecursively()) { "Could not remove incomplete $rootName payload" }
+                }
+                if (!target.exists() && rollback.exists()) {
+                    check(rollback.renameTo(target)) { "Could not restore the previous $rootName payload" }
+                }
+            }.exceptionOrNull()
+            if (restoreFailure != null) {
+                failure.addSuppressed(restoreFailure)
+                Log.e(TAG, "Payload rollback was incomplete for $rootName", restoreFailure)
+            }
+            throw failure
         } finally {
-            if (staging.exists()) staging.deleteRecursively()
+            if (staging.exists() && !staging.deleteRecursively()) {
+                Log.w(TAG, "Could not clear payload staging: $staging")
+            }
         }
     }
 
@@ -574,6 +620,9 @@ internal class PayloadBootstrapper(private val context: Context) {
         const val PACK_STATE_FILE = ".packs.json"
         const val BUFFER_SIZE = 256 * 1024
         const val MAX_MANIFEST_BYTES = 256 * 1024
+        const val STORAGE_RESERVE = 512L * 1024L * 1024L
+        const val MAX_PAYLOAD_ENTRIES = 250_000
+        const val MAX_PAYLOAD_EXPANDED_BYTES = 16L * 1024L * 1024L * 1024L
         const val REMOTE_CONNECT_TIMEOUT_MS = 5_000
         const val REMOTE_READ_TIMEOUT_MS = 8_000
         const val REMOTE_CHECK_INTERVAL_MS = 60_000L

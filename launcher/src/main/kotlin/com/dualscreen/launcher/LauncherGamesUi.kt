@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -39,6 +40,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 
 @Composable
@@ -67,13 +69,16 @@ internal fun GamesPage(
                     fontSize = 8.sp,
                     letterSpacing = 1.6.sp,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Games", fontSize = 24.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(11.dp))
                     Text(
                         "Select a title to install, configure, or play.",
+                        modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -96,6 +101,7 @@ internal fun GamesPage(
                     installed = installed[game.id],
                     progress = progress[game.id],
                     saveProgress = saveProgress[game.id],
+                    modifier = Modifier.width(158.dp).fillParentMaxHeight(),
                     onClick = { onSelectGame(game) },
                 )
             }
@@ -109,6 +115,7 @@ private fun BrowseGameCard(
     installed: InstalledGame?,
     progress: InstallProgress?,
     saveProgress: SaveImportProgress?,
+    modifier: Modifier,
     onClick: () -> Unit,
 ) {
     val state = resolveGameInstallState(installed, progress, saveProgress)
@@ -120,10 +127,12 @@ private fun BrowseGameCard(
     }
     val desaturated = ColorMatrix().apply { setToSaturation(if (inactive) 0.08f else 0.84f) }
 
-    PressScaleContainer(
-        onClick = onClick,
-        modifier = Modifier.width(158.dp).height(330.dp),
-    ) {
+    BoxWithConstraints(modifier = modifier) {
+        val coverHeight = browseCoverHeight(maxHeight)
+        PressScaleContainer(
+            onClick = onClick,
+            modifier = Modifier.fillMaxSize(),
+        ) {
         Card(
             colors = CardDefaults.cardColors(containerColor = Color(0xFF171812)),
             shape = RoundedCornerShape(13.dp),
@@ -139,7 +148,7 @@ private fun BrowseGameCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(231.dp)
+                        .height(coverHeight)
                         .background(Color.Black),
                 ) {
                     Image(
@@ -193,6 +202,7 @@ private fun BrowseGameCard(
                     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text(
                             gameShortTitle(game.id),
+                            modifier = Modifier.height(30.dp),
                             fontWeight = FontWeight.Bold,
                             fontSize = 13.sp,
                             lineHeight = 15.sp,
@@ -228,6 +238,8 @@ private fun BrowseGameCard(
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Icon(
                                 Icons.Default.ChevronRight,
@@ -242,3 +254,11 @@ private fun BrowseGameCard(
         }
     }
 }
+}
+
+/**
+ * Always preserve enough room for a two-line title, the install-status pill,
+ * and the bottom action/progress row. Only the artwork contracts.
+ */
+internal fun browseCoverHeight(cardHeight: Dp): Dp =
+    (cardHeight - 116.dp).coerceAtLeast(120.dp)

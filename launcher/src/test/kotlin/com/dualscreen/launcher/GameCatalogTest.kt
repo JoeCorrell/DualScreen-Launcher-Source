@@ -21,6 +21,7 @@ class GameCatalogTest {
         GameCatalog.games.forEach { game ->
             assertThat(game.executableCandidates).isNotEmpty()
             assertThat(game.requiredFiles).isNotEmpty()
+            assertThat(game.requiredBuild).isNotEmpty()
             assertThat(game.saveDirectory).isNotEmpty()
             assertThat(game.saveDirectory).doesNotContain("..")
             assertThat(game.saveDirectory.startsWith("/")).isFalse()
@@ -32,6 +33,16 @@ class GameCatalogTest {
                 assertThat(prerequisite.installedFiles).isNotEmpty()
             }
         }
+    }
+
+    @Test
+    fun playerFacingBuildRequirementsMatchNativeBuildGates() {
+        assertThat(GameCatalog.byId("skyrim-se")?.requiredBuild).contains("1.5.97.0")
+        assertThat(GameCatalog.byId("fallout3")?.requiredBuild).contains("1.7.0.4")
+        assertThat(GameCatalog.byId("fallout4")?.requiredBuild).contains("1.11.240.0")
+        assertThat(GameCatalog.byId("grim-dawn")?.requiredBuild).contains("1.3.0.7")
+        assertThat(GameCatalog.byId("deus-ex-hrdc")?.requiredBuild).contains("2.0.66.0")
+        assertThat(GameCatalog.byId("stardew-valley")?.requiredBuild).contains("1.6.15.24356")
     }
 
     @Test

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as DualScreenLauncherApplication
@@ -20,6 +21,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     internal val payloadState = app.payloads.state
     internal val updateState = app.updates.state
     private var synchronizedPayloadVersion: String? = null
+    private val archiveOperationInFlight = AtomicBoolean(false)
 
     private val mutableGpuDriverMessage = MutableStateFlow<String?>(null)
     val gpuDriverMessage: StateFlow<String?> = mutableGpuDriverMessage.asStateFlow()
@@ -57,10 +59,15 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (progress.value.values.any(InstallProgress::running) ||
             saveProgress.value.values.any(SaveImportProgress::running)
         ) return
+        if (!archiveOperationInFlight.compareAndSet(false, true)) return
         app.saveImporter.clear()
         viewModelScope.launch {
-            app.installer.install(game, archive)
-            mutableInstalled.value = app.registry.all()
+            try {
+                app.installer.install(game, archive)
+                mutableInstalled.value = app.registry.all()
+            } finally {
+                archiveOperationInFlight.set(false)
+            }
         }
     }
 
@@ -68,8 +75,13 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         if (progress.value.values.any(InstallProgress::running) ||
             saveProgress.value.values.any(SaveImportProgress::running)
         ) return
+        if (!archiveOperationInFlight.compareAndSet(false, true)) return
         viewModelScope.launch {
-            app.saveImporter.import(game, installed, archive)
+            try {
+                app.saveImporter.import(game, installed, archive)
+            } finally {
+                archiveOperationInFlight.set(false)
+            }
         }
     }
 

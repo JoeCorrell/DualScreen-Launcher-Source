@@ -23,6 +23,8 @@ data class SupportedGame(
     val id: String,
     val title: String,
     val summary: String,
+    /** Player-facing build contract; validation below remains authoritative. */
+    val requiredBuild: String,
     /** Visible until that game's complete dual-screen integration is release-ready. */
     val isBeta: Boolean = true,
     val executableCandidates: List<String>,
@@ -51,6 +53,7 @@ object GameCatalog {
             id = "skyrim-se",
             title = "The Elder Scrolls V: Skyrim Special Edition",
             summary = "Live character, inventory, map, magic, and quest panel.",
+            requiredBuild = "Skyrim Special Edition 1.5.97.0",
             isBeta = false,
             // SkyrimSecondScreen bootstraps through the bundled DXGI proxy.
             // The verified runtime is SkyrimSE.exe 1.5.97; SKSE's loader EXE is
@@ -72,6 +75,7 @@ object GameCatalog {
             id = "fallout3",
             title = "Fallout 3",
             summary = "A permanent live Pip-Boy on the lower display.",
+            requiredBuild = "Fallout 3 1.7.0.4",
             executableCandidates = listOf("Fallout3.exe"),
             configurationLauncherCandidates = listOf(
                 "FalloutLauncher.exe",
@@ -95,6 +99,7 @@ object GameCatalog {
             id = "fallout4",
             title = "Fallout 4",
             summary = "A permanent live Pip-Boy interface on the lower display.",
+            requiredBuild = "Fallout 4 1.11.240.0",
             executableCandidates = listOf("Fallout4.exe"),
             configurationLauncherCandidates = listOf("Fallout4Launcher.exe"),
             saveDirectory = "Documents/My Games/Fallout4/Saves",
@@ -113,6 +118,7 @@ object GameCatalog {
             id = "grim-dawn",
             title = "Grim Dawn",
             summary = "Live character, inventory, skills, devotion, quests, and map data.",
+            requiredBuild = "Grim Dawn 1.3.0.7 (32-bit executable)",
             // The current native bridge is exact-build-gated to the root PE32
             // executable. The unrelated x64 copy must never be selected first.
             executableCandidates = listOf("Grim Dawn.exe"),
@@ -141,6 +147,7 @@ object GameCatalog {
             id = "deus-ex-hrdc",
             title = "Deus Ex: Human Revolution Director's Cut",
             summary = "Inventory, augmentations, maps, objectives, and data.",
+            requiredBuild = "Director's Cut 2.0.66.0",
             isBeta = false,
             executableCandidates = listOf("DXHRDC.exe"),
             saveDirectory = "Documents/Square Enix/Deus Ex - Human Revolution Director's Cut",
@@ -158,6 +165,7 @@ object GameCatalog {
             id = "dead-island-de",
             title = "Dead Island Definitive Edition",
             summary = "Live status, inventory, map, skills, and touch hotbar.",
+            requiredBuild = "2016 PC build 1.0.0.0",
             executableCandidates = listOf("DeadIslandGame.exe"),
             saveDirectory = "Documents/DeadIslandDE/out/save",
             stripSingleSaveArchiveRoot = true,
@@ -177,6 +185,7 @@ object GameCatalog {
             id = "valheim",
             title = "Valheim",
             summary = "Player, inventory, crafting, containers, map, and chat.",
+            requiredBuild = "Windows x64 build (BepInEx 5.4.23.5 added automatically)",
             executableCandidates = listOf("valheim.exe"),
             saveDirectory = "AppData/LocalLow/IronGate/Valheim",
             requiredFiles = listOf("valheim.exe", "valheim_Data/globalgamemanagers"),
@@ -198,6 +207,7 @@ object GameCatalog {
             id = "stardew-valley",
             title = "Stardew Valley",
             summary = "Backpack, farm, crafting, map, journal, and relationships.",
+            requiredBuild = "Stardew Valley 1.6.15.24356 (GOG or Steam)",
             executableCandidates = listOf("Stardew Valley.exe"),
             saveDirectory = "AppData/Roaming/StardewValley/Saves",
             requiredFiles = listOf(

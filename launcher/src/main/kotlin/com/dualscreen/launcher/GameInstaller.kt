@@ -8,6 +8,8 @@ import android.util.Log
 import com.wemu.engine.container.Container
 import com.wemu.engine.container.ContainerManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,8 +56,9 @@ class GameInstaller(
 
     suspend fun install(game: SupportedGame, archive: Uri): Result<InstalledGame> =
         installLock.withLock {
-            runCatching { installInternal(game, archive) }
-                .onFailure { failure ->
+            val result = runCatching { installInternal(game, archive) }
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            result.onFailure { failure ->
                     val previous = mutableProgress.value[game.id]
                     publish(
                         game.id,
@@ -75,7 +78,7 @@ class GameInstaller(
      */
     suspend fun ensureCurrentPayload(game: SupportedGame): Result<InstalledGame?> =
         installLock.withLock {
-            runCatching {
+            val result = runCatching {
                 var installed = registry.get(game.id) ?: return@runCatching null
                 if (preset.requiresDedicatedContainer(game)) {
                     installed = ensureDedicatedContainer(game, installed)
@@ -119,7 +122,8 @@ class GameInstaller(
                     )
                 }
             }
-                .onFailure { failure ->
+            result.exceptionOrNull()?.let { if (it is CancellationException) throw it }
+            result.onFailure { failure ->
                     val previous = mutableProgress.value[game.id]
                     publish(
                         game.id,
@@ -205,9 +209,11 @@ class GameInstaller(
                 installedBytes = installedBytes,
                 payloadVersion = payload.version,
             )
-            registry.put(installed)
+            withContext(Dispatchers.IO) { registry.put(installed) }
             withContext(Dispatchers.IO) {
-                if (rollback.exists()) rollback.deleteRecursively()
+                if (rollback.exists() && !rollback.deleteRecursively()) {
+                    Log.w(LOG_TAG, "The previous ${game.title} rollback will be cleared next launch")
+                }
             }
             publish(
                 game.id,
@@ -219,14 +225,38 @@ class GameInstaller(
             )
             return installed
         } catch (failure: Throwable) {
-            withContext(Dispatchers.IO) {
-                if (committed) {
-                    if (target.exists()) target.deleteRecursively()
-                    if (rollback.exists()) rollback.renameTo(target)
-                } else {
-                    if (staging.exists()) staging.deleteRecursively()
-                    if (!target.exists() && rollback.exists()) rollback.renameTo(target)
+            val rollbackFailure = runCatching {
+                // Android may cancel this coroutine with the activity. Cleanup must still
+                // complete so a retry cannot inherit a partial multi-gigabyte extraction.
+                withContext(NonCancellable + Dispatchers.IO) {
+                    if (committed) {
+                        if (target.exists()) {
+                            check(target.deleteRecursively()) {
+                                "Could not remove the incomplete published installation"
+                            }
+                        }
+                        if (rollback.exists()) {
+                            check(rollback.renameTo(target)) {
+                                "Could not restore the previous installation"
+                            }
+                        }
+                    } else {
+                        if (staging.exists()) {
+                            check(staging.deleteRecursively()) {
+                                "Could not clear the incomplete extraction"
+                            }
+                        }
+                        if (!target.exists() && rollback.exists()) {
+                            check(rollback.renameTo(target)) {
+                                "Could not restore the previous installation"
+                            }
+                        }
+                    }
                 }
+            }.exceptionOrNull()
+            if (rollbackFailure != null) {
+                failure.addSuppressed(rollbackFailure)
+                Log.e(LOG_TAG, "Install rollback was incomplete", rollbackFailure)
             }
             throw failure
         }
@@ -325,7 +355,8 @@ class GameInstaller(
                 it.statSize.coerceAtLeast(0L)
             } ?: 0L
             val available = StatFs(destination.absolutePath).availableBytes
-            if (compressedBytes > 0 && available < compressedBytes + STORAGE_RESERVE) {
+            val extractionBudget = extractionByteBudget(available, STORAGE_RESERVE)
+            if (compressedBytes > extractionBudget) {
                 error("Not enough free space to install this archive")
             }
             publish(
@@ -335,8 +366,8 @@ class GameInstaller(
                 "Extracting the selected game archive",
             )
 
-            val result = extractSeekable(game, source, destination, available)
-                ?: extractStreaming(game, source, destination, compressedBytes, available)
+            val result = extractSeekable(game, source, destination, extractionBudget)
+                ?: extractStreaming(game, source, destination, compressedBytes, extractionBudget)
             val elapsedMs = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1L)
             val bytesPerSecond = result.bytes * 1_000L / elapsedMs
             publish(
@@ -358,7 +389,7 @@ class GameInstaller(
         game: SupportedGame,
         source: Uri,
         destination: File,
-        available: Long,
+        extractionBudget: Long,
     ): ExtractionResult? {
         val descriptor = context.contentResolver.openFileDescriptor(source, "r") ?: return null
         descriptor.use { parcel ->
@@ -385,13 +416,13 @@ class GameInstaller(
                         "Archive contains a duplicate Windows path: ${entry.name}"
                     }
                     windowsPaths[pathKey] = entry.isDirectory
-                    val output = File(root, relative)
+                    val output = safeGameArchiveTarget(root, relative)
                     if (entry.isDirectory) {
                         check(output.isDirectory || output.mkdirs()) { "Could not create $relative" }
                     } else {
                         check(entry.size >= 0L) { "Archive entry has no declared size: ${entry.name}" }
                         expectedBytes = Math.addExact(expectedBytes, entry.size)
-                        check(expectedBytes <= available - STORAGE_RESERVE) {
+                        check(expectedBytes <= extractionBudget) {
                             "The archive is larger than the available storage"
                         }
                         check(output.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
@@ -474,7 +505,7 @@ class GameInstaller(
         source: Uri,
         destination: File,
         compressedBytes: Long,
-        available: Long,
+        extractionBudget: Long,
     ): ExtractionResult {
         val raw = context.contentResolver.openInputStream(source)
             ?: error("The selected archive could not be opened")
@@ -496,7 +527,7 @@ class GameInstaller(
                     "Archive contains a duplicate Windows path: ${entry.name}"
                 }
                 windowsPaths[pathKey] = entry.isDirectory
-                val output = File(root, relative)
+                val output = safeGameArchiveTarget(root, relative)
                 if (entry.isDirectory) {
                     check(output.isDirectory || output.mkdirs()) { "Could not create $relative" }
                 } else {
@@ -509,7 +540,7 @@ class GameInstaller(
                             if (count < 0) break
                             file.write(buffer, 0, count)
                             written += count
-                            check(written <= available - STORAGE_RESERVE) {
+                            check(written <= extractionBudget) {
                                 "The archive is larger than the available storage"
                             }
                             if (compressedBytes > 0) {
@@ -588,7 +619,9 @@ class GameInstaller(
 
     private fun validateGameBuild(game: SupportedGame, root: File) {
         game.requiredFiles.forEach { path ->
-            check(resolveWindowsFile(root, path)?.isFile == true) { "Missing game file: $path" }
+            check(resolveWindowsFile(root, path)?.isFile == true) {
+                "Missing game file: $path. Required build: ${game.requiredBuild}"
+            }
         }
         game.fileRules.forEach { rule ->
             val file = resolveWindowsFile(root, rule.path)
@@ -603,14 +636,14 @@ class GameInstaller(
                 val observed = sha256(file)
                 check(observed == expected) {
                     "Unsupported ${rule.path}: SHA-256 ${observed.take(12)}... does not match the " +
-                        "verified build required by this dual-screen mod"
+                        "verified ${game.requiredBuild} build required by this dual-screen mod"
                 }
             }
             if (rule.sha256AnyOf.isNotEmpty()) {
                 val observed = sha256(file)
                 check(observed in rule.sha256AnyOf) {
                     "Unsupported ${rule.path}: SHA-256 ${observed.take(12)}... is not one of " +
-                        "the verified builds supported by this dual-screen mod"
+                        "the verified ${game.requiredBuild} builds supported by this dual-screen mod"
                 }
             }
         }
@@ -1316,6 +1349,25 @@ internal fun normalizeGameArchiveEntry(entryName: String): String {
     return segments.joinToString("/") + if (normalized.endsWith('/')) "/" else ""
 }
 
+/** Returns the writable extraction budget without overflow in reserve arithmetic. */
+internal fun extractionByteBudget(availableBytes: Long, reserveBytes: Long): Long {
+    require(availableBytes >= 0L) { "Available storage cannot be negative" }
+    require(reserveBytes >= 0L) { "Storage reserve cannot be negative" }
+    check(availableBytes > reserveBytes) { "Not enough free space to install this archive" }
+    return availableBytes - reserveBytes
+}
+
+/** Defense in depth if archive path normalization changes in the future. */
+internal fun safeGameArchiveTarget(root: File, normalizedRelativePath: String): File {
+    val canonicalRoot = root.canonicalFile
+    val target = File(canonicalRoot, normalizedRelativePath).canonicalFile
+    val childPrefix = canonicalRoot.path + File.separator
+    require(target.path.startsWith(childPrefix)) {
+        "Archive entry escapes the extraction directory: $normalizedRelativePath"
+    }
+    return target
+}
+
 internal fun unsupportedBuildSizeMessage(
     game: SupportedGame,
     path: String,
@@ -1326,5 +1378,5 @@ internal fun unsupportedBuildSizeMessage(
         "Fallout 3 1.7.0.4 ($expected bytes). Update the game first, then create a new ZIP from " +
         "that updated game folder."
 } else {
-    "Unsupported $path: expected $expected bytes, found $observed"
+    "Unsupported $path: ${game.requiredBuild} is required; expected $expected bytes, found $observed"
 }

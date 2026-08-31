@@ -54,6 +54,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -73,15 +74,15 @@ internal fun LauncherHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(62.dp)
+            .height(56.dp)
             .background(Color(0xEA11120F))
             .border(0.5.dp, Color(0xFF32332A))
-            .padding(horizontal = 22.dp),
+            .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
             modifier = Modifier
-                .size(32.dp)
+                .size(30.dp)
                 .clip(RoundedCornerShape(9.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFFFFC15C), Color(0xFFD88428)))),
             contentAlignment = Alignment.Center,
@@ -90,7 +91,7 @@ internal fun LauncherHeader(
                 Icons.Default.Gamepad,
                 contentDescription = null,
                 tint = Color(0xFF19130A),
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(19.dp),
             )
         }
         Spacer(Modifier.width(10.dp))
@@ -147,16 +148,16 @@ private fun HeaderDestination(
     )
     Row(
         modifier = Modifier
-            .height(38.dp)
+            .height(36.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(background)
             .clickable(onClick = onClick)
-            .padding(horizontal = 13.dp),
+            .padding(horizontal = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(17.dp))
-        Text(label, color = foreground, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(16.dp))
+        Text(label, color = foreground, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -209,9 +210,15 @@ internal fun LauncherCard(
 @Composable
 internal fun SectionTitle(title: String, detail: String? = null) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (detail != null) {
-            Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                detail,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -235,7 +242,15 @@ internal fun StatusPill(state: GameInstallState) {
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(Modifier.size(6.dp).clip(RoundedCornerShape(50)).background(tint))
-        Text(label, color = tint, fontSize = 8.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            color = tint,
+            fontSize = 8.sp,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -252,7 +267,7 @@ internal fun PrimaryAction(
         Button(
             onClick = onClick,
             enabled = enabled,
-            modifier = modifier.height(46.dp),
+            modifier = modifier.height(44.dp),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = LauncherAccent,
@@ -260,16 +275,23 @@ internal fun PrimaryAction(
                 disabledContainerColor = Color(0xFF2C2C25),
                 disabledContentColor = Color(0xFF69675E),
             ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 11.dp),
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(7.dp))
-            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     } else {
         OutlinedButton(
             onClick = onClick,
             enabled = enabled,
-            modifier = modifier.height(46.dp),
+            modifier = modifier.height(44.dp),
             shape = RoundedCornerShape(10.dp),
             colors = ButtonDefaults.outlinedButtonColors(
                 containerColor = Color(0xFF1C1D17),
@@ -277,10 +299,17 @@ internal fun PrimaryAction(
                 disabledContainerColor = Color(0xFF171812),
                 disabledContentColor = Color(0xFF5F5F57),
             ),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 11.dp),
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
-            Spacer(Modifier.width(7.dp))
-            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
@@ -297,13 +326,21 @@ internal fun InformationRow(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.Top,
     ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+        Text(
+            label,
+            modifier = Modifier.weight(0.42f).padding(end = 8.dp),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 11.sp,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
         Text(
             value,
-            modifier = Modifier.padding(start = 16.dp),
+            modifier = Modifier.weight(0.58f),
             color = if (emphasized) LauncherSuccess else MaterialTheme.colorScheme.onSurface,
             fontSize = 11.sp,
             fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )

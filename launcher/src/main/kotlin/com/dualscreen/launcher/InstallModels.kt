@@ -79,6 +79,8 @@ class InstallRegistry(context: Context) {
             .put("hostDirectory", value.hostDirectory)
             .put("installedBytes", value.installedBytes)
             .put("payloadVersion", value.payloadVersion)
-        preferences.edit().putString(value.gameId, data.toString()).apply()
+        check(preferences.edit().putString(value.gameId, data.toString()).commit()) {
+            "Could not persist the installed game state"
+        }
     }
 }

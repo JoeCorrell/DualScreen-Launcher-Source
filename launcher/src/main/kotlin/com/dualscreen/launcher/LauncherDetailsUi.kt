@@ -95,6 +95,7 @@ internal fun GameDetailsPage(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             gameShortTitle(game.id),
+                            modifier = Modifier.weight(0.46f),
                             fontSize = 25.sp,
                             lineHeight = 27.sp,
                             fontWeight = FontWeight.Bold,
@@ -104,6 +105,7 @@ internal fun GameDetailsPage(
                         Spacer(Modifier.width(11.dp))
                         Text(
                             game.summary,
+                            modifier = Modifier.weight(0.54f),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 10.sp,
                             maxLines = 1,
@@ -171,6 +173,7 @@ internal fun GameDetailsPage(
                 ) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         InformationRow("Executable", game.executableCandidates.firstOrNull() ?: "Not configured")
+                        InformationRow("Required build", game.requiredBuild, emphasized = true)
                         InformationRow(
                             "Game launcher",
                             if (game.configurationLauncherCandidates.isEmpty()) "Not required" else "Available",
@@ -277,6 +280,15 @@ private fun ActionPanel(
                 enabled = !busy,
                 primary = true,
                 modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                "REQUIRED  ${game.requiredBuild}",
+                color = LauncherAccent,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
             )
         } else {
             Row(

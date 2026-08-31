@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -79,13 +80,16 @@ internal fun SettingsPage(
                     fontSize = 8.sp,
                     letterSpacing = 1.6.sp,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Settings", fontSize = 24.sp, lineHeight = 26.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.width(11.dp))
                     Text(
                         "Display, graphics, storage, and the verified game runtime.",
+                        modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 10.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -162,9 +166,11 @@ internal fun SettingsPage(
                         Text("ACTIVE DRIVER", style = settingLabelStyle())
                         Text(
                             selectedDriver?.label ?: "Loading…",
+                            modifier = Modifier.weight(1f).padding(start = 8.dp),
                             color = LauncherAccent,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.End,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -352,10 +358,10 @@ internal fun GuidePage(onBrowseGames: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(
-            start = 22.dp,
-            end = 22.dp,
-            top = 13.dp,
-            bottom = 22.dp,
+            start = 16.dp,
+            end = 16.dp,
+            top = 8.dp,
+            bottom = 16.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -466,7 +472,7 @@ private fun GuideStep(
     body: String,
     modifier: Modifier = Modifier,
 ) {
-    LauncherCard(modifier) {
+    LauncherCard(modifier.height(136.dp), compact = true) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -484,6 +490,13 @@ private fun GuideStep(
             Text(number, color = Color(0xFF5E5C53), fontFamily = FontFamily.Monospace, fontSize = 18.sp, fontWeight = FontWeight.Bold)
         }
         Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, lineHeight = 13.sp)
+        Text(
+            body,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 9.sp,
+            lineHeight = 12.sp,
+            maxLines = 5,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
