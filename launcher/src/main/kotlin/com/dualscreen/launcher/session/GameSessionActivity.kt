@@ -51,6 +51,7 @@ import com.wemu.engine.xserver.XServer
 import com.wemu.runtime.RuntimeSession
 import com.wemu.runtime.WemuRuntimeEngine
 import com.wemu.session.secondscreen.SecondScreen
+import com.wemu.session.secondscreen.StardewPanelControl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -143,7 +144,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             return
         }
         sessionTitle = if (configurationLauncher) "${game.title} Launcher" else game.title
-        managedPanel = !configurationLauncher && game.panelMode == LowerPanelMode.VALHEIM
+        managedPanel = !configurationLauncher &&
+            game.panelMode in setOf(LowerPanelMode.STARDEW, LowerPanelMode.VALHEIM)
         nativeTextBridge = !configurationLauncher && game.id == "skyrim-se"
         launchStatus = app.launchStatus
         val logFile = launchStatus.begin(game)
@@ -734,37 +736,43 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
 
     /** Preserves the original Stardew panel's bare controller bindings. */
     private fun dispatchStardewPanelKey(event: KeyEvent): Boolean {
-        if (!SecondScreenOutput.isStardewValleyPanelActive() || !isControllerEvent(event)) {
+        val managedStardew = managedPanel && sessionTitle == "Stardew Valley"
+        val nativeStardew = SecondScreenOutput.isStardewValleyPanelActive()
+        if ((!managedStardew && !nativeStardew) || !isControllerEvent(event)) {
             return false
         }
         val firstPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+        fun send(managed: StardewPanelControl, native: () -> Unit) {
+            if (!firstPress) return
+            if (managedStardew) SecondScreen.controlStardewPanel(managed) else native()
+        }
         return when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP,
             KeyEvent.KEYCODE_BUTTON_Y,
-            -> { if (firstPress) NativePanelInput.navigation("up"); true }
+            -> { send(StardewPanelControl.PREVIOUS_SLOT) { NativePanelInput.navigation("up") }; true }
             KeyEvent.KEYCODE_DPAD_DOWN,
             KeyEvent.KEYCODE_BUTTON_A,
-            -> { if (firstPress) NativePanelInput.navigation("down"); true }
+            -> { send(StardewPanelControl.NEXT_SLOT) { NativePanelInput.navigation("down") }; true }
             KeyEvent.KEYCODE_DPAD_LEFT,
             KeyEvent.KEYCODE_PAGE_UP,
-            -> { if (firstPress) NativePanelInput.page(false); true }
+            -> { send(StardewPanelControl.PREVIOUS_PAGE) { NativePanelInput.page(false) }; true }
             KeyEvent.KEYCODE_DPAD_RIGHT,
             KeyEvent.KEYCODE_PAGE_DOWN,
-            -> { if (firstPress) NativePanelInput.page(true); true }
+            -> { send(StardewPanelControl.NEXT_PAGE) { NativePanelInput.page(true) }; true }
             KeyEvent.KEYCODE_BUTTON_L1 -> {
-                if (firstPress) NativePanelInput.toolbar(false)
+                send(StardewPanelControl.PREVIOUS_TOOLBAR) { NativePanelInput.toolbar(false) }
                 true
             }
             KeyEvent.KEYCODE_BUTTON_R1 -> {
-                if (firstPress) NativePanelInput.toolbar(true)
+                send(StardewPanelControl.NEXT_TOOLBAR) { NativePanelInput.toolbar(true) }
                 true
             }
             KeyEvent.KEYCODE_BUTTON_X -> {
-                if (firstPress) NativePanelInput.action("sort")
+                send(StardewPanelControl.SORT) { NativePanelInput.action("sort") }
                 true
             }
             KeyEvent.KEYCODE_BUTTON_B -> {
-                if (firstPress) NativePanelInput.action("use")
+                send(StardewPanelControl.USE) { NativePanelInput.action("use") }
                 true
             }
             else -> false

@@ -16,7 +16,6 @@ import android.view.View
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.TextView
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import com.dualscreen.launcher.LowerPanelMode
@@ -25,7 +24,9 @@ import com.wemu.engine.renderer.SecondScreenOutput
 import com.wemu.session.secondscreen.Buzz
 import com.wemu.session.secondscreen.GuestHapticCue
 import com.wemu.session.secondscreen.SecondScreen
+import com.wemu.session.secondscreen.StardewScreen
 import com.wemu.session.secondscreen.ValheimScreen
+import com.thor.core.designsystem.theme.ThorTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -84,13 +85,17 @@ class GamePanelPresentation(
                 SecondScreen.start()
                 setContentView(managedPanel { ValheimScreen(Modifier) })
             }
+            LowerPanelMode.STARDEW -> {
+                SecondScreen.start()
+                setContentView(managedPanel { StardewScreen(Modifier) })
+            }
         }
     }
 
     private fun managedPanel(content: @androidx.compose.runtime.Composable () -> Unit): View =
         ComposeView(context).apply {
             setBackgroundColor(Color.rgb(9, 12, 15))
-            setContent { MaterialTheme(content = content) }
+            setContent { ThorTheme(content = content) }
         }
 
     private fun nativePanel(): View {

@@ -31,6 +31,18 @@ enum class GuestHapticCue {
     Unlock,
 }
 
+/** Controller actions forwarded from the focused upper-screen session window. */
+enum class StardewPanelControl {
+    PREVIOUS_PAGE,
+    NEXT_PAGE,
+    PREVIOUS_SLOT,
+    NEXT_SLOT,
+    PREVIOUS_TOOLBAR,
+    NEXT_TOOLBAR,
+    SORT,
+    USE,
+}
+
 object SecondScreen {
 
     private const val TAG = "SecondScreenInput"
@@ -65,6 +77,15 @@ object SecondScreen {
         extraBufferCapacity = 16,
     )
     val guestHaptics: SharedFlow<GuestHapticCue> = _guestHaptics.asSharedFlow()
+
+    private val _stardewPanelControls = MutableSharedFlow<StardewPanelControl>(
+        extraBufferCapacity = 32,
+    )
+    val stardewPanelControls: SharedFlow<StardewPanelControl> =
+        _stardewPanelControls.asSharedFlow()
+
+    fun controlStardewPanel(control: StardewPanelControl): Boolean =
+        _stardewPanelControls.tryEmit(control)
 
     @Suppress("unused")
     private val guestInputPump = scope.launch(Dispatchers.IO) {

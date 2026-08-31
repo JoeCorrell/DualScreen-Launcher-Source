@@ -242,6 +242,7 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
         Text(
             when (game.panelMode) {
                 LowerPanelMode.NATIVE_WINDOW -> "NATIVE LOWER PANEL"
+                LowerPanelMode.STARDEW -> "MANAGED LOWER PANEL"
                 LowerPanelMode.VALHEIM -> "MANAGED LOWER PANEL"
             },
             color = LauncherAccent,

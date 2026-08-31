@@ -102,8 +102,9 @@ import com.dualscreen.launcher.Size
 import com.dualscreen.launcher.Tone
 import com.wemu.engine.renderer.SecondScreenOutput
 import com.wemu.engine.winhandler.ProcessInfo
-import com.wemu.session.secondscreen.ModsPage
 import com.wemu.session.secondscreen.SecondScreen
+import com.wemu.session.secondscreen.StardewScreen
+import com.wemu.session.secondscreen.ValheimScreen
 
 /** Hosts the game on the upper panel and WEMU's switchable console below it. */
 @Composable
@@ -160,7 +161,8 @@ private fun CompanionBottomPanel(
     var guestOwnsPanel by remember { mutableStateOf(false) }
     var consoleVisible by remember { mutableStateOf(false) }
 
-    DisposableEffect(router) {
+    DisposableEffect(router, managedPanel) {
+        if (managedPanel) SecondScreen.start()
         SecondScreenOutput.setOnStateListener { available, claimed ->
             PANEL_HANDLER.post {
                 panelAvailable = available
@@ -200,7 +202,13 @@ private fun CompanionBottomPanel(
                 )
             }
 
-            managedPanel -> ThorTheme { ModsPage(Modifier.fillMaxSize()) }
+            managedPanel -> ThorTheme {
+                if (title == "Stardew Valley") {
+                    StardewScreen(Modifier.fillMaxSize())
+                } else {
+                    ValheimScreen(Modifier.fillMaxSize())
+                }
+            }
             guestOwnsPanel -> Unit
             else -> WaitingForGamePanel(title)
         }

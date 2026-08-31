@@ -43,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.ScrollState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.isSpecified
@@ -85,10 +86,18 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.thor.core.designsystem.modifier.SurfaceLevel
 import com.thor.core.designsystem.modifier.thorSurface
 import com.thor.core.designsystem.theme.ThorTheme
+import kotlinx.coroutines.flow.collect
 import kotlin.math.roundToInt
 
 @Composable
 fun StardewScreen(modifier: Modifier = Modifier) {
+    StardewPanelTheme {
+        StardewScreenContent(modifier)
+    }
+}
+
+@Composable
+private fun StardewScreenContent(modifier: Modifier = Modifier) {
     val state by SecondScreen.stardew.collectAsStateWithLifecycle()
     val prefs by StardewPrefs.state.collectAsStateWithLifecycle()
     val dimens = ThorTheme.dimens
@@ -127,6 +136,48 @@ fun StardewScreen(modifier: Modifier = Modifier) {
 
     val index = pages.indexOfFirst { it.name == chosen }.let { at ->
         if (at >= 0) at else 0
+    }
+
+    val currentState by rememberUpdatedState(state)
+    val currentPages by rememberUpdatedState(pages)
+    val currentIndex by rememberUpdatedState(index)
+    LaunchedEffect(Unit) {
+        SecondScreen.stardewPanelControls.collect { control ->
+            val livePages = currentPages
+            if (livePages.isEmpty()) return@collect
+            when (control) {
+                StardewPanelControl.PREVIOUS_PAGE ->
+                    chosen = livePages[
+                        (currentIndex - 1 + livePages.size) % livePages.size
+                    ].name
+                StardewPanelControl.NEXT_PAGE ->
+                    chosen = livePages[(currentIndex + 1) % livePages.size].name
+                StardewPanelControl.PREVIOUS_SLOT -> {
+                    val slot = (currentState.selectedSlot - 1 + StardewState.HOTBAR) %
+                        StardewState.HOTBAR
+                    SecondScreen.send(Commands.selectSlot(slot))
+                }
+                StardewPanelControl.NEXT_SLOT -> {
+                    val slot = (currentState.selectedSlot + 1) % StardewState.HOTBAR
+                    SecondScreen.send(Commands.selectSlot(slot))
+                }
+                StardewPanelControl.PREVIOUS_TOOLBAR ->
+                    SecondScreen.send(Commands.shiftToolbar(right = false))
+                StardewPanelControl.NEXT_TOOLBAR ->
+                    SecondScreen.send(Commands.shiftToolbar(right = true))
+                StardewPanelControl.SORT -> {
+                    if (livePages[currentIndex] == StardewPage.TODAY &&
+                        currentState.config.allowInventoryEdits
+                    ) SecondScreen.send(Commands.sortBag())
+                }
+                StardewPanelControl.USE -> {
+                    val item = currentState.itemAt(currentState.selectedSlot)
+                    if (livePages[currentIndex] == StardewPage.TODAY && !item.empty &&
+                        currentState.config.allowInventoryEdits
+                    ) SecondScreen.send(Commands.eatSlot(item.slot))
+                }
+            }
+        }
     }
 
     val colors = ThorTheme.colors
