@@ -41,6 +41,7 @@ class AssetIntegrityTest {
         assertThat(preset.getString("dxwrapperConfig")).contains("version=2.3.1")
         assertThat(preset.getString("dxwrapperConfig")).contains("vkd3dVersion=None")
         assertThat(preset.getJSONObject("extraData").getString("displaySecondScreen")).isEqualTo("1")
+        assertThat(preset.getJSONObject("extraData").getString("fitGuestWindow")).isEqualTo("1")
         assertThat(preset.getJSONObject("extraData").getString("affinityCores")).isEmpty()
     }
 
