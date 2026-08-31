@@ -205,7 +205,8 @@ public class WemuSession implements RuntimeSession {
     public void setShortcutLaunchDeferred(boolean deferred) {
         shortcutLaunchDeferred = deferred;
         if (deferred) {
-            Log.i(TAG, "Shortcut launch deferred; retaining shortcut configuration for bootstrap");
+            Log.i(TAG, "Shortcut launch deferred; retaining renderer/input configuration "
+                    + "while isolating the bootstrap environment");
         }
     }
 
@@ -549,10 +550,22 @@ public class WemuSession implements RuntimeSession {
         String rootPath = imageFs.getRootDir().getPath();
         FileUtils.clear(imageFs.getTmpDir());
 
+        /*
+         * A deferred shortcut describes the game which the host will submit
+         * through WinHandler after Wine is ready.  It is still the source of
+         * renderer, input, screen and translator settings during prepare(),
+         * but it is not the process being started here.  Passing it into the
+         * guest launcher leaked target-only CoreCLR/FEX variables into
+         * explorer, winhandler and wfm.exe.  Stardew then reached coreclr.dll
+         * but never created a window.  Keep this bootstrap identical to the
+         * known-good desktop launch; WinHandler's hidden VBS applies Stardew's
+         * policy to the actual child later.
+         */
+        Shortcut bootstrapShortcut = shortcutLaunchDeferred ? null : shortcut;
         guestProgramLauncherComponent = new GuestProgramLauncherComponent(
                 contentsManager,
                 contentsManager.getProfileByEntryName(container.getWineVersion()),
-                shortcut);
+                bootstrapShortcut);
 
         guestProgramLauncherComponent.setContainer(container);
         guestProgramLauncherComponent.setWineInfo(wineInfo);
@@ -623,13 +636,15 @@ public class WemuSession implements RuntimeSession {
         }
 
         envVars.putAll(container.getEnvVars());
-        if (shortcut != null) envVars.putAll(shortcut.getExtra("envVars"));
+        if (bootstrapShortcut != null) {
+            envVars.putAll(bootstrapShortcut.getExtra("envVars"));
+        }
         // WINEPREFIX is session ownership, not a free-form launch override.
         // Reassert the canonical container path after both user-controlled
         // environment merges so teardown can never target another prefix.
         envVars.put("WINEPREFIX", winePrefix);
-        boolean officialSteamLaunch = shortcut != null
-                && "1".equals(shortcut.getExtra("steamClientLaunch"));
+        boolean officialSteamLaunch = bootstrapShortcut != null
+                && "1".equals(bootstrapShortcut.getExtra("steamClientLaunch"));
         if (officialSteamLaunch) {
             /*
              * `-applaunch` tells Valve's client which game to start. The
@@ -642,9 +657,11 @@ public class WemuSession implements RuntimeSession {
             envVars.remove("SteamAppId");
             envVars.remove("SteamGameId");
         } else {
-            applySteamLaunchIdentity();
+            if (bootstrapShortcut != null) applySteamLaunchIdentity();
         }
-        String steamShimMode = shortcut == null ? null : shortcut.getExtra("steamShimMode");
+        String steamShimMode = bootstrapShortcut == null
+                ? null
+                : bootstrapShortcut.getExtra("steamShimMode");
         if (SteamClientRuntimePolicy.shouldDisableProtonLsteamclient(
                 officialSteamLaunch, steamShimMode)) {
             // Proton's native-Steam bridge must not replace Valve's Windows
@@ -656,28 +673,29 @@ public class WemuSession implements RuntimeSession {
         if (!cpuTopology.isEmpty()) envVars.put("WINE_CPU_TOPOLOGY", cpuTopology);
         if (!envVars.has("WINEESYNC")) envVars.put("WINEESYNC", "1");
         applyPerformanceOverrides(envVars, container);
-        if (shortcut != null
-                && StardewCoreClrCompatibility.applyTo(envVars, shortcut.path)) {
-            Log.i(TAG, "Stardew CoreCLR compatibility applied to " + shortcut.path);
+        if (bootstrapShortcut != null
+                && StardewCoreClrCompatibility.applyTo(envVars, bootstrapShortcut.path)) {
+            Log.i(TAG, "Stardew CoreCLR compatibility applied to " + bootstrapShortcut.path);
         }
-        if (shortcut != null
-                && Fallout3Compatibility.applyDxvkEnvironment(envVars, shortcut.path)) {
+        if (bootstrapShortcut != null
+                && Fallout3Compatibility.applyDxvkEnvironment(
+                        envVars, bootstrapShortcut.path)) {
             Log.i(TAG, "Fallout 3 Vulkan pipeline compatibility applied to "
-                    + shortcut.path);
+                    + bootstrapShortcut.path);
         }
-        if (shortcut != null
-                && Fallout3Compatibility.isLaunchChainExecutable(shortcut.path)) {
+        if (bootstrapShortcut != null
+                && Fallout3Compatibility.isLaunchChainExecutable(bootstrapShortcut.path)) {
             boolean settingsReady = Fallout3Compatibility.applyRuntimeSettings(
                     new File(winePrefix));
             Log.i(TAG, "Fallout 3 performance profile "
                     + (settingsReady ? "verified" : "deferred; INIs not created yet"));
         }
-        if (shortcut != null
-                && BethesdaDisplayCompatibility.isSupportedExecutable(shortcut.path)) {
+        if (bootstrapShortcut != null
+                && BethesdaDisplayCompatibility.isSupportedExecutable(bootstrapShortcut.path)) {
             int profiles = BethesdaDisplayCompatibility.applyExistingProfiles(
                     new File(winePrefix));
             Log.i(TAG, "Bethesda dual-screen display compatibility verified "
-                    + profiles + " existing profile(s) for " + shortcut.path);
+                    + profiles + " existing profile(s) for " + bootstrapShortcut.path);
         }
         logEffectivePerformanceConfiguration();
 
@@ -694,7 +712,7 @@ public class WemuSession implements RuntimeSession {
          * preset first and this session environment last, so this value wins.
          */
         if (SteamClientRuntimePolicy.shouldDisableFexMultiblock(
-                officialSteamLaunch, shortcut == null, new File(winePrefix))) {
+                officialSteamLaunch, bootstrapShortcut == null, new File(winePrefix))) {
             envVars.put("FEX_MULTIBLOCK", "0");
             Log.i(TAG, "Disabled FEX multiblock for the official Steam client session");
         }

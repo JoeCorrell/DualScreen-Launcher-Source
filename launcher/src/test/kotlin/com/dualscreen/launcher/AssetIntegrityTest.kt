@@ -7,6 +7,17 @@ import java.io.File
 
 class AssetIntegrityTest {
     private val assets = File("src/main/assets").canonicalFile
+    private val main = File("src/main").canonicalFile
+
+    @Test
+    fun stardewLoopbackBridgeIsAllowedWithoutEnablingGlobalCleartext() {
+        val manifest = File(main, "AndroidManifest.xml").readText()
+        val networkPolicy = File(main, "res/xml/network_security_config.xml").readText()
+        assertThat(manifest).contains("android:networkSecurityConfig=\"@xml/network_security_config\"")
+        assertThat(networkPolicy).contains("<base-config cleartextTrafficPermitted=\"false\"")
+        assertThat(networkPolicy).contains(">127.0.0.1</domain>")
+        assertThat(networkPolicy).contains(">localhost</domain>")
+    }
 
     @Test
     fun capturedGamesPresetMatchesThorSnapshot() {
