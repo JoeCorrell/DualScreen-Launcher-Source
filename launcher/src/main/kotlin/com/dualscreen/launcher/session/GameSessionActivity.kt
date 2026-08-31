@@ -368,21 +368,23 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
          * executable as Wine's initial target bypassed that path entirely and
          * left the process parked before .NET/XNA created a window.
          *
-         * A null shortcut selects WemuSession's wfm.exe bootstrap.  The real
-         * command is queued below after session.start().  WinHandler retains
-         * queued actions until the guest INIT packet arrives, so this is a
-         * readiness handshake, not a timing delay.
+         * WemuSession starts wfm.exe first while retaining the real Shortcut.
+         * Keeping that object is essential: it carries Stardew's ICU/CoreCLR
+         * environment, executable identity, controller registry selection and
+         * renderer overrides. The real command is queued below after
+         * session.start(). WinHandler retains queued actions until the guest
+         * INIT packet arrives, so this is a readiness handshake, not a delay.
          */
         val deferredStardewLaunch = shouldUseDeferredStardewLaunch(game.id, configurationLauncher)
-        val sessionShortcut = if (deferredStardewLaunch) null else shortcut
         if (deferredStardewLaunch) {
             launchStatus.record(
                 "PROCESS",
-                "Stardew two-stage launch selected: bootstrap=wfm.exe " +
-                    "target=${shortcut.path} bridge=WinHandler/CoreCLR",
+                "Stardew two-stage launch selected: bootstrap=wfm.exe target=${shortcut.path} " +
+                    "shortcutContext=retained bridge=WinHandler/CoreCLR",
             )
         }
-        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, sessionShortcut)
+        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, shortcut)
+        session.setShortcutLaunchDeferred(deferredStardewLaunch)
         runtime = session
         if (game.id == "skyrim-se") {
             session.setSkyrimAudioCompatibility(true)
@@ -764,53 +766,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (dispatchKeyboardControllerKey(event)) return true
         if (dispatchNativePanelModeKey(event)) return true
-        if (dispatchStardewPanelKey(event)) return true
         return dispatchGuestKeyEvent(event)
-    }
-
-    /** Preserves the original Stardew panel's bare controller bindings. */
-    private fun dispatchStardewPanelKey(event: KeyEvent): Boolean {
-        val managedStardew = managedPanel && sessionTitle == "Stardew Valley"
-        val nativeStardew = SecondScreenOutput.isStardewValleyPanelActive()
-        if ((!managedStardew && !nativeStardew) || !isControllerEvent(event)) {
-            return false
-        }
-        val firstPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
-        fun send(managed: StardewPanelControl, native: () -> Unit) {
-            if (!firstPress) return
-            if (managedStardew) SecondScreen.controlStardewPanel(managed) else native()
-        }
-        return when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_UP,
-            KeyEvent.KEYCODE_BUTTON_Y,
-            -> { send(StardewPanelControl.PREVIOUS_SLOT) { NativePanelInput.navigation("up") }; true }
-            KeyEvent.KEYCODE_DPAD_DOWN,
-            KeyEvent.KEYCODE_BUTTON_A,
-            -> { send(StardewPanelControl.NEXT_SLOT) { NativePanelInput.navigation("down") }; true }
-            KeyEvent.KEYCODE_DPAD_LEFT,
-            KeyEvent.KEYCODE_PAGE_UP,
-            -> { send(StardewPanelControl.PREVIOUS_PAGE) { NativePanelInput.page(false) }; true }
-            KeyEvent.KEYCODE_DPAD_RIGHT,
-            KeyEvent.KEYCODE_PAGE_DOWN,
-            -> { send(StardewPanelControl.NEXT_PAGE) { NativePanelInput.page(true) }; true }
-            KeyEvent.KEYCODE_BUTTON_L1 -> {
-                send(StardewPanelControl.PREVIOUS_TOOLBAR) { NativePanelInput.toolbar(false) }
-                true
-            }
-            KeyEvent.KEYCODE_BUTTON_R1 -> {
-                send(StardewPanelControl.NEXT_TOOLBAR) { NativePanelInput.toolbar(true) }
-                true
-            }
-            KeyEvent.KEYCODE_BUTTON_X -> {
-                send(StardewPanelControl.SORT) { NativePanelInput.action("sort") }
-                true
-            }
-            KeyEvent.KEYCODE_BUTTON_B -> {
-                send(StardewPanelControl.USE) { NativePanelInput.action("use") }
-                true
-            }
-            else -> false
-        }
     }
 
     private fun isControllerEvent(event: KeyEvent): Boolean {
@@ -872,12 +828,12 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         return super.dispatchKeyEvent(event)
     }
 
-    /** Select scopes controller navigation to a visible native lower panel. */
+    /** Select scopes controller navigation to a visible lower panel. */
     private fun dispatchNativePanelModeKey(event: KeyEvent): Boolean {
         if (!isControllerEvent(event)) return false
-        if (!SecondScreenOutput.isNativePanelControllerActive() &&
-            !nativePanelModeModifierDown
-        ) {
+        val managedStardew = isManagedStardewPanel()
+        val nativePanel = SecondScreenOutput.isNativePanelControllerActive()
+        if (!managedStardew && !nativePanel && !nativePanelModeModifierDown) {
             return false
         }
         if (event.keyCode == KeyEvent.KEYCODE_BUTTON_SELECT) {
@@ -910,11 +866,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             nativePanelModeModifierUsed = true
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
                 val next = event.keyCode == KeyEvent.KEYCODE_BUTTON_R2
-                if (SecondScreenOutput.isStardewValleyPanelActive()) {
-                    NativePanelInput.page(next)
-                } else {
-                    SecondScreenOutput.sendNativePanelPage(next)
-                }
+                sendPanelPage(next, managedStardew)
             }
             return true
         }
@@ -930,16 +882,82 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             if (action != null) {
                 nativePanelModeModifierUsed = true
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    if (SecondScreenOutput.isStardewValleyPanelActive()) {
-                        NativePanelInput.navigation(action)
-                    } else {
-                        SecondScreenOutput.sendNativePanelNavigation(action)
-                    }
+                    sendPanelNavigation(action, managedStardew)
                 }
                 return true
             }
+
+            if (managedStardew || SecondScreenOutput.isStardewValleyPanelActive()) {
+                val control = when (event.keyCode) {
+                    KeyEvent.KEYCODE_BUTTON_L1 -> StardewPanelControl.PREVIOUS_TOOLBAR
+                    KeyEvent.KEYCODE_BUTTON_R1 -> StardewPanelControl.NEXT_TOOLBAR
+                    KeyEvent.KEYCODE_BUTTON_X -> StardewPanelControl.SORT
+                    KeyEvent.KEYCODE_BUTTON_B -> StardewPanelControl.USE
+                    else -> null
+                }
+                if (control != null) {
+                    nativePanelModeModifierUsed = true
+                    if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                        sendStardewPanelControl(control, managedStardew)
+                    }
+                    return true
+                }
+            }
         }
         return false
+    }
+
+    private fun isManagedStardewPanel(): Boolean =
+        managedPanel && sessionTitle == "Stardew Valley"
+
+    private fun sendPanelPage(next: Boolean, managedStardew: Boolean) {
+        if (managedStardew) {
+            SecondScreen.controlStardewPanel(
+                if (next) StardewPanelControl.NEXT_PAGE else StardewPanelControl.PREVIOUS_PAGE,
+            )
+        } else if (SecondScreenOutput.isStardewValleyPanelActive()) {
+            NativePanelInput.page(next)
+        } else {
+            SecondScreenOutput.sendNativePanelPage(next)
+        }
+    }
+
+    private fun sendPanelNavigation(action: String, managedStardew: Boolean) {
+        if (managedStardew) {
+            val control = when (action) {
+                "left" -> StardewPanelControl.PREVIOUS_PAGE
+                "right" -> StardewPanelControl.NEXT_PAGE
+                "up" -> StardewPanelControl.PREVIOUS_SLOT
+                "down" -> StardewPanelControl.NEXT_SLOT
+                "activate" -> StardewPanelControl.USE
+                else -> return
+            }
+            SecondScreen.controlStardewPanel(control)
+        } else if (SecondScreenOutput.isStardewValleyPanelActive()) {
+            NativePanelInput.navigation(action)
+        } else {
+            SecondScreenOutput.sendNativePanelNavigation(action)
+        }
+    }
+
+    private fun sendStardewPanelControl(
+        control: StardewPanelControl,
+        managedStardew: Boolean,
+    ) {
+        if (managedStardew) {
+            SecondScreen.controlStardewPanel(control)
+            return
+        }
+        when (control) {
+            StardewPanelControl.PREVIOUS_TOOLBAR -> NativePanelInput.toolbar(false)
+            StardewPanelControl.NEXT_TOOLBAR -> NativePanelInput.toolbar(true)
+            StardewPanelControl.SORT -> NativePanelInput.action("sort")
+            StardewPanelControl.USE -> NativePanelInput.action("use")
+            StardewPanelControl.PREVIOUS_PAGE -> NativePanelInput.page(false)
+            StardewPanelControl.NEXT_PAGE -> NativePanelInput.page(true)
+            StardewPanelControl.PREVIOUS_SLOT -> NativePanelInput.navigation("up")
+            StardewPanelControl.NEXT_SLOT -> NativePanelInput.navigation("down")
+        }
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -957,8 +975,9 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
 
     /** Handles controllers which expose L2/R2 as axes while Select is held. */
     private fun dispatchNativePanelModeMotion(event: MotionEvent): Boolean {
+        val managedStardew = isManagedStardewPanel()
         if (!nativePanelModeModifierDown ||
-            !SecondScreenOutput.isNativePanelControllerActive() ||
+            (!managedStardew && !SecondScreenOutput.isNativePanelControllerActive()) ||
             event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK
         ) return false
 
@@ -972,19 +991,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         ) >= NATIVE_PANEL_TRIGGER_THRESHOLD
         if (leftPressed && !nativePanelLeftTriggerDown) {
             nativePanelModeModifierUsed = true
-            if (SecondScreenOutput.isStardewValleyPanelActive()) {
-                NativePanelInput.page(false)
-            } else {
-                SecondScreenOutput.sendNativePanelPage(false)
-            }
+            sendPanelPage(false, managedStardew)
         }
         if (rightPressed && !nativePanelRightTriggerDown) {
             nativePanelModeModifierUsed = true
-            if (SecondScreenOutput.isStardewValleyPanelActive()) {
-                NativePanelInput.page(true)
-            } else {
-                SecondScreenOutput.sendNativePanelPage(true)
-            }
+            sendPanelPage(true, managedStardew)
         }
         nativePanelLeftTriggerDown = leftPressed
         nativePanelRightTriggerDown = rightPressed

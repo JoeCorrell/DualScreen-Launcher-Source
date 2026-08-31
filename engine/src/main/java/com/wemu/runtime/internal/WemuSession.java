@@ -88,6 +88,7 @@ public class WemuSession implements RuntimeSession {
     private ALSAServerComponent alsaServerComponent;
     private volatile float requestedAudioGainDb;
     private volatile boolean skyrimAudioCompatibility;
+    private volatile boolean shortcutLaunchDeferred;
 
 
     private String graphicsDriver;
@@ -197,6 +198,14 @@ public class WemuSession implements RuntimeSession {
         skyrimAudioCompatibility = enabled;
         if (enabled) {
             Log.i(TAG, "Skyrim audio compatibility enabled");
+        }
+    }
+
+    @Override
+    public void setShortcutLaunchDeferred(boolean deferred) {
+        shortcutLaunchDeferred = deferred;
+        if (deferred) {
+            Log.i(TAG, "Shortcut launch deferred; retaining shortcut configuration for bootstrap");
         }
     }
 
@@ -1244,7 +1253,7 @@ public class WemuSession implements RuntimeSession {
     private String wineStartCommand() {
         String args;
 
-        if (shortcut == null) {
+        if (shortcut == null || shortcutLaunchDeferred) {
             args = "\"wfm.exe\"";
         } else {
             String execArgs = shortcut.getExtra("execArgs");

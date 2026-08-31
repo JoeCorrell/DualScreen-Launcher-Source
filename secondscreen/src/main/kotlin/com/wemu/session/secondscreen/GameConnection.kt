@@ -1,5 +1,6 @@
 ﻿package com.wemu.session.secondscreen
 
+import android.util.Log
 import com.thor.core.common.coroutines.backgroundScope
 import com.thor.core.common.log.ThorLog
 import kotlinx.coroutines.Dispatchers
@@ -57,12 +58,15 @@ class GameConnection(
     @Volatile private var manualDisconnect = false
     @Volatile private var closed = false
     private val warnedAboutDroppedMessage = AtomicBoolean(false)
+    private val loggedFirstMessage = AtomicBoolean(false)
+    private val warnedAboutInvalidMessage = AtomicBoolean(false)
     private val socketLock = Any()
 
     fun connect() {
         if (closed) return
         manualDisconnect = false
         reconnectJob?.cancel()
+        Log.i(TAG, "Connecting to ws://$host:$port")
         doConnect()
     }
 
@@ -121,12 +125,22 @@ class GameConnection(
                 reconnectJob?.cancel()
                 reconnectJob = null
                 _connectionState.value = ConnectionState.Connected
+                Log.i(TAG, "Connected to ws://$host:$port")
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
                 val current = synchronized(socketLock) { webSocket === ws }
                 if (closed || manualDisconnect || !current) return
-                val msg = parseGameMessage(text) ?: return
+                val msg = parseGameMessage(text)
+                if (msg == null) {
+                    if (warnedAboutInvalidMessage.compareAndSet(false, true)) {
+                        Log.w(TAG, "Ignored an invalid second-screen message (${text.length} chars)")
+                    }
+                    return
+                }
+                if (loggedFirstMessage.compareAndSet(false, true)) {
+                    Log.i(TAG, "Received first second-screen message: ${msg.javaClass.simpleName}")
+                }
                 if (!_messages.tryEmit(msg) && warnedAboutDroppedMessage.compareAndSet(false, true)) {
                     ThorLog.w(TAG, "Second-screen messages exceeded the bounded input buffer")
                 }
@@ -167,10 +181,16 @@ class GameConnection(
             ConnectionState.Error(errorMsg)
         else
             ConnectionState.Disconnected
+        if (errorMsg != null) {
+            Log.w(TAG, "Disconnected from ws://$host:$port: $errorMsg")
+        } else {
+            Log.i(TAG, "Disconnected from ws://$host:$port")
+        }
 
         reconnectJob?.cancel()
         reconnectJob = null
         if (!closed && !manualDisconnect && autoReconnect) {
+            Log.i(TAG, "Retrying second-screen connection in 3000ms")
             reconnectJob = scope.launch {
                 delay(3_000)
                 reconnectJob = null

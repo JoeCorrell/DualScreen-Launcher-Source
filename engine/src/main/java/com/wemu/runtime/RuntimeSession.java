@@ -55,6 +55,14 @@ public interface RuntimeSession {
     /** Enables WEMU's self-contained Skyrim XAudio/XACT compatibility path. */
     void setSkyrimAudioCompatibility(boolean enabled);
 
+    /**
+     * Starts the Wine desktop before the configured shortcut is submitted by the host.
+     *
+     * The shortcut remains attached to the session so its input, renderer, environment,
+     * compatibility and executable identity are still applied during {@link #prepare()}.
+     */
+    void setShortcutLaunchDeferred(boolean deferred);
+
     /** Reads configuration and builds the X server. Must precede {@link #start()}. */
     XServer prepare();
 

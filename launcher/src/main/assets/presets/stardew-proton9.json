@@ -28,9 +28,9 @@
   "extraData": {
     "dpiAuto": "1",
     "guestFsr": "0",
-    "fitGuestWindow": "1",
+    "fitGuestWindow": "0",
     "wemuOwnsDesktop": "1",
-    "displaySecondScreen": "1",
+    "displaySecondScreen": "0",
     "affinityCores": "",
     "frameGeneration": "0",
     "frameGenerationMultiplier": "2",

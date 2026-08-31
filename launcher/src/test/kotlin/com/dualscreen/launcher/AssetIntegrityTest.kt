@@ -40,8 +40,11 @@ class AssetIntegrityTest {
         assertThat(preset.getString("rendererPresentMode")).isEqualTo("fifo")
         assertThat(preset.getString("dxwrapperConfig")).contains("version=2.3.1")
         assertThat(preset.getString("dxwrapperConfig")).contains("vkd3dVersion=None")
-        assertThat(preset.getJSONObject("extraData").getString("displaySecondScreen")).isEqualTo("1")
-        assertThat(preset.getJSONObject("extraData").getString("fitGuestWindow")).isEqualTo("1")
+        // The restored Stardew UI is an Android-managed 1240x1080 panel. It
+        // must not add that display to Wine's guest desktop or scale a framed
+        // Wine window; the embedded runtime makes the 1280x720 game borderless.
+        assertThat(preset.getJSONObject("extraData").getString("displaySecondScreen")).isEqualTo("0")
+        assertThat(preset.getJSONObject("extraData").getString("fitGuestWindow")).isEqualTo("0")
         assertThat(preset.getJSONObject("extraData").getString("affinityCores")).isEmpty()
     }
 
