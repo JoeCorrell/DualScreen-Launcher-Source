@@ -6,6 +6,7 @@ import android.view.Surface;
 import com.wemu.engine.core.ProcessHelper;
 import com.wemu.engine.xserver.Pointer;
 import com.wemu.engine.xserver.ScreenLayout;
+import com.wemu.engine.xserver.Window;
 import com.wemu.engine.xserver.XServer;
 
 import java.nio.ByteBuffer;
@@ -148,6 +149,21 @@ public final class SecondScreenOutput {
             guestWindowIdentity = (normalizedClass + " " + normalizedTitle)
                     .toLowerCase(Locale.ROOT);
         }
+        ProcessHelper.emitDiagnostic("Second screen selected guest window id="
+                + windowId + " class=\"" + diagnosticValue(normalizedClass)
+                + "\" title=\"" + diagnosticValue(normalizedTitle) + "\"");
+    }
+
+    /**
+     * Records a panel using the X window which actually owns its identity.
+     * Wine can put WM_CLASS/_NET_WM_NAME on a reparenting ancestor while the
+     * drawable submitted by GDI belongs to an anonymous child.
+     */
+    public static void noteGuestWindow(Window window) {
+        if (window == null) return;
+        Window identity = findPanelIdentityWindow(window);
+        if (identity == null) identity = window;
+        noteGuestWindow(window.id, identity.getClassName(), identity.getName());
     }
 
     private static void clearGuestWindowLocked() {
@@ -188,9 +204,36 @@ public final class SecondScreenOutput {
         return NativePanelIdentity.isGrimDawn(className, title);
     }
 
+    /** Recognizes Stardew Valley's embedded panel before final positioning. */
+    public static boolean isStardewValleyPanelWindow(String className, String title) {
+        return NativePanelIdentity.isStardewValley(className, title);
+    }
+
     /** Native panels which are lower-only even at transient primary coordinates. */
     public static boolean isEarlyClaimPanelWindow(String className, String title) {
         return NativePanelIdentity.isEarlyClaimPanel(className, title);
+    }
+
+    /** Recognizes a native panel on either its drawable window or an ancestor. */
+    public static boolean isEarlyClaimPanelWindow(Window window) {
+        return findPanelIdentityWindow(window) != null;
+    }
+
+    private static Window findPanelIdentityWindow(Window window) {
+        int remaining = 64;
+        for (Window candidate = window; candidate != null && remaining-- > 0;
+             candidate = candidate.getParent()) {
+            if (isEarlyClaimPanelWindow(candidate.getClassName(), candidate.getName())) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private static String diagnosticValue(String value) {
+        if (value == null) return "";
+        String clean = value.replace('\r', ' ').replace('\n', ' ');
+        return clean.length() <= 120 ? clean : clean.substring(0, 120);
     }
 
     /** Whether a Fallout 3 or Fallout 4 Pip-Boy owns the lower panel. */
@@ -203,7 +246,14 @@ public final class SecondScreenOutput {
     /** Whether a native panel supporting WEMU's Select-modified commands is visible. */
     public static boolean isNativePanelControllerActive() {
         return showing && (isFalloutPanelWindow(guestWindowClassName, guestWindowTitle)
-                || isGrimDawnPanelWindow(guestWindowClassName, guestWindowTitle));
+                || isGrimDawnPanelWindow(guestWindowClassName, guestWindowTitle)
+                || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle));
+    }
+
+    /** Whether Stardew Valley's embedded lower-panel window is visible. */
+    public static boolean isStardewValleyPanelActive() {
+        return showing && isStardewValleyPanelWindow(
+                guestWindowClassName, guestWindowTitle);
     }
 
     /**
@@ -284,7 +334,8 @@ public final class SecondScreenOutput {
          * native mod handles both header tabs and page content, including the
          * player's current bindings, so this panel uses that channel alone.
          */
-        if (isDeusExPanel() || isSkyrimPanel() || isGrimDawnPanel()) return true;
+        if (isDeusExPanel() || isSkyrimPanel() || isGrimDawnPanel()
+                || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle)) return true;
 
         float nx = Math.max(0.0f, Math.min(1.0f, x));
         float ny = Math.max(0.0f, Math.min(1.0f, y));

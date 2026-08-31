@@ -307,6 +307,24 @@ public final class GuestPayloads {
     }
 
     /**
+     * Registers a checksum-pinned application payload before it is fetched.
+     *
+     * The launcher publishes its own release assets separately from the engine
+     * root filesystem. Reusing this downloader retains the proven ranged,
+     * retrying and atomic download behavior without coupling the engine to the
+     * launcher's repository URL.
+     */
+    public static synchronized void registerPayload(String assetName, String url) {
+        if (assetName == null || assetName.trim().isEmpty()) {
+            throw new IllegalArgumentException("assetName must not be blank");
+        }
+        if (url == null || !url.startsWith("https://")) {
+            throw new IllegalArgumentException("payload URL must use HTTPS");
+        }
+        CATALOG.put(assetName, parts(url, 1));
+    }
+
+    /**
      * The payload as a file on disk, downloading it if it is not already here.
      *
      * Kept in `files/payloads` rather than the cache directory. The cache can be

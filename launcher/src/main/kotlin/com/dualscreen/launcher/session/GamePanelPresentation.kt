@@ -25,7 +25,6 @@ import com.wemu.engine.renderer.SecondScreenOutput
 import com.wemu.session.secondscreen.Buzz
 import com.wemu.session.secondscreen.GuestHapticCue
 import com.wemu.session.secondscreen.SecondScreen
-import com.wemu.session.secondscreen.StardewScreen
 import com.wemu.session.secondscreen.ValheimScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,20 +57,28 @@ class GamePanelPresentation(
                 // mod WebSocket. Clear any connection left by a prior managed
                 // session and do not start its three-second retry loop.
                 SecondScreen.shutdown()
-                hapticScope.launch {
-                    SecondScreen.guestHaptics.collect { cue ->
-                        when (cue) {
-                            GuestHapticCue.Selection,
-                            GuestHapticCue.Action -> Buzz.short(context)
-                            GuestHapticCue.Unlock -> Buzz.long(context)
+                if (game.id == STARDEW_GAME_ID) {
+                    hapticScope.launch {
+                        NativePanelInput.haptics.collect { cue ->
+                            when (cue) {
+                                NativePanelHaptic.Selection,
+                                NativePanelHaptic.Action -> Buzz.short(context)
+                                NativePanelHaptic.Unlock -> Buzz.long(context)
+                            }
+                        }
+                    }
+                } else {
+                    hapticScope.launch {
+                        SecondScreen.guestHaptics.collect { cue ->
+                            when (cue) {
+                                GuestHapticCue.Selection,
+                                GuestHapticCue.Action -> Buzz.short(context)
+                                GuestHapticCue.Unlock -> Buzz.long(context)
+                            }
                         }
                     }
                 }
                 setContentView(nativePanel())
-            }
-            LowerPanelMode.STARDEW -> {
-                SecondScreen.start()
-                setContentView(managedPanel { StardewScreen(Modifier) })
             }
             LowerPanelMode.VALHEIM -> {
                 SecondScreen.start()
@@ -114,7 +121,7 @@ class GamePanelPresentation(
         launchStatusView = waiting
         root.addView(waiting, FrameLayout.LayoutParams(-1, -1))
 
-        val router = NativePanelTouchRouter(context)
+        val router = NativePanelTouchRouter(context, game.id == STARDEW_GAME_ID)
         root.setOnTouchListener(router)
         surface.setOnTouchListener(router)
         SecondScreenOutput.setOnStateListener { _, claimed ->
@@ -143,9 +150,16 @@ class GamePanelPresentation(
         hapticScope.cancel()
         super.dismiss()
     }
+
+    private companion object {
+        const val STARDEW_GAME_ID = "stardew-valley"
+    }
 }
 
-private class NativePanelTouchRouter(context: Context) : View.OnTouchListener {
+private class NativePanelTouchRouter(
+    context: Context,
+    private val stardewNative: Boolean,
+) : View.OnTouchListener {
     private var downX = 0f
     private var downY = 0f
     private var dragging = false
@@ -314,12 +328,11 @@ private class NativePanelTouchRouter(context: Context) : View.OnTouchListener {
     private fun send(kind: String, x: Float, y: Float, value: Float): Boolean {
         val nx = (x / width).coerceIn(0f, 1f)
         val ny = (y / height).coerceIn(0f, 1f)
-        val queued = SecondScreen.sendGuestGesture(
-            kind,
-            nx,
-            ny,
-            value.takeIf { kind == "pinch" },
-        )
+        val queued = if (stardewNative) {
+            NativePanelInput.gesture(kind, nx, ny, value.takeIf { kind == "pinch" })
+        } else {
+            SecondScreen.sendGuestGesture(kind, nx, ny, value.takeIf { kind == "pinch" })
+        }
         // Native mods consume scale factors through the ordered UDP channel.
         // Mirroring every scale packet as an X11 wheel event duplicates zoom
         // and can leak wheel input into the primary gameplay window. X11 does

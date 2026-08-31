@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.wemu.android.application)
     alias(libs.plugins.wemu.android.application.compose)
+}
+
+val releaseSigningPropertiesFile = rootProject.file("keystore.properties")
+val releaseSigningProperties = Properties().apply {
+    if (releaseSigningPropertiesFile.isFile) {
+        releaseSigningPropertiesFile.inputStream().use(::load)
+    }
 }
 
 android {
@@ -8,10 +17,23 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 2
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "0.2.0"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 3
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
+    }
+
+    val localReleaseSigning = if (releaseSigningPropertiesFile.isFile) {
+        signingConfigs.create("release") {
+            storeFile = rootProject.file(checkNotNull(releaseSigningProperties.getProperty("storeFile")))
+            storePassword = checkNotNull(releaseSigningProperties.getProperty("storePassword"))
+            keyAlias = checkNotNull(releaseSigningProperties.getProperty("keyAlias"))
+            keyPassword = checkNotNull(releaseSigningProperties.getProperty("keyPassword"))
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    } else {
+        null
     }
 
     buildTypes {
@@ -19,6 +41,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = localReleaseSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

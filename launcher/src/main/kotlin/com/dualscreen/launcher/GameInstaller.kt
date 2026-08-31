@@ -16,14 +16,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.DataInputStream
 import java.io.FilterInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
@@ -34,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 
 class GameInstaller(
@@ -78,11 +84,7 @@ class GameInstaller(
                 check(root.isDirectory) { "The installed game directory is missing" }
                 val bundled = readPayloadManifest(game)
                 val currentFilesMatch = withContext(Dispatchers.IO) {
-                    bundled.files.all { entry ->
-                        val target = File(root, entry.target).canonicalFile
-                        target.path.startsWith(root.path + File.separator) &&
-                            target.isFile && sha256(target) == entry.sha256
-                    }
+                    payloadIsCurrent(root, bundled)
                 }
                 if (installed.payloadVersion == bundled.version && currentFilesMatch) {
                     publish(
@@ -602,6 +604,13 @@ class GameInstaller(
                         "verified build required by this dual-screen mod"
                 }
             }
+            if (rule.sha256AnyOf.isNotEmpty()) {
+                val observed = sha256(file)
+                check(observed in rule.sha256AnyOf) {
+                    "Unsupported ${rule.path}: SHA-256 ${observed.take(12)}... is not one of " +
+                        "the verified builds supported by this dual-screen mod"
+                }
+            }
         }
         if (game.configurationLauncherCandidates.isNotEmpty()) {
             check(resolveConfigurationLauncherExecutable(root, game) != null) {
@@ -816,31 +825,240 @@ class GameInstaller(
     ): PayloadManifest {
         val manifest = readPayloadManifest(game)
         val canonicalRoot = root.canonicalFile
-        manifest.files.forEachIndexed { index, entry ->
-            val target = File(canonicalRoot, entry.target).canonicalFile
-            check(target.path.startsWith(canonicalRoot.path + File.separator)) {
-                "Mod payload contains an unsafe target"
-            }
-            check(target.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
-                "Could not create the mod directory"
-            }
-            context.assets.open("mods/${game.id}/payload/${entry.source}").use { input ->
-                target.outputStream().buffered(BUFFER_SIZE).use(input::copyTo)
-            }
-            check(sha256(target) == entry.sha256) { "Mod file failed verification: ${entry.target}" }
+        val patchTargets = manifest.patches.groupBy(PayloadPatch::target)
+        val operationCount = manifest.files.size + patchTargets.size + manifest.removals.size
+        check(operationCount > 0) { "The mod payload manifest is empty" }
+        var completed = 0
+        fun report(detail: String) {
+            completed++
             publish(
                 game.id,
                 InstallStage.PATCHING,
                 stageProgress(
                     InstallStage.PATCHING,
                     progressStart +
-                        (progressEnd - progressStart) * ((index + 1f) / manifest.files.size),
+                        (progressEnd - progressStart) * (completed.toFloat() / operationCount),
                 ),
-                "Applied ${entry.target}",
+                detail,
             )
+        }
+
+        manifest.files.forEach { entry ->
+            val target = File(canonicalRoot, entry.target).canonicalFile
+            checkPayloadTarget(canonicalRoot, target)
+            check(target.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
+                "Could not create the mod directory"
+            }
+            writeAssetAtomically(game, entry, target)
+            report("Applied ${entry.target}")
+        }
+
+        patchTargets.forEach { (relativeTarget, candidates) ->
+            val target = File(canonicalRoot, relativeTarget).canonicalFile
+            checkPayloadTarget(canonicalRoot, target)
+            check(target.isFile) { "Binary patch target is missing: $relativeTarget" }
+            val observed = sha256(target)
+            val alreadyCurrent = candidates.any { it.outputSha256 == observed }
+            if (!alreadyCurrent) {
+                val selected = candidates.firstOrNull { it.inputSha256 == observed }
+                    ?: error(
+                        "Unsupported $relativeTarget: SHA-256 ${observed.take(12)}... has no " +
+                            "matching native patch",
+                    )
+                applyBinaryPatch(game, selected, target)
+            }
+            check(candidates.any { it.outputSha256 == sha256(target) }) {
+                "Native binary patch verification failed: $relativeTarget"
+            }
+            report("Applied $relativeTarget")
+        }
+
+        // Retired loader files are removed only after every replacement has
+        // been atomically installed and verified. A rejected/corrupt native
+        // patch therefore cannot dismantle the currently working mod first.
+        manifest.removals.forEach { relativeTarget ->
+            val target = File(canonicalRoot, relativeTarget).canonicalFile
+            checkPayloadTarget(canonicalRoot, target)
+            check(!target.exists() || target.isFile) {
+                "Refusing to recursively remove a mod payload directory: $relativeTarget"
+            }
+            if (target.isFile) {
+                check(target.delete()) { "Could not remove retired mod file: $relativeTarget" }
+            }
+            target.parentFile?.takeIf { parent ->
+                parent != canonicalRoot && parent.isDirectory && parent.list()?.isEmpty() == true
+            }?.delete()
+            report("Removed retired $relativeTarget")
         }
         return manifest
     }
+
+    private fun payloadIsCurrent(root: File, manifest: PayloadManifest): Boolean {
+        val canonicalRoot = root.canonicalFile
+        val filesCurrent = manifest.files.all { entry ->
+            val target = File(canonicalRoot, entry.target).canonicalFile
+            runCatching { checkPayloadTarget(canonicalRoot, target) }.isSuccess &&
+                target.isFile && sha256(target) == entry.sha256
+        }
+        if (!filesCurrent) return false
+        if (manifest.removals.any { relativeTarget ->
+                val target = File(canonicalRoot, relativeTarget).canonicalFile
+                runCatching { checkPayloadTarget(canonicalRoot, target) }.isFailure || target.exists()
+            }
+        ) return false
+        return manifest.patches.groupBy(PayloadPatch::target).all { (relativeTarget, patches) ->
+            val target = File(canonicalRoot, relativeTarget).canonicalFile
+            if (runCatching { checkPayloadTarget(canonicalRoot, target) }.isFailure ||
+                !target.isFile
+            ) {
+                false
+            } else {
+                val observed = sha256(target)
+                patches.any { it.outputSha256 == observed }
+            }
+        }
+    }
+
+    private fun checkPayloadTarget(root: File, target: File) {
+        check(target.path.startsWith(root.path + File.separator)) {
+            "Mod payload contains an unsafe target"
+        }
+    }
+
+    private fun writeAssetAtomically(game: SupportedGame, entry: PayloadFile, target: File) {
+        val temporary = File(
+            checkNotNull(target.parentFile),
+            ".${target.name}.dualscreen-${UUID.randomUUID()}.tmp",
+        )
+        try {
+            PayloadAssetStore.open(context, "mods/${game.id}/payload/${entry.source}").use { input ->
+                FileOutputStream(temporary).use { output ->
+                    input.copyTo(output, BUFFER_SIZE)
+                    output.fd.sync()
+                }
+            }
+            check(sha256(temporary) == entry.sha256) {
+                "Mod asset failed verification: ${entry.source}"
+            }
+            replaceAtomically(temporary, target)
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    /** Applies the small delta only to the exact game assembly it was built for. */
+    private fun applyBinaryPatch(game: SupportedGame, patch: PayloadPatch, target: File) {
+        val assetPath = "mods/${game.id}/payload/${patch.source}"
+        val patchHash = PayloadAssetStore.open(context, assetPath).use(::sha256)
+        check(patchHash == patch.patchSha256) { "Native patch asset failed verification" }
+        check(target.length() <= MAX_BINARY_PATCH_INPUT) { "Native patch input is unexpectedly large" }
+        check(sha256(target) == patch.inputSha256) { "Native patch input changed during deployment" }
+
+        val temporary = File(
+            checkNotNull(target.parentFile),
+            ".${target.name}.dualscreen-${UUID.randomUUID()}.tmp",
+        )
+        try {
+            PayloadAssetStore.open(context, assetPath).buffered(BUFFER_SIZE).use { compressed ->
+                DataInputStream(GZIPInputStream(compressed, BUFFER_SIZE)).use { input ->
+                    val magic = ByteArray(BINARY_PATCH_MAGIC.size).also(input::readFully)
+                    check(magic.contentEquals(BINARY_PATCH_MAGIC)) { "Native patch header is invalid" }
+                    val inputLength = java.lang.Long.reverseBytes(input.readLong())
+                    val inputHash = ByteArray(32).also(input::readFully).toHex()
+                    val outputLength = java.lang.Long.reverseBytes(input.readLong())
+                    val outputHash = ByteArray(32).also(input::readFully).toHex()
+                    check(inputLength == target.length() && inputHash == patch.inputSha256) {
+                        "Native patch does not match this game assembly"
+                    }
+                    check(outputLength in 1..MAX_BINARY_PATCH_OUTPUT &&
+                        outputHash == patch.outputSha256
+                    ) { "Native patch declares an invalid output" }
+
+                    RandomAccessFile(target, "r").use { source ->
+                        FileOutputStream(temporary).use { output ->
+                            val buffer = ByteArray(BUFFER_SIZE)
+                            var produced = 0L
+                            while (true) {
+                                when (val opcode = input.readUnsignedByte()) {
+                                    0 -> {
+                                        val offset = java.lang.Long.reverseBytes(input.readLong())
+                                        val length = Integer.reverseBytes(input.readInt())
+                                        check(offset >= 0 && length > 0 &&
+                                            offset <= inputLength - length &&
+                                            produced <= outputLength - length
+                                        ) { "Native patch contains an invalid copy operation" }
+                                        source.seek(offset)
+                                        var remaining = length
+                                        while (remaining > 0) {
+                                            val count = source.read(buffer, 0, minOf(buffer.size, remaining))
+                                            check(count > 0) { "Native patch source ended unexpectedly" }
+                                            output.write(buffer, 0, count)
+                                            remaining -= count
+                                        }
+                                        produced += length
+                                    }
+                                    1 -> {
+                                        val length = Integer.reverseBytes(input.readInt())
+                                        check(length > 0 && produced <= outputLength - length) {
+                                            "Native patch contains an invalid literal operation"
+                                        }
+                                        var remaining = length
+                                        while (remaining > 0) {
+                                            val count = minOf(buffer.size, remaining)
+                                            input.readFully(buffer, 0, count)
+                                            output.write(buffer, 0, count)
+                                            remaining -= count
+                                        }
+                                        produced += length
+                                    }
+                                    255 -> {
+                                        check(produced == outputLength) {
+                                            "Native patch output length is incomplete"
+                                        }
+                                        break
+                                    }
+                                    else -> error("Native patch contains unknown opcode $opcode")
+                                }
+                            }
+                            output.fd.sync()
+                        }
+                    }
+                }
+            }
+            check(temporary.length() <= MAX_BINARY_PATCH_OUTPUT &&
+                sha256(temporary) == patch.outputSha256
+            ) { "Native patch output failed verification" }
+            replaceAtomically(temporary, target)
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun replaceAtomically(source: File, target: File) {
+        try {
+            Files.move(
+                source.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    private fun sha256(input: InputStream): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(BUFFER_SIZE)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+        return digest.digest().toHex()
+    }
+
+    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
 
     private fun readPayloadManifest(game: SupportedGame): PayloadManifest {
         val manifestPath = "mods/${game.id}/manifest.json"
@@ -848,12 +1066,14 @@ class GameInstaller(
             context.assets.open(manifestPath).bufferedReader().use { it.readText() }
         }.getOrElse { error("No deployable dual-screen mod is bundled for ${game.title}") }
         val json = JSONObject(manifestText.trimStart('\uFEFF'))
-        val files = json.getJSONArray("files")
+        val files = json.optJSONArray("files")
+        val patches = json.optJSONArray("patches")
+        val removals = json.optJSONArray("remove")
         val manifest = PayloadManifest(
             version = json.getString("version"),
             files = buildList {
-                for (index in 0 until files.length()) {
-                    val entry = files.getJSONObject(index)
+                for (index in 0 until (files?.length() ?: 0)) {
+                    val entry = checkNotNull(files).getJSONObject(index)
                     add(
                         PayloadFile(
                             source = entry.getString("source"),
@@ -863,8 +1083,31 @@ class GameInstaller(
                     )
                 }
             },
+            patches = buildList {
+                for (index in 0 until (patches?.length() ?: 0)) {
+                    val entry = checkNotNull(patches).getJSONObject(index)
+                    add(
+                        PayloadPatch(
+                            source = entry.getString("source"),
+                            target = entry.getString("target"),
+                            patchSha256 = entry.getString("sha256").lowercase(),
+                            inputSha256 = entry.getString("inputSha256").lowercase(),
+                            outputSha256 = entry.getString("outputSha256").lowercase(),
+                        ),
+                    )
+                }
+            },
+            removals = buildList {
+                for (index in 0 until (removals?.length() ?: 0)) {
+                    add(checkNotNull(removals).getString(index))
+                }
+            },
         )
-        check(manifest.files.isNotEmpty()) { "The mod payload manifest is empty" }
+        check(manifest.files.isNotEmpty() || manifest.patches.isNotEmpty() ||
+            manifest.removals.isNotEmpty()
+        ) {
+            "The mod payload manifest is empty"
+        }
         return manifest
     }
 
@@ -884,6 +1127,16 @@ class GameInstaller(
             check(installed.isFile && sha256(installed) == file.sha256) {
                 "Installed mod verification failed: ${file.target}"
             }
+        }
+        payload.patches.groupBy(PayloadPatch::target).forEach { (target, patches) ->
+            val installed = File(root, target)
+            val observed = installed.takeIf(File::isFile)?.let(::sha256)
+            check(observed != null && patches.any { it.outputSha256 == observed }) {
+                "Installed native patch verification failed: $target"
+            }
+        }
+        payload.removals.forEach { target ->
+            check(!File(root, target).exists()) { "Retired mod file is still installed: $target" }
         }
         return executable
     }
@@ -995,7 +1248,19 @@ class GameInstaller(
     private fun safeName(value: String): String = value.replace(Regex("[^A-Za-z0-9._-]"), "_")
 
     private data class PayloadFile(val source: String, val target: String, val sha256: String)
-    private data class PayloadManifest(val version: String, val files: List<PayloadFile>)
+    private data class PayloadPatch(
+        val source: String,
+        val target: String,
+        val patchSha256: String,
+        val inputSha256: String,
+        val outputSha256: String,
+    )
+    private data class PayloadManifest(
+        val version: String,
+        val files: List<PayloadFile>,
+        val patches: List<PayloadPatch>,
+        val removals: List<String>,
+    )
     private data class SeekableZipEntry(val entry: ZipEntry, val output: File)
     private data class ExtractionResult(val entries: Int, val bytes: Long)
 
@@ -1022,6 +1287,18 @@ class GameInstaller(
         private const val STORAGE_RESERVE = 768L * 1024 * 1024
         private const val MAX_PREREQUISITE_ENTRIES = 65_536
         private const val MAX_PREREQUISITE_BYTES = 768L * 1024 * 1024
+        private const val MAX_BINARY_PATCH_INPUT = 128L * 1024 * 1024
+        private const val MAX_BINARY_PATCH_OUTPUT = 128L * 1024 * 1024
+        private val BINARY_PATCH_MAGIC = byteArrayOf(
+            'D'.code.toByte(),
+            'S'.code.toByte(),
+            'D'.code.toByte(),
+            'P'.code.toByte(),
+            '1'.code.toByte(),
+            0,
+            0,
+            0,
+        )
         private const val LOG_TAG = "DualscreenInstaller"
     }
 }

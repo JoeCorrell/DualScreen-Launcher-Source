@@ -30,7 +30,7 @@
     "guestFsr": "0",
     "fitGuestWindow": "0",
     "wemuOwnsDesktop": "1",
-    "displaySecondScreen": "0",
+    "displaySecondScreen": "1",
     "affinityCores": "",
     "frameGeneration": "0",
     "frameGenerationMultiplier": "2",

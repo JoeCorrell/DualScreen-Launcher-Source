@@ -74,6 +74,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     private var nativeTextBridge = false
     private var nativePanelModeModifierDown = false
     private var nativePanelModeModifierUsed = false
+    private var nativePanelLeftTriggerDown = false
+    private var nativePanelRightTriggerDown = false
     private var windowListener: WindowManager.OnWindowModificationListener? = null
     @Volatile private var keyboardTargetWindow: Window? = null
     @Volatile private var keyboardTargetScore = Int.MIN_VALUE
@@ -140,10 +142,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             return
         }
         sessionTitle = if (configurationLauncher) "${game.title} Launcher" else game.title
-        managedPanel = !configurationLauncher && (
-            game.panelMode == LowerPanelMode.STARDEW ||
-                game.panelMode == LowerPanelMode.VALHEIM
-            )
+        managedPanel = !configurationLauncher && game.panelMode == LowerPanelMode.VALHEIM
         nativeTextBridge = !configurationLauncher && game.id == "skyrim-se"
         launchStatus = app.launchStatus
         val logFile = launchStatus.begin(game)
@@ -284,7 +283,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             val gamepad = withContext(Dispatchers.IO) {
                 runCatching {
                     checkNotNull(gameRoot) { "Skyrim's game directory is unavailable" }
-                    val bundledOverride = assets.open(
+                    val bundledOverride = com.dualscreen.launcher.PayloadAssetStore.open(
+                        this@GameSessionActivity,
                         "mods/skyrim-se/payload/SkyrimGamepad.ini",
                     ).bufferedReader().use { it.readText() }
                     SkyrimGamepadConfiguration.ensureEnabled(
@@ -451,10 +451,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             // matches the mod window. That window proves the mod initialized,
             // not that the playable upper window exists. Keep the launch cover
             // up until a non-panel game window is actually mapped.
-            if (SecondScreenOutput.isEarlyClaimPanelWindow(
-                    window.className,
-                    window.name,
-                )) return
+            if (SecondScreenOutput.isEarlyClaimPanelWindow(window)) return
             val identity = "${window.name} ${window.className}".lowercase(Locale.ROOT)
             if (!matchesSessionWindow(identity, game, configurationLauncher)) return
 
@@ -673,15 +670,71 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         guestOutputCallback = null
     }
 
+    override fun onStart() {
+        super.onStart()
+        // A Presentation belongs only to a visible game activity. Recreate it
+        // after returning from another app instead of leaving a stale waiting
+        // panel obscuring that app's lower display.
+        refreshSecondaryDisplay()
+    }
+
     override fun onResume() {
         super.onResume()
         hideSystemUi()
     }
 
+    override fun onStop() {
+        // Setting the id to null disposes PresentationHost and its SurfaceView.
+        // The guest can remain alive; onStart attaches a fresh lower Surface.
+        secondaryDisplayId = null
+        SecondScreenOutput.detach()
+        super.onStop()
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (dispatchKeyboardControllerKey(event)) return true
         if (dispatchNativePanelModeKey(event)) return true
+        if (dispatchStardewPanelKey(event)) return true
         return dispatchGuestKeyEvent(event)
+    }
+
+    /** Preserves the original Stardew panel's bare controller bindings. */
+    private fun dispatchStardewPanelKey(event: KeyEvent): Boolean {
+        if (!SecondScreenOutput.isStardewValleyPanelActive() || !isControllerEvent(event)) {
+            return false
+        }
+        val firstPress = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+        return when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP,
+            KeyEvent.KEYCODE_BUTTON_Y,
+            -> { if (firstPress) NativePanelInput.navigation("up"); true }
+            KeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEvent.KEYCODE_BUTTON_A,
+            -> { if (firstPress) NativePanelInput.navigation("down"); true }
+            KeyEvent.KEYCODE_DPAD_LEFT,
+            KeyEvent.KEYCODE_PAGE_UP,
+            -> { if (firstPress) NativePanelInput.page(false); true }
+            KeyEvent.KEYCODE_DPAD_RIGHT,
+            KeyEvent.KEYCODE_PAGE_DOWN,
+            -> { if (firstPress) NativePanelInput.page(true); true }
+            KeyEvent.KEYCODE_BUTTON_L1 -> {
+                if (firstPress) NativePanelInput.toolbar(false)
+                true
+            }
+            KeyEvent.KEYCODE_BUTTON_R1 -> {
+                if (firstPress) NativePanelInput.toolbar(true)
+                true
+            }
+            KeyEvent.KEYCODE_BUTTON_X -> {
+                if (firstPress) NativePanelInput.action("sort")
+                true
+            }
+            KeyEvent.KEYCODE_BUTTON_B -> {
+                if (firstPress) NativePanelInput.action("use")
+                true
+            }
+            else -> false
+        }
     }
 
     private fun isControllerEvent(event: KeyEvent): Boolean {
@@ -756,6 +809,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                 if (event.repeatCount == 0) {
                     nativePanelModeModifierDown = true
                     nativePanelModeModifierUsed = false
+                    nativePanelLeftTriggerDown = false
+                    nativePanelRightTriggerDown = false
                 }
                 return nativePanelModeModifierDown
             }
@@ -763,6 +818,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                 val used = nativePanelModeModifierUsed
                 nativePanelModeModifierDown = false
                 nativePanelModeModifierUsed = false
+                nativePanelLeftTriggerDown = false
+                nativePanelRightTriggerDown = false
                 if (!used) {
                     dispatchGuestKeyEvent(KeyEvent.changeAction(event, KeyEvent.ACTION_DOWN))
                     dispatchGuestKeyEvent(event)
@@ -776,9 +833,12 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         ) {
             nativePanelModeModifierUsed = true
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                SecondScreenOutput.sendNativePanelPage(
-                    event.keyCode == KeyEvent.KEYCODE_BUTTON_R2,
-                )
+                val next = event.keyCode == KeyEvent.KEYCODE_BUTTON_R2
+                if (SecondScreenOutput.isStardewValleyPanelActive()) {
+                    NativePanelInput.page(next)
+                } else {
+                    SecondScreenOutput.sendNativePanelPage(next)
+                }
             }
             return true
         }
@@ -794,7 +854,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             if (action != null) {
                 nativePanelModeModifierUsed = true
                 if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
-                    SecondScreenOutput.sendNativePanelNavigation(action)
+                    if (SecondScreenOutput.isStardewValleyPanelActive()) {
+                        NativePanelInput.navigation(action)
+                    } else {
+                        SecondScreenOutput.sendNativePanelNavigation(action)
+                    }
                 }
                 return true
             }
@@ -803,6 +867,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     }
 
     override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+        if (dispatchNativePanelModeMotion(event)) return true
         // Route by the packet's source, not the device's combined capability
         // mask. The Thor exposes separate mouse and joystick packets; joystick
         // motion must reach XInput even if a future firmware combines devices.
@@ -812,6 +877,42 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             return true
         }
         return super.dispatchGenericMotionEvent(event)
+    }
+
+    /** Handles controllers which expose L2/R2 as axes while Select is held. */
+    private fun dispatchNativePanelModeMotion(event: MotionEvent): Boolean {
+        if (!nativePanelModeModifierDown ||
+            !SecondScreenOutput.isNativePanelControllerActive() ||
+            event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK
+        ) return false
+
+        val leftPressed = maxOf(
+            event.getAxisValue(MotionEvent.AXIS_LTRIGGER),
+            event.getAxisValue(MotionEvent.AXIS_BRAKE),
+        ) >= NATIVE_PANEL_TRIGGER_THRESHOLD
+        val rightPressed = maxOf(
+            event.getAxisValue(MotionEvent.AXIS_RTRIGGER),
+            event.getAxisValue(MotionEvent.AXIS_GAS),
+        ) >= NATIVE_PANEL_TRIGGER_THRESHOLD
+        if (leftPressed && !nativePanelLeftTriggerDown) {
+            nativePanelModeModifierUsed = true
+            if (SecondScreenOutput.isStardewValleyPanelActive()) {
+                NativePanelInput.page(false)
+            } else {
+                SecondScreenOutput.sendNativePanelPage(false)
+            }
+        }
+        if (rightPressed && !nativePanelRightTriggerDown) {
+            nativePanelModeModifierUsed = true
+            if (SecondScreenOutput.isStardewValleyPanelActive()) {
+                NativePanelInput.page(true)
+            } else {
+                SecondScreenOutput.sendNativePanelPage(true)
+            }
+        }
+        nativePanelLeftTriggerDown = leftPressed
+        nativePanelRightTriggerDown = rightPressed
+        return true
     }
 
     /**
@@ -896,6 +997,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
 
     companion object {
         private const val TAG = "DualScreenGameLaunch"
+        private const val NATIVE_PANEL_TRIGGER_THRESHOLD = 0.55f
         const val EXTRA_GAME_ID = "gameId"
         const val EXTRA_CONTAINER_ID = "containerId"
         const val EXTRA_SHORTCUT_PATH = "shortcutPath"

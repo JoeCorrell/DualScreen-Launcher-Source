@@ -25,10 +25,16 @@ final class NativePanelIdentity {
                 || normalizedTitle(title).equals("grim dawn dual-screen");
     }
 
+    static boolean isStardewValley(String className, String title) {
+        return normalizedClass(className).equals("stardewvalleysecondscreenpanel")
+                || normalizedTitle(title).equals("stardew valley dual screen");
+    }
+
     static boolean isEarlyClaimPanel(String className, String title) {
         return isSkyrim(className, title)
                 || isFallout(className, title)
-                || isGrimDawn(className, title);
+                || isGrimDawn(className, title)
+                || isStardewValley(className, title);
     }
 
     private static String normalizedClass(String value) {

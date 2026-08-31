@@ -40,4 +40,30 @@ public class NativePanelIdentityTest {
                 "Fallout4SecondScreenPanel", "Fallout 4 Dual-Screen Pip-Boy"));
         assertFalse(NativePanelIdentity.isFallout("Fallout4", "Fallout 4"));
     }
+
+    @Test
+    public void fallout3PanelUsesItsExactPrivateTitle() {
+        assertTrue(NativePanelIdentity.isFallout(
+                "fallout3.exe", "Fallout 3 Dual-Screen Pip-Boy"));
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel(
+                "", "  FALLOUT 3 DUAL-SCREEN PIP-BOY  "));
+        assertFalse(NativePanelIdentity.isFallout(
+                "fallout3.exe", "Fallout 3"));
+    }
+
+    @Test
+    public void stardewPanelUsesOnlyItsPrivateClassOrExactTitle() {
+        assertTrue(NativePanelIdentity.isStardewValley(
+                "StardewValleySecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isStardewValley(
+                "", "Stardew Valley Dual Screen"));
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel(
+                "StardewValleySecondScreenPanel", "Stardew Valley Dual Screen"));
+        assertFalse(NativePanelIdentity.isStardewValley(
+                "StardewValleySecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isStardewValley(
+                "", "Stardew Valley Dual Screen Settings"));
+        assertFalse(NativePanelIdentity.isStardewValley(
+                "Stardew Valley", "Stardew Valley"));
+    }
 }

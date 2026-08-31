@@ -230,8 +230,38 @@ private fun GuestPanelSurface() {
         factory = { context ->
             SurfaceView(context).apply {
                 setZOrderMediaOverlay(true)
+                val panelView = this
                 holder.addCallback(object : SurfaceHolder.Callback {
-                    override fun surfaceCreated(holder: SurfaceHolder) = Unit
+                    private var attachedWidth = 0
+                    private var attachedHeight = 0
+
+                    private fun attachIfReady(
+                        holder: SurfaceHolder,
+                        offeredWidth: Int = 0,
+                        offeredHeight: Int = 0,
+                    ) {
+                        val frame = holder.surfaceFrame
+                        val width = listOf(offeredWidth, frame.width(), panelView.width)
+                            .firstOrNull { it > 0 } ?: return
+                        val height = listOf(offeredHeight, frame.height(), panelView.height)
+                            .firstOrNull { it > 0 } ?: return
+                        if (!holder.surface.isValid ||
+                            width == attachedWidth && height == attachedHeight &&
+                            SecondScreenOutput.isAttached()
+                        ) return
+
+                        attachedWidth = width
+                        attachedHeight = height
+                        SecondScreenOutput.attach(holder.surface, width, height)
+                    }
+
+                    override fun surfaceCreated(holder: SurfaceHolder) {
+                        // Presentation-backed SurfaceViews do not always send a
+                        // distinct surfaceChanged callback for their first,
+                        // already-correctly-sized buffer.
+                        attachIfReady(holder)
+                        panelView.post { attachIfReady(holder) }
+                    }
 
                     override fun surfaceChanged(
                         holder: SurfaceHolder,
@@ -239,7 +269,7 @@ private fun GuestPanelSurface() {
                         width: Int,
                         height: Int,
                     ) {
-                        SecondScreenOutput.attach(holder.surface, width, height)
+                        attachIfReady(holder, width, height)
                     }
 
                     override fun surfaceDestroyed(holder: SurfaceHolder) {

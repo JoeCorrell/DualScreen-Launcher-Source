@@ -9,3 +9,12 @@ captures/
 externalNativeBuild/
 /artifacts/
 /backups/
+/payload-release/
+keystore.properties
+*.jks
+*.keystore
+/launcher-screen.png
+/skyrim-baseline.png
+/skyrim-new-confirm.png
+/tools/BinaryDeltaPacker/bin/
+/tools/BinaryDeltaPacker/obj/

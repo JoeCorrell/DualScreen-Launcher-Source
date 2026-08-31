@@ -14,6 +14,7 @@ import com.wemu.engine.xserver.Bitmask;
 import com.wemu.engine.xserver.Cursor;
 import com.wemu.engine.xserver.Drawable;
 import com.wemu.engine.xserver.Pointer;
+import com.wemu.engine.xserver.Property;
 import com.wemu.engine.xserver.Window;
 import com.wemu.engine.xserver.WindowAttributes;
 import com.wemu.engine.xserver.WindowManager;
@@ -928,8 +929,7 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
 
     private boolean isSecondScreenOnlyWindow(Window window, int rootX, int rootY) {
         return SecondScreenOutput.isSecondMonitorPosition(rootX, rootY)
-                || (window != null && SecondScreenOutput.isEarlyClaimPanelWindow(
-                        window.getClassName(), window.getName()));
+                || SecondScreenOutput.isEarlyClaimPanelWindow(window);
     }
 
     /**
@@ -947,8 +947,7 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
                     window.id, "dxhrdc.exe", deusEx.getName());
             setFitGuestWindow(true);
         } else {
-            SecondScreenOutput.noteGuestWindow(
-                    window.id, window.getClassName(), window.getName());
+            SecondScreenOutput.noteGuestWindow(window);
         }
         final boolean submitted;
         if (source.getTexture() instanceof GPUImage) {
@@ -1132,6 +1131,34 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
                 if (pw == window) { lastCursor = window.attributes.getCursor(); sendCursorToNative(lastCursor); }
             }
         }
+    }
+
+    @Override
+    public void onModifyWindowProperty(Window window, Property property) {
+        if (!isPanelIdentityProperty(property)
+                || !SecondScreenOutput.isEarlyClaimPanelWindow(window)) return;
+
+        /* See ASurfaceRenderer: Wine may map and paint a GDI panel before its
+         * EWMH title is visible. Replay the retained drawable at the moment the
+         * private identity arrives instead of waiting for another game-state
+         * change to produce a second paint. */
+        submitNativePanelTree(window);
+        xServerView.queueEvent(this::updateScene);
+    }
+
+    private void submitNativePanelTree(Window window) {
+        if (window == null) return;
+        if (SecondScreenOutput.isEarlyClaimPanelWindow(window)) {
+            onUpdateWindowContent(window);
+        }
+        for (Window child : window.getChildren()) submitNativePanelTree(child);
+    }
+
+    private static boolean isPanelIdentityProperty(Property property) {
+        if (property == null) return false;
+        String name = property.nameAsString();
+        return "WM_CLASS".equals(name) || "WM_NAME".equals(name)
+                || "_NET_WM_NAME".equals(name);
     }
 
     /**

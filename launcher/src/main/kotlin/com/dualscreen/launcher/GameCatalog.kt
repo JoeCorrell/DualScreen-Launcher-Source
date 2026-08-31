@@ -1,11 +1,12 @@
 package com.dualscreen.launcher
 
-enum class LowerPanelMode { NATIVE_WINDOW, STARDEW, VALHEIM }
+enum class LowerPanelMode { NATIVE_WINDOW, VALHEIM }
 
 data class FileRule(
     val path: String,
     val bytes: Long? = null,
     val sha256: String? = null,
+    val sha256AnyOf: Set<String> = emptySet(),
 )
 
 data class PrerequisitePackage(
@@ -197,25 +198,28 @@ object GameCatalog {
             id = "stardew-valley",
             title = "Stardew Valley",
             summary = "Backpack, farm, crafting, map, journal, and relationships.",
-            executableCandidates = listOf("StardewModdingAPI.exe"),
+            executableCandidates = listOf("Stardew Valley.exe"),
             saveDirectory = "AppData/Roaming/StardewValley/Saves",
-            requiredFiles = listOf("Stardew Valley.exe", "Content/Maps/springobjects.xnb"),
-            prerequisites = listOf(
-                PrerequisitePackage(
-                    name = "SMAPI",
-                    version = "4.5.2",
-                    url = "https://github.com/Pathoschild/SMAPI/releases/download/4.5.2/SMAPI-4.5.2-installer.zip",
-                    bytes = 41_889_142,
-                    sha256 = "dd01ddca7b566bfe0d3b3d2d03833496abc56c53da976241f2ab443f5484acc4",
-                    nestedZipSuffix = "/internal/windows/install.dat",
-                    installedFiles = listOf(
-                        "StardewModdingAPI.exe",
-                        "StardewModdingAPI.dll",
-                        "smapi-internal/0Harmony.dll",
+            requiredFiles = listOf(
+                "Stardew Valley.exe",
+                "Stardew Valley.dll",
+                "Content/Maps/springobjects.xnb",
+            ),
+            fileRules = listOf(
+                FileRule(
+                    path = "Stardew Valley.dll",
+                    // Verified 1.6.15.24356 GOG/Steam inputs and their native
+                    // dual-screen outputs. Accepting the outputs keeps the
+                    // post-install verification and idempotent updater valid.
+                    sha256AnyOf = setOf(
+                        "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c",
+                        "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+                        "7579cca523d19470b4f842b9068b6bf9b8f96efe632b83471bc62cae7f7b3b90",
+                        "f3a92e73f1cdf7c0d4eb5f995b2555244fbe16d33429e26c2b425f6eb1480c63",
                     ),
                 ),
             ),
-            panelMode = LowerPanelMode.STARDEW,
+            panelMode = LowerPanelMode.NATIVE_WINDOW,
             windowHints = listOf("stardew", "stardewvalley"),
         ),
     )

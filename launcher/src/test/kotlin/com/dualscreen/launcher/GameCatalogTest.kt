@@ -80,6 +80,21 @@ class GameCatalogTest {
     }
 
     @Test
+    fun stardewUsesTheEmbeddedNativePatchWithoutSmapi() {
+        val stardew = checkNotNull(GameCatalog.byId("stardew-valley"))
+        assertThat(stardew.executableCandidates).containsExactly("Stardew Valley.exe")
+        assertThat(stardew.prerequisites).isEmpty()
+        assertThat(stardew.panelMode).isEqualTo(LowerPanelMode.NATIVE_WINDOW)
+        assertThat(stardew.requiredFiles).contains("Stardew Valley.dll")
+        assertThat(stardew.fileRules.single().sha256AnyOf).containsExactly(
+            "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c",
+            "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+            "7579cca523d19470b4f842b9068b6bf9b8f96efe632b83471bc62cae7f7b3b90",
+            "f3a92e73f1cdf7c0d4eb5f995b2555244fbe16d33429e26c2b425f6eb1480c63",
+        )
+    }
+
+    @Test
     fun addressSensitiveNativeModsAreVersionGated() {
         val skyrim = checkNotNull(GameCatalog.byId("skyrim-se"))
         val fallout3 = checkNotNull(GameCatalog.byId("fallout3"))

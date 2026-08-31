@@ -504,7 +504,7 @@ private class ComponentProvisioner(private val context: Context) {
         val partial = File(target.parentFile, target.name + ".partial")
         partial.delete()
         var received = 0L
-        context.assets.open("components/${component.source}").use { input ->
+        PayloadAssetStore.open(context, "components/${component.source}").use { input ->
             FileOutputStream(partial).use { output ->
                 val buffer = ByteArray(128 * 1024)
                 while (true) {

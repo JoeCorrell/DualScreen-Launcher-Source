@@ -16,6 +16,7 @@ import com.wemu.engine.xserver.Bitmask;
 import com.wemu.engine.xserver.Cursor;
 import com.wemu.engine.xserver.Drawable;
 import com.wemu.engine.xserver.Pointer;
+import com.wemu.engine.xserver.Property;
 import com.wemu.engine.xserver.Window;
 import com.wemu.engine.xserver.WindowAttributes;
 import com.wemu.engine.xserver.WindowManager;
@@ -275,8 +276,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
      */
     private boolean isSecondScreenOnlyWindow(Window window, int rootX, int rootY) {
         return SecondScreenOutput.isSecondMonitorPosition(rootX, rootY)
-                || (window != null && SecondScreenOutput.isEarlyClaimPanelWindow(
-                        window.getClassName(), window.getName()));
+                || SecondScreenOutput.isEarlyClaimPanelWindow(window);
     }
 
     private boolean isSecondScreenOnlyWindow(Window window) {
@@ -1029,6 +1029,43 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     }
 
     @Override
+    public void onModifyWindowProperty(Window window, Property property) {
+        if (!isPanelIdentityProperty(property)
+                || !SecondScreenOutput.isEarlyClaimPanelWindow(window)) return;
+
+        /*
+         * MapWindow commonly arrives before Wine publishes WM_CLASS/title.
+         * Reclassify the already-mapped tree as soon as that identity becomes
+         * authoritative; otherwise a one-shot GDI panel keeps the primary
+         * scanout listener it received while it was still anonymous and never
+         * reaches SecondScreenOutput.
+         */
+        reclassifyNativePanelTree(window);
+        updateScene();
+    }
+
+    private void reclassifyNativePanelTree(Window window) {
+        if (window == null) return;
+        Drawable content = window.getContent();
+        if (window.attributes.isMapped() && content != null
+                && content.width > 0 && content.height > 0
+                && SecondScreenOutput.isEarlyClaimPanelWindow(window)) {
+            windowSurfaces.remove(window.id);
+            nativeUnregisterWindowSC(window.id);
+            content.setOnDrawListener(() -> pushCpuImageToNative(window.id, content));
+            onUpdateWindowContent(window);
+        }
+        for (Window child : window.getChildren()) reclassifyNativePanelTree(child);
+    }
+
+    private static boolean isPanelIdentityProperty(Property property) {
+        if (property == null) return false;
+        String name = property.nameAsString();
+        return "WM_CLASS".equals(name) || "WM_NAME".equals(name)
+                || "_NET_WM_NAME".equals(name);
+    }
+
+    @Override
     public void onPointerMove(short x, short y) {
         Window pw = xServer.inputDeviceManager.getPointWindow();
         Cursor cursor = pw != null ? pw.attributes.getCursor() : null;
@@ -1215,8 +1252,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
             return false;
         }
 
-        SecondScreenOutput.noteGuestWindow(
-                window.id, window.getClassName(), window.getName());
+        SecondScreenOutput.noteGuestWindow(window);
         synchronized (source.renderLock) {
             java.nio.ByteBuffer pixels = source.getBuffer();
             int stride = source.height > 0 && pixels != null
@@ -1251,8 +1287,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
             // client fill the top panel without requiring a hidden setting.
             setFitGuestWindow(true);
         } else {
-            SecondScreenOutput.noteGuestWindow(
-                    window.id, window.getClassName(), window.getName());
+            SecondScreenOutput.noteGuestWindow(window);
         }
 
         synchronized (source.renderLock) {

@@ -1,15 +1,26 @@
 {
-    "version":  "wemu-current-2026.08.30-player-magic-input",
+    "version":  "native-1.6.15.24356-2026.08.30",
     "files":  [
-                  {
-                      "source":  "StardewDualScreen.dll",
-                      "target":  "Mods/StardewDualScreen/StardewDualScreen.dll",
-                      "sha256":  "6c6d3c771dd527b20d400a863a58c09c0cc1729e8fbdf204b68de4e8c0f241c7"
-                  },
-                  {
-                      "source":  "manifest.json",
-                      "target":  "Mods/StardewDualScreen/manifest.json",
-                      "sha256":  "2d6f4b310c7932058a89dcc9a6afc75b3ca15367a38801c0b0967fdcafa3c5fa"
-                  }
-              ]
+
+              ],
+    "patches":  [
+                    {
+                        "source":  "stardew-1.6.15.24356-gog.dsdiff.gz",
+                        "target":  "Stardew Valley.dll",
+                        "sha256":  "25b540c92b698a132d0a49d6279d6cbe0d9fd7dde2d3922057f54b8d10f42e27",
+                        "inputSha256":  "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c",
+                        "outputSha256":  "7579cca523d19470b4f842b9068b6bf9b8f96efe632b83471bc62cae7f7b3b90"
+                    },
+                    {
+                        "source":  "stardew-1.6.15.24356-steam.dsdiff.gz",
+                        "target":  "Stardew Valley.dll",
+                        "sha256":  "94d2be678d5a8557d3b3e01be8eae6efe7ca55d5064736d25b38be2c9e0eb35e",
+                        "inputSha256":  "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
+                        "outputSha256":  "f3a92e73f1cdf7c0d4eb5f995b2555244fbe16d33429e26c2b425f6eb1480c63"
+                    }
+                ],
+    "remove":  [
+                   "Mods/StardewDualScreen/StardewDualScreen.dll",
+                   "Mods/StardewDualScreen/manifest.json"
+               ]
 }

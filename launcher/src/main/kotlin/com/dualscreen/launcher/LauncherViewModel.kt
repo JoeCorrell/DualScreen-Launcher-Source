@@ -17,6 +17,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val launchStatus = app.launchStatus.status
     val gpuDrivers = app.gpuDrivers.drivers
     val gpuDriverImportState = app.gpuDrivers.importState
+    internal val payloadState = app.payloads.state
 
     private val mutableGpuDriverMessage = MutableStateFlow<String?>(null)
     val gpuDriverMessage: StateFlow<String?> = mutableGpuDriverMessage.asStateFlow()
@@ -25,10 +26,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val installed: StateFlow<Map<String, InstalledGame>> = mutableInstalled.asStateFlow()
 
     init {
+        viewModelScope.launch { app.payloads.ensureReady() }
         viewModelScope.launch { app.gpuDrivers.refresh() }
     }
 
     fun install(game: SupportedGame, archive: Uri) {
+        if (payloadState.value !is PayloadBootstrapState.Ready) return
         if (progress.value.values.any(InstallProgress::running) ||
             saveProgress.value.values.any(SaveImportProgress::running)
         ) return
@@ -74,5 +77,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val driverId = app.gpuDrivers.install(uri) ?: return@launch
             setGpuDriver(driverId)
         }
+    }
+
+    fun retryPayloadBootstrap() {
+        viewModelScope.launch { app.payloads.ensureReady(force = true) }
     }
 }

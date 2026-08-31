@@ -4,7 +4,6 @@ import com.google.common.truth.Truth.assertThat
 import org.json.JSONObject
 import org.junit.Test
 import java.io.File
-import java.security.MessageDigest
 
 class AssetIntegrityTest {
     private val assets = File("src/main/assets").canonicalFile
@@ -41,58 +40,95 @@ class AssetIntegrityTest {
         assertThat(preset.getString("rendererPresentMode")).isEqualTo("fifo")
         assertThat(preset.getString("dxwrapperConfig")).contains("version=2.3.1")
         assertThat(preset.getString("dxwrapperConfig")).contains("vkd3dVersion=None")
-        assertThat(preset.getJSONObject("extraData").getString("displaySecondScreen")).isEqualTo("0")
+        assertThat(preset.getJSONObject("extraData").getString("displaySecondScreen")).isEqualTo("1")
         assertThat(preset.getJSONObject("extraData").getString("affinityCores")).isEmpty()
     }
 
     @Test
-    fun capturedComponentArchivesMatchPinnedSizesAndHashes() {
+    fun capturedComponentManifestPinsEveryRemoteArchive() {
         val manifest = JSONObject(File(assets, "components/manifest.json").readText())
             .getJSONArray("components")
         assertThat(manifest.length()).isEqualTo(5)
         for (index in 0 until manifest.length()) {
             val entry = manifest.getJSONObject(index)
-            val file = File(assets, "components/${entry.getString("source")}").canonicalFile
-            assertThat(file.path).startsWith(File(assets, "components").canonicalPath + File.separator)
-            assertThat(file.isFile).isTrue()
-            assertThat(file.length()).isEqualTo(entry.getLong("bytes"))
-            assertThat(sha256(file)).isEqualTo(entry.getString("sha256"))
+            assertThat(entry.getString("source")).matches("[A-Za-z0-9._-]+\\.tgz")
+            assertThat(entry.getLong("bytes")).isGreaterThan(0)
+            assertThat(entry.getString("sha256")).matches("[0-9a-f]{64}")
         }
     }
 
     @Test
-    fun everyBundledModPayloadMatchesItsManifest() {
+    fun everyRemoteModPayloadIsPinnedAndTargetsAPathInsideTheGame() {
         GameCatalog.games.forEach { game ->
             val root = File(assets, "mods/${game.id}").canonicalFile
             val manifestFile = File(root, "manifest.json")
             val bytes = manifestFile.readBytes()
             assertThat(bytes.take(3)).isNotEqualTo(listOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
             val manifest = JSONObject(bytes.toString(Charsets.UTF_8))
-            val files = manifest.getJSONArray("files")
-            assertThat(files.length()).isGreaterThan(0)
-            for (index in 0 until files.length()) {
-                val entry = files.getJSONObject(index)
-                val source = File(root, "payload/${entry.getString("source")}").canonicalFile
-                assertThat(source.path).startsWith(File(root, "payload").canonicalPath + File.separator)
-                assertThat(source.isFile).isTrue()
-                assertThat(sha256(source)).isEqualTo(entry.getString("sha256"))
+            val files = manifest.optJSONArray("files")
+            val patches = manifest.optJSONArray("patches")
+            assertThat((files?.length() ?: 0) + (patches?.length() ?: 0)).isGreaterThan(0)
+            for (index in 0 until (files?.length() ?: 0)) {
+                val entry = checkNotNull(files).getJSONObject(index)
+                assertThat(entry.getString("source")).doesNotContain("..")
+                assertThat(entry.getString("sha256")).matches("[0-9a-f]{64}")
                 val target = entry.getString("target").replace('\\', '/')
+                assertThat(target.startsWith("/")).isFalse()
+                assertThat(target.split('/')).doesNotContain("..")
+            }
+            for (index in 0 until (patches?.length() ?: 0)) {
+                val entry = checkNotNull(patches).getJSONObject(index)
+                assertThat(entry.getString("source")).doesNotContain("..")
+                assertThat(entry.getString("sha256")).matches("[0-9a-f]{64}")
+                assertThat(entry.getString("inputSha256")).matches("[0-9a-f]{64}")
+                assertThat(entry.getString("outputSha256")).matches("[0-9a-f]{64}")
+                val target = entry.getString("target").replace('\\', '/')
+                assertThat(target.startsWith("/")).isFalse()
+                assertThat(target.split('/')).doesNotContain("..")
+            }
+            val removals = manifest.optJSONArray("remove")
+            for (index in 0 until (removals?.length() ?: 0)) {
+                val target = checkNotNull(removals).getString(index).replace('\\', '/')
                 assertThat(target.startsWith("/")).isFalse()
                 assertThat(target.split('/')).doesNotContain("..")
             }
         }
     }
 
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().buffered(128 * 1024).use { input ->
-            val buffer = ByteArray(128 * 1024)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
+    @Test
+    fun stardewShipsOnlyVersionedNativeDeltas() {
+        val root = File(assets, "mods/stardew-valley")
+        val manifest = JSONObject(File(root, "manifest.json").readText())
+        assertThat(manifest.getJSONArray("files").length()).isEqualTo(0)
+        val patches = manifest.getJSONArray("patches")
+        assertThat(patches.length()).isEqualTo(2)
+        assertThat((0 until patches.length()).map { patches.getJSONObject(it).getString("target") })
+            .containsExactly("Stardew Valley.dll", "Stardew Valley.dll")
+        assertThat(root.walkTopDown().filter(File::isFile).map { it.name }.toList())
+            .doesNotContain("StardewDualScreen.dll")
+        assertThat((0 until manifest.getJSONArray("remove").length()).map {
+            manifest.getJSONArray("remove").getString(it)
+        }).containsExactly(
+            "Mods/StardewDualScreen/StardewDualScreen.dll",
+            "Mods/StardewDualScreen/manifest.json",
+        )
+    }
+
+    @Test
+    fun firstBootPayloadReleaseIsPinnedAndPublic() {
+        val manifest = JSONObject(File(assets, "payload-bootstrap.json").readText())
+        assertThat(manifest.getInt("schema")).isEqualTo(1)
+        assertThat(manifest.getString("version")).isNotEmpty()
+        assertThat(manifest.getString("repository"))
+            .isEqualTo("https://github.com/JoeCorrell/DualScreen-Launcher-Payloads")
+        val packs = manifest.getJSONArray("packs")
+        assertThat(packs.length()).isEqualTo(2)
+        for (index in 0 until packs.length()) {
+            val pack = packs.getJSONObject(index)
+            assertThat(pack.getLong("bytes")).isGreaterThan(0)
+            assertThat(pack.getString("sha256")).matches("[0-9a-f]{64}")
+            assertThat(pack.getString("url"))
+                .startsWith("https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/")
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }

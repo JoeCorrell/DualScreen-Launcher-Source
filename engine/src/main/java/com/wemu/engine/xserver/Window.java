@@ -22,6 +22,8 @@ public class Window extends XResource {
      * itself changes.
      */
     private static final int WM_CLASS_ATOM = Atom.getId("WM_CLASS");
+    private static final int WM_NAME_ATOM = Atom.getId("WM_NAME");
+    private static final int NET_WM_NAME_ATOM = Atom.getId("_NET_WM_NAME");
 
     public static final int FLAG_X = 1;
     public static final int FLAG_Y = 1<<1;
@@ -167,8 +169,20 @@ public class Window extends XResource {
     }
 
     public String getName() {
-        Property property = getProperty(Atom.getId("WM_NAME"));
-        return property != null ? property.toString() : "";
+        /*
+         * Wine publishes Unicode Win32 titles through the EWMH property on
+         * some window paths while leaving the legacy ICCCM title absent (or
+         * temporarily empty). Native dual-screen panels rely on their exact
+         * private title when Wine clamps a newly-created window onto the
+         * primary monitor, so reading WM_NAME alone makes those panels
+         * indistinguishable from an anonymous game child window.
+         */
+        Property modern = getProperty(NET_WM_NAME_ATOM);
+        String name = modern != null ? modern.toString() : "";
+        if (!name.isEmpty()) return name;
+
+        Property legacy = getProperty(WM_NAME_ATOM);
+        return legacy != null ? legacy.toString() : "";
     }
 
     public String getClassName() {

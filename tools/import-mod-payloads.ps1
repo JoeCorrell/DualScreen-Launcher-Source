@@ -105,11 +105,7 @@ $entries = [System.Collections.Generic.List[object]]::new()
 Add-PayloadFile $entries $payload (Join-Path $modRoot "ValheimSecondScreen\bin\Release\net471\ValheimSecondScreen.dll") "ValheimSecondScreen.dll" "BepInEx/plugins/ValheimSecondScreen/ValheimSecondScreen.dll"
 Write-Manifest $directory $version $entries
 
-$directory = Reset-Payload "stardew-valley"
-$payload = Join-Path $directory "payload"
-$entries = [System.Collections.Generic.List[object]]::new()
-Add-PayloadFile $entries $payload (Join-Path $modRoot "StardewSecondScreen\bin\Release\net6.0\StardewDualScreen.dll") "StardewDualScreen.dll" "Mods/StardewDualScreen/StardewDualScreen.dll"
-Add-PayloadFile $entries $payload (Join-Path $modRoot "StardewSecondScreen\manifest.json") "manifest.json" "Mods/StardewDualScreen/manifest.json"
-Write-Manifest $directory $version $entries
+& (Join-Path $PSScriptRoot "import-stardew-native-payload.ps1") -WemuRoot $WemuRoot
+if ($LASTEXITCODE -ne 0) { throw "The Stardew native payload import failed" }
 
 Write-Output "Imported $($entries.Count) final payload entries into $assetRoot"

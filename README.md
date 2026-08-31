@@ -17,14 +17,14 @@ GOG, community, store, container-editor, or arbitrary-shortcut screens.
 | Deus Ex: Human Revolution Director's Cut | `DXHRDC.exe` 2.0.66.0, SHA-256 pinned | Native live game panel |
 | Dead Island Definitive Edition | The three verified 2016 executable/DLL sizes | Native live game panel |
 | Valheim | Windows x64 game files; pinned BepInEx 5.4.23.5 is installed automatically | WEMU Valheim panel |
-| Stardew Valley | Windows 1.6 game files; pinned SMAPI 4.5.2 is installed automatically | WEMU Stardew panel |
+| Stardew Valley | Windows 1.6.15.24356 GOG or Steam game files | Native live game panel embedded into the supplied game assembly |
 
 The player supplies their own game files as a ZIP. No game executable, asset,
 mesh, texture, music, or other copyrighted game data is bundled.
 
 ## Exact predefined container
 
-The single immutable preset is a direct capture of WEMU container `Games`
+The default immutable preset is a direct capture of WEMU container `Games`
 (`xuser-2`) on the AYN Thor on 2026-08-28. Among its pinned settings are:
 
 - Proton `11.0-5-arm64ec-6`;
@@ -34,11 +34,17 @@ The single immutable preset is a direct capture of WEMU container `Games`
 - the original environment, CPU affinity, audio, DPI, FSR, direct scanout,
   adaptive refresh, and second-screen values.
 
-The exact four installed compatibility component trees were captured with the
-preset and are checked against `launcher/src/main/assets/components/manifest.json`
-before installation. Box64 and the graphics driver are verified through the
-production runtime payload path. A similar-looking public component is never
-silently substituted.
+The exact installed compatibility component trees were captured with the preset
+and are pinned by version, byte length, and SHA-256. They are delivered from the
+public payload release rather than embedded in the APK. Box64 and the graphics
+driver are verified through the production runtime payload path. A
+similar-looking public component is never silently substituted.
+
+Stardew Valley is isolated in its own immutable capture of the working WEMU
+`proton 9` container. Its real pinned runtime components and compatibility
+settings are retained, while lower-desktop output is enabled so the embedded
+`StardewValleySecondScreenPanel` window is scanned out on the Thor's lower
+display. No other game's preset is changed by this Stardew-specific policy.
 
 ## Installation flow
 
@@ -46,10 +52,12 @@ silently substituted.
    expansion, free-space, and path-traversal limits.
 2. The launcher finds exactly one supported game root and validates its required
    files and build gates.
-3. Any required framework is downloaded from its pinned official GitHub release,
+3. Any game-specific framework still required by that game is downloaded from its pinned official GitHub release,
    checked by exact size and SHA-256, and overlaid in staging.
-4. The matching dual-screen mod payload is copied from the APK and every file is
-   checked against its manifest hash.
+4. The matching dual-screen mod payload is copied from the verified first-boot
+   payload store and every file is checked against its manifest hash. Stardew uses a verified binary delta for
+   the detected GOG or Steam assembly, so the APK does not contain Stardew game
+   code and never needs SMAPI.
 5. Game, framework, launch executable, and mod files are verified again.
 6. The old installation is retained as a rollback while the verified staging
    tree is atomically published. Only then is the direct launch entry saved.
@@ -72,8 +80,8 @@ identity appears, so Explorer and the container desktop are never presented as
 part of the launcher. The second display is selected with WEMU's production
 Thor display-topology rule; virtual/private displays are rejected.
 
-Native dual-screen games use the zero-copy secondary SurfaceFlinger output.
-Stardew and Valheim use the production local companion protocol and UI. The
+Native dual-screen games, including Stardew, use the zero-copy secondary
+SurfaceFlinger output. Valheim retains its production local companion protocol and UI. The
 session owns one runtime, one top renderer, and one lower presentation, and
 releases the presentation, output surface, listeners, handlers, and runtime on
 exit.
@@ -83,6 +91,23 @@ console in the launcher, showing readiness, ZIP validation/extraction progress,
 the bounded live install log, and clear failures. It then hands off immediately
 to a game-specific waiting panel before Wine starts. It never waits for the
 Windows desktop or game window before claiming the lower screen.
+
+## First-boot payloads
+
+Large Wine/Proton components and dual-screen mod payloads are published at the
+[DualScreen Launcher Payloads](https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/tag/launcher-payloads-v1)
+release. The APK contains a small immutable bootstrap manifest with the exact
+HTTPS URLs, byte lengths, and SHA-256 values. On first boot the launcher:
+
+1. downloads each pinned pack with retry and resumable range support;
+2. verifies its complete length and SHA-256 before extraction;
+3. rejects absolute paths and traversal entries while extracting to staging;
+4. atomically publishes the complete version, retaining the previous payload
+   until the replacement is ready.
+
+The library is not exposed until this succeeds, and a failed update cannot
+replace a working payload set. Use `tools/build-launcher-payload-release.ps1`
+to reproduce release packs and their bootstrap manifest.
 
 ## Build and verify
 
@@ -98,10 +123,20 @@ The APK is written to:
 launcher/build/outputs/apk/debug/launcher-debug.apk
 ```
 
-The integrity tests hash every captured compatibility archive and every bundled
-mod payload, assert the captured preset's critical values, and audit the closed
-game catalog and pinned prerequisite metadata.
+For a locally signed release, run `tools/generate-release-keystore.ps1` once,
+back up the generated keystore and ignored `keystore.properties`, then build:
 
-SMAPI is sourced from the official [Pathoschild/SMAPI releases](https://github.com/Pathoschild/SMAPI/releases).
+```powershell
+.\gradlew.bat :launcher:assembleRelease
+```
+
+The release APK is written to
+`launcher/build/outputs/apk/release/launcher-release.apk`. Signing credentials,
+keystores, and generated payload archives are ignored by Git.
+
+The integrity tests validate the payload release pins, captured preset's
+critical values, every mod manifest entry, the closed game catalog, and pinned
+prerequisite metadata.
+
 BepInEx is sourced from the official [BepInEx releases](https://github.com/BepInEx/BepInEx/releases).
 See [NOTICE.md](NOTICE.md) for inherited notices.
