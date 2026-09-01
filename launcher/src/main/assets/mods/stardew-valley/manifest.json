@@ -1,5 +1,5 @@
 {
-    "version":  "native-1.6.15.24356-2026.08.31-original-ui-restored",
+    "version":  "native-1.6.15.24356-2026.08.31-display-sync-1",
     "files":  [
 
               ],
@@ -7,16 +7,16 @@
                     {
                         "source":  "stardew-1.6.15.24356-gog.dsdiff.gz",
                         "target":  "Stardew Valley.dll",
-                        "sha256":  "8a3d1c998598fa38e792fd26f6a548fe32ccf03fe5e73b29c3ee4b90d5c33441",
+                        "sha256":  "a5c017e9aa6eeef62712bae7ee326ea2cbd4c91d693f8ce6ef03e191c274469c",
                         "inputSha256":  "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c",
-                        "outputSha256":  "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466"
+                        "outputSha256":  "58fd97df1e77d03a4bf2196a69b7732eefbb1d1e1743535af1d2ab1162053539"
                     },
                     {
                         "source":  "stardew-1.6.15.24356-steam.dsdiff.gz",
                         "target":  "Stardew Valley.dll",
-                        "sha256":  "2ddac446a9a3b6489b210222a375e7f87f8cb49c161349d2e4f77a31833b3232",
+                        "sha256":  "644aeb52facb1edef3a06911f292128971467ee401c9c8e86be8356c54a0b6ae",
                         "inputSha256":  "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee",
-                        "outputSha256":  "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c"
+                        "outputSha256":  "9b03cc5106f24e861e3bceb38e68ae6b286b77b83f4c804bd3818b16c1dbc172"
                     }
                 ],
     "remove":  [

@@ -16,9 +16,9 @@ $steamPatched = Join-Path $WemuRoot "artifacts\stardew-native-steam-1.6.15.24356
 
 $expected = [ordered]@{
     gogInput = "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c"
-    gogOutput = "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466"
+    gogOutput = "58fd97df1e77d03a4bf2196a69b7732eefbb1d1e1743535af1d2ab1162053539"
     steamInput = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
-    steamOutput = "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c"
+    steamOutput = "9b03cc5106f24e861e3bceb38e68ae6b286b77b83f4c804bd3818b16c1dbc172"
 }
 
 function Assert-Hash([string]$Path, [string]$ExpectedHash) {
@@ -72,7 +72,7 @@ $patches = @(
     }
 )
 $manifest = [ordered]@{
-    version = "native-1.6.15.24356-2026.08.31-original-ui-restored"
+    version = "native-1.6.15.24356-2026.08.31-display-sync-1"
     files = @()
     patches = $patches
     remove = @(

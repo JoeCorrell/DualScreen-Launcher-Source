@@ -1,6 +1,31 @@
 {
-    "version":  "launcher-2026.08.31-mod-sync-6",
+    "version":  "launcher-2026.08.31-mod-sync-9",
     "files":  [
+                  {
+                      "source":  "dxgi.dll",
+                      "target":  "dxgi.dll",
+                      "sha256":  "8105d3380a40536513b0449d6cd6ef6761294ef92714873a28b93b9d38f7addb"
+                  },
+                  {
+                      "source":  "skse64_1_5_97.dll",
+                      "target":  "skse64_1_5_97.dll",
+                      "sha256":  "20627f8f5a16f868a0b59df5639c5d9a7ba25d1c0aae14b979b5a832c5ba1044"
+                  },
+                  {
+                      "source":  "skse64_steam_loader.dll",
+                      "target":  "skse64_steam_loader.dll",
+                      "sha256":  "09ccbc7c1dee0f19a2d5530cae0933db44bd80298ac95d2b4e279b8a05afa0ce"
+                  },
+                  {
+                      "source":  "SkyrimGamepad.ini",
+                      "target":  "SkyrimGamepad.ini",
+                      "sha256":  "48a421a713b83bc7818c32e37e9de3b623479dc7e9ad62585b5c76eca8e81673"
+                  },
+                  {
+                      "source":  "SkyrimSecondScreen.ini",
+                      "target":  "SkyrimSecondScreen.ini",
+                      "sha256":  "08499a3e99706543bebb55e605c1bfa250601fea7c586e9438488f5061e373a7"
+                  },
                   {
                       "source":  "Data/Scripts/ActiveMagicEffect.pex",
                       "target":  "Data/Scripts/ActiveMagicEffect.pex",
@@ -255,6 +280,61 @@
                       "source":  "Data/Scripts/SoundDescriptor.pex",
                       "target":  "Data/Scripts/SoundDescriptor.pex",
                       "sha256":  "206090432b1e417531925882acaf10b9e7685b6a69f81d3314238c5369aa8e2b"
+                  },
+                  {
+                      "source":  "Data/Scripts/SpawnerTask.pex",
+                      "target":  "Data/Scripts/SpawnerTask.pex",
+                      "sha256":  "a26d0fb8f12b26ec060ed057a2062ab2c5c06b81fb5aac404c7d8d026a13ea2e"
+                  },
+                  {
+                      "source":  "Data/Scripts/Spell.pex",
+                      "target":  "Data/Scripts/Spell.pex",
+                      "sha256":  "b8ca02d421cde0d87b0b37f4fd25f89d716c1bbf4a7fbe391710cad86326ecc1"
+                  },
+                  {
+                      "source":  "Data/Scripts/StringUtil.pex",
+                      "target":  "Data/Scripts/StringUtil.pex",
+                      "sha256":  "057a166f4e9a90120153d997b8222d3cc0ea519f1571742eebcaffd826a8c5ad"
+                  },
+                  {
+                      "source":  "Data/Scripts/TextureSet.pex",
+                      "target":  "Data/Scripts/TextureSet.pex",
+                      "sha256":  "51e715497746dbb3e00cb96a8f87f28d9c15302bf6959ce07e6fe698b5e98545"
+                  },
+                  {
+                      "source":  "Data/Scripts/TreeObject.pex",
+                      "target":  "Data/Scripts/TreeObject.pex",
+                      "sha256":  "149c67cdd0192557796bd9e30b9b723d2f21b3de3e0d3d88696740523b8c8c4e"
+                  },
+                  {
+                      "source":  "Data/Scripts/UI.pex",
+                      "target":  "Data/Scripts/UI.pex",
+                      "sha256":  "a7fc84de512307a5fdfffcecb555c5db1469ed2af4dd103f19a64aa716ff184f"
+                  },
+                  {
+                      "source":  "Data/Scripts/UICallback.pex",
+                      "target":  "Data/Scripts/UICallback.pex",
+                      "sha256":  "00d1776ee3db33e87467c01b2a6db45fcce7ae195c356baa46995a5210ecdf39"
+                  },
+                  {
+                      "source":  "Data/Scripts/Utility.pex",
+                      "target":  "Data/Scripts/Utility.pex",
+                      "sha256":  "54ddacc7fb858388288a951d8846d8e32a54dd20820541eec24419323799bc63"
+                  },
+                  {
+                      "source":  "Data/Scripts/Weapon.pex",
+                      "target":  "Data/Scripts/Weapon.pex",
+                      "sha256":  "82e57e2556db8cfb854db22889532a60740cec0f35b60f7b45e38012019466fc"
+                  },
+                  {
+                      "source":  "Data/Scripts/Weather.pex",
+                      "target":  "Data/Scripts/Weather.pex",
+                      "sha256":  "087cdc7c94b43872b235d311074ba8465a166bbcd80b4f5e31f59e56c79fae79"
+                  },
+                  {
+                      "source":  "Data/Scripts/WornObject.pex",
+                      "target":  "Data/Scripts/WornObject.pex",
+                      "sha256":  "32a62b2d1a609c3705c4080e2ebe82eb9e8b5b15e063632807b0a5276fb72c82"
                   },
                   {
                       "source":  "Data/Scripts/Source/ActiveMagicEffect.psc",
@@ -567,89 +647,9 @@
                       "sha256":  "a847977eb6f22af7690a1779a0a0b14c216a2ca8d232aab1f68c26faf2145e6e"
                   },
                   {
-                      "source":  "Data/Scripts/SpawnerTask.pex",
-                      "target":  "Data/Scripts/SpawnerTask.pex",
-                      "sha256":  "a26d0fb8f12b26ec060ed057a2062ab2c5c06b81fb5aac404c7d8d026a13ea2e"
-                  },
-                  {
-                      "source":  "Data/Scripts/Spell.pex",
-                      "target":  "Data/Scripts/Spell.pex",
-                      "sha256":  "b8ca02d421cde0d87b0b37f4fd25f89d716c1bbf4a7fbe391710cad86326ecc1"
-                  },
-                  {
-                      "source":  "Data/Scripts/StringUtil.pex",
-                      "target":  "Data/Scripts/StringUtil.pex",
-                      "sha256":  "057a166f4e9a90120153d997b8222d3cc0ea519f1571742eebcaffd826a8c5ad"
-                  },
-                  {
-                      "source":  "Data/Scripts/TextureSet.pex",
-                      "target":  "Data/Scripts/TextureSet.pex",
-                      "sha256":  "51e715497746dbb3e00cb96a8f87f28d9c15302bf6959ce07e6fe698b5e98545"
-                  },
-                  {
-                      "source":  "Data/Scripts/TreeObject.pex",
-                      "target":  "Data/Scripts/TreeObject.pex",
-                      "sha256":  "149c67cdd0192557796bd9e30b9b723d2f21b3de3e0d3d88696740523b8c8c4e"
-                  },
-                  {
-                      "source":  "Data/Scripts/UI.pex",
-                      "target":  "Data/Scripts/UI.pex",
-                      "sha256":  "a7fc84de512307a5fdfffcecb555c5db1469ed2af4dd103f19a64aa716ff184f"
-                  },
-                  {
-                      "source":  "Data/Scripts/UICallback.pex",
-                      "target":  "Data/Scripts/UICallback.pex",
-                      "sha256":  "00d1776ee3db33e87467c01b2a6db45fcce7ae195c356baa46995a5210ecdf39"
-                  },
-                  {
-                      "source":  "Data/Scripts/Utility.pex",
-                      "target":  "Data/Scripts/Utility.pex",
-                      "sha256":  "54ddacc7fb858388288a951d8846d8e32a54dd20820541eec24419323799bc63"
-                  },
-                  {
-                      "source":  "Data/Scripts/Weapon.pex",
-                      "target":  "Data/Scripts/Weapon.pex",
-                      "sha256":  "82e57e2556db8cfb854db22889532a60740cec0f35b60f7b45e38012019466fc"
-                  },
-                  {
-                      "source":  "Data/Scripts/Weather.pex",
-                      "target":  "Data/Scripts/Weather.pex",
-                      "sha256":  "087cdc7c94b43872b235d311074ba8465a166bbcd80b4f5e31f59e56c79fae79"
-                  },
-                  {
-                      "source":  "Data/Scripts/WornObject.pex",
-                      "target":  "Data/Scripts/WornObject.pex",
-                      "sha256":  "32a62b2d1a609c3705c4080e2ebe82eb9e8b5b15e063632807b0a5276fb72c82"
-                  },
-                  {
                       "source":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
                       "target":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
-                      "sha256":  "dc45d7afa4038577857a71d823f44b4b554aed72589aa68292d5b9d7a138adef"
-                  },
-                  {
-                      "source":  "dxgi.dll",
-                      "target":  "dxgi.dll",
-                      "sha256":  "c81f49966fe577368037c53f2603f0a53ed0864618c927cc6302998468cf4647"
-                  },
-                  {
-                      "source":  "skse64_1_5_97.dll",
-                      "target":  "skse64_1_5_97.dll",
-                      "sha256":  "20627f8f5a16f868a0b59df5639c5d9a7ba25d1c0aae14b979b5a832c5ba1044"
-                  },
-                  {
-                      "source":  "skse64_steam_loader.dll",
-                      "target":  "skse64_steam_loader.dll",
-                      "sha256":  "09ccbc7c1dee0f19a2d5530cae0933db44bd80298ac95d2b4e279b8a05afa0ce"
-                  },
-                  {
-                      "source":  "SkyrimGamepad.ini",
-                      "target":  "SkyrimGamepad.ini",
-                      "sha256":  "48a421a713b83bc7818c32e37e9de3b623479dc7e9ad62585b5c76eca8e81673"
-                  },
-                  {
-                      "source":  "SkyrimSecondScreen.ini",
-                      "target":  "SkyrimSecondScreen.ini",
-                      "sha256":  "08499a3e99706543bebb55e605c1bfa250601fea7c586e9438488f5061e373a7"
+                      "sha256":  "2e11738c6bbeeead2c7e8610d40bd6d6c42c3b137227af38b7c476b2bde6d0ed"
                   }
               ]
 }

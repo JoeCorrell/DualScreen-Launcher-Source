@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.08.31-mod-sync-5",
+    "version":  "launcher-2026.08.31-mod-sync-9",
     "files":  [
                   {
                       "source":  "dxgi.dll",
                       "target":  "dxgi.dll",
-                      "sha256":  "fa24fe63ede82b089f6c274703c7ace6c5047469b271662de012553fe8a372ba"
+                      "sha256":  "43ce14b18e1d5dccf3b6d31054a8c705a0c94ddd4c2ecbbd0d642942e193a49b"
                   },
                   {
                       "source":  "GrimDawnSecondScreen.ini",
