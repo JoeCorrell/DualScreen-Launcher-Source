@@ -3,7 +3,8 @@ param(
     [string]$Repository = "JoeCorrell/DualScreen-Launcher-Payloads",
     [string]$Tag = "launcher-payloads-v1",
     [string]$OutputDirectory = "payload-release/launcher-payloads-v1",
-    [string]$ExistingRuntimePack = ""
+    [string]$ExistingRuntimePack = "",
+    [string]$ExistingModPack = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -88,6 +89,52 @@ function Get-PayloadPackDescriptor {
     }
 }
 
+function New-OverlayPayloadPack {
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][System.IO.FileInfo]$BasePack,
+        [Parameter(Mandatory = $true)][System.IO.FileInfo[]]$Files,
+        [Parameter(Mandatory = $true)][System.IO.Compression.CompressionLevel]$Compression
+    )
+
+    if ($Files.Count -eq 0) {
+        throw "Payload overlay $Name has no files."
+    }
+
+    $target = Join-Path $outputRoot $Name
+    Copy-Item -LiteralPath $BasePack.FullName -Destination $target -Force
+    $archive = [System.IO.Compression.ZipFile]::Open(
+        $target,
+        [System.IO.Compression.ZipArchiveMode]::Update
+    )
+    try {
+        foreach ($file in ($Files | Sort-Object FullName)) {
+            $relative = $file.FullName.Substring($assetsRoot.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+            $existing = $archive.GetEntry($relative)
+            if ($null -ne $existing) {
+                $existing.Delete()
+            }
+            $entry = $archive.CreateEntry($relative, $Compression)
+            $entry.LastWriteTime = [DateTimeOffset]::Parse("1980-01-01T00:00:00Z")
+            $input = $file.OpenRead()
+            $output = $entry.Open()
+            try {
+                $input.CopyTo($output, 1MB)
+            }
+            finally {
+                $output.Dispose()
+                $input.Dispose()
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
+
+    Get-PayloadPackDescriptor -File (Get-Item -LiteralPath $target) -Root $Root
+}
+
 $componentsRoot = Join-Path $assetsRoot "components"
 $componentFiles = if (Test-Path -LiteralPath $componentsRoot) {
     @(Get-ChildItem -LiteralPath $componentsRoot -File |
@@ -112,10 +159,14 @@ $runtimePack = if ($componentFiles.Count -gt 0) {
     throw "No component archives were found. Supply -ExistingRuntimePack to reuse a verified runtime pack."
 }
 
-$packs = @(
-    $runtimePack
+$modPack = if ($ExistingModPack) {
+    $existing = Get-Item -LiteralPath $ExistingModPack -ErrorAction Stop
+    New-OverlayPayloadPack -Name "game-mods-$Version.zip" -Root "mods" -BasePack $existing -Files $modFiles -Compression ([System.IO.Compression.CompressionLevel]::Optimal)
+} else {
     New-PayloadPack -Name "game-mods-$Version.zip" -Root "mods" -Files $modFiles -Compression ([System.IO.Compression.CompressionLevel]::Optimal)
-)
+}
+
+$packs = @($runtimePack, $modPack)
 
 $manifest = [ordered]@{
     schema = 1

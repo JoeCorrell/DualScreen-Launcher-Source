@@ -89,7 +89,7 @@ $directory = Reset-Payload "fallout4"
 $payload = Join-Path $directory "payload"
 $entries = [System.Collections.Generic.List[object]]::new()
 $sourceRoot = Join-Path $modRoot "Fallout4SecondScreen\build\package"
-Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dxgi.dll") "dxgi.dll" "dxgi.dll"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dxgi.candidate.dll") "dxgi.candidate.dll" "dxgi.dll"
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "Fallout4SecondScreen.ini") "Fallout4SecondScreen.ini" "Fallout4SecondScreen.ini"
 Add-PayloadFile $entries $payload (Join-Path $sourceRoot "Fallout4SecondScreen.owner") "Fallout4SecondScreen.owner" "Fallout4SecondScreen.owner"
 Write-Manifest $directory $version $entries

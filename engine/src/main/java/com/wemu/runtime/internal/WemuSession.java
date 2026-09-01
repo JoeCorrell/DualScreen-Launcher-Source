@@ -829,8 +829,17 @@ public class WemuSession implements RuntimeSession {
          */
         winHandler.setFakeInputPath(devInputDir.getPath());
 
-        environment.startEnvironmentComponents();
-        winHandler.start();
+        // INIT is a one-shot UDP packet, so the listener must be ready first.
+        if (!winHandler.start()) {
+            throw new IllegalStateException(
+                    "The Windows guest bridge could not start. Close any other WEMU session and try again.");
+        }
+        try {
+            environment.startEnvironmentComponents();
+        } catch (RuntimeException | Error failure) {
+            winHandler.stop();
+            throw failure;
+        }
     }
 
     /**

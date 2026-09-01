@@ -766,6 +766,8 @@ public class WinHandler {
         switch (requestCode) {
             case RequestCodes.INIT: {
                 initReceived = true;
+                Log.i("WinHandler", "Guest INIT received; dispatching "
+                        + actions.size() + " queued request(s)");
 
                 preferences = PreferenceManager.getDefaultSharedPreferences(host.getHostContext());
 
@@ -838,7 +840,9 @@ public class WinHandler {
         return false;
     }
 
-    public void start() {
+    /** Binds the one-shot guest bridge before Wine is allowed to start. */
+    public boolean start() {
+        if (running && socket != null && !socket.isClosed()) return true;
         try {
             localhost = InetAddress.getLocalHost();
         } catch (UnknownHostException e) {
@@ -846,29 +850,30 @@ public class WinHandler {
                 localhost = InetAddress.getByName("127.0.0.1");
             } catch (UnknownHostException ex) {}
         }
+
+        final DatagramSocket boundSocket;
+        try {
+            boundSocket = bindExclusiveUdpSocket(SERVER_PORT);
+            socket = boundSocket;
+        } catch (IOException bindFailure) {
+            running = false;
+            Log.e("WinHandler", "Could not bind guest bridge UDP port "
+                    + (SERVER_PORT & 0xffff), bindFailure);
+            return false;
+        }
+
+        initReceived = false;
         running = true;
         startSendThread();
         receiveExecutor = Executors.newSingleThreadExecutor();
         receiveExecutor.execute(() -> {
             try {
-                DatagramSocket socket = new DatagramSocket(null);
-                this.socket = socket;
-                socket.setReuseAddress(true);
-                socket.bind(new InetSocketAddress((InetAddress) null, SERVER_PORT));
-                // As with the vibration listener: a session that ended while
-                // this thread was being scheduled has left a bound port behind
-                // that nothing will ever close.
-                if (!running) {
-                    this.socket = null;
-                    socket.close();
-                    return;
-                }
                 while (running) {
                     // DatagramPacket retains the previous datagram's length as
                     // the next receive limit. Restore capacity or one short
                     // packet truncates every packet which follows it.
                     receivePacket.setLength(receiveData.capacity());
-                    socket.receive(receivePacket);
+                    boundSocket.receive(receivePacket);
                     synchronized (actions) {
                         int packetLength = receivePacket.getLength();
                         if (packetLength <= 0) continue;
@@ -885,8 +890,24 @@ public class WinHandler {
                         }
                     }
                 }
-            } catch (IOException e) {}
+            } catch (IOException e) {
+                if (running) Log.e("WinHandler", "Guest bridge receive failed", e);
+            }
         });
+        Log.i("WinHandler", "Guest bridge ready on UDP " + (SERVER_PORT & 0xffff));
+        return true;
+    }
+
+    static DatagramSocket bindExclusiveUdpSocket(int port) throws IOException {
+        DatagramSocket candidate = new DatagramSocket(null);
+        try {
+            candidate.setReuseAddress(false);
+            candidate.bind(new InetSocketAddress((InetAddress) null, port));
+            return candidate;
+        } catch (IOException failure) {
+            candidate.close();
+            throw failure;
+        }
     }
 
     /**
