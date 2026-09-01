@@ -49,6 +49,9 @@ class AssetIntegrityTest {
         assertThat(preset.getString("rendererDriverId")).isEqualTo("turnip26.2.0")
         assertThat(preset.getString("displayRenderer")).isEqualTo("vulkan")
         assertThat(preset.getString("rendererPresentMode")).isEqualTo("fifo")
+        assertThat(preset.getString("drives"))
+            .isEqualTo("F:/storage/emulated/0D:/storage/emulated/0/Download")
+        assertThat(preset.getString("drives")).doesNotContain("\\")
         assertThat(preset.getString("dxwrapperConfig")).contains("version=2.3.1")
         assertThat(preset.getString("dxwrapperConfig")).contains("vkd3dVersion=None")
         // The restored Stardew UI is an Android-managed 1240x1080 panel. It

@@ -14,7 +14,7 @@
   "audioDriver": "alsa",
   "displayRenderer": "vulkan",
   "wincomponents": "direct3d=1,directsound=0,directmusic=0,directshow=0,directplay=0,xaudio=0,vcrun2010=1",
-  "drives": "F:\\/storage\\/emulated\\/0D:\\/storage\\/emulated\\/0\\/Download",
+  "drives": "F:/storage/emulated/0D:/storage/emulated/0/Download",
   "showFPS": false,
   "fullscreenStretched": false,
   "inputType": 4,

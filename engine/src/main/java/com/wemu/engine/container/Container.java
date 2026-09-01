@@ -270,7 +270,16 @@ public class Container {
     }
 
     public void setDrives(String drives) {
-        this.drives = drives;
+        /*
+         * Drive targets are Android paths. A captured JSON preset once stored
+         * each slash as `\\/`; after JSON decoding that left a literal
+         * backslash before every slash. WineUtils consequently created F: as
+         * a dangling link to `/\\/storage/...`, while host-side validation of
+         * the real `/storage/...` executable still passed. Normalize that
+         * legacy representation whenever a container is loaded so existing
+         * prefixes repair themselves as well as newly created ones.
+         */
+        this.drives = drives != null ? drives.replace("\\/", "/") : DEFAULT_DRIVES;
     }
 
     public String getLC_ALL() {

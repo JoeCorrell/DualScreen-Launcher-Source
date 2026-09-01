@@ -17,8 +17,8 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 18
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.6"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 19
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
     }
