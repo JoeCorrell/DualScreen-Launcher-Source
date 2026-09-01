@@ -980,16 +980,27 @@ class GameInstaller(
         }
     }
 
-    private fun gameBuildWarnings(game: SupportedGame, root: File): List<String> =
+    private fun gameBuildWarnings(
+        game: SupportedGame,
+        root: File,
+        payloadOutputs: Map<String, Set<String>> = emptyMap(),
+    ): List<String> =
         game.fileRules.mapNotNull { rule ->
             val file = resolveWindowsFile(root, rule.path)
                 ?.takeIf(File::isFile)
                 ?: return@mapNotNull "Could not verify ${rule.path}; this build is untested"
             val needsHash = rule.sha256 != null || rule.sha256AnyOf.isNotEmpty()
+            val observedSha256 = if (needsHash) sha256(file) else null
+            val normalizedPath = rule.path.replace('\\', '/').trim('/').lowercase(Locale.ROOT)
+            if (observedSha256 != null &&
+                payloadOutputIsAccepted(observedSha256, payloadOutputs[normalizedPath].orEmpty())
+            ) {
+                return@mapNotNull null
+            }
             compatibilityWarning(
                 rule = rule,
                 observedBytes = file.length(),
-                observedSha256 = if (needsHash) sha256(file) else null,
+                observedSha256 = observedSha256,
             )
         }
 
@@ -1508,7 +1519,14 @@ class GameInstaller(
         skippedPatchTargets: Set<String> = emptySet(),
     ): String {
         validateCriticalGameFiles(game, root)
-        val compatibilityWarnings = gameBuildWarnings(game, root)
+        val payloadOutputs = payload.patches
+            .groupBy { patch ->
+                patch.target.replace('\\', '/').trim('/').lowercase(Locale.ROOT)
+            }
+            .mapValues { (_, patches) ->
+                patches.mapTo(linkedSetOf(), PayloadPatch::outputSha256)
+            }
+        val compatibilityWarnings = gameBuildWarnings(game, root, payloadOutputs)
         check(allowUntestedVersion || compatibilityWarnings.isEmpty()) {
             untestedVersionMessage(game, compatibilityWarnings)
         }
@@ -1728,6 +1746,12 @@ internal fun nativePatchTargetIsCurrent(
     observedSha256 in inputSha256 -> false
     else -> true
 }
+
+/** A post-install game binary is supported only when the active manifest pins its exact output. */
+internal fun payloadOutputIsAccepted(
+    observedSha256: String,
+    manifestOutputSha256: Set<String>,
+): Boolean = observedSha256 in manifestOutputSha256
 
 internal fun normalizeGameArchiveEntry(entryName: String): String {
     require('\u0000' !in entryName) { "Archive contains an invalid filename" }

@@ -127,6 +127,14 @@ class AssetIntegrityTest {
         assertThat((0 until patches.length()).map {
             patches.getJSONObject(it).getString("inputSha256")
         }).containsAtLeast(
+            "58fd97df1e77d03a4bf2196a69b7732eefbb1d1e1743535af1d2ab1162053539",
+            "9b03cc5106f24e861e3bceb38e68ae6b286b77b83f4c804bd3818b16c1dbc172",
+        )
+        assertThat((0 until patches.length()).map {
+            patches.getJSONObject(it).getString("outputSha256")
+        }).containsExactly(
+            "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466",
+            "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c",
             "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466",
             "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c",
         )

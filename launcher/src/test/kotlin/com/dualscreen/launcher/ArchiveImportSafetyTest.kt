@@ -7,6 +7,14 @@ import org.junit.Test
 
 class ArchiveImportSafetyTest {
     @Test
+    fun manifestDeclaredPatchOutputPassesPostInstallVersionValidation() {
+        val outputs = setOf("verified-output")
+
+        assertThat(payloadOutputIsAccepted("verified-output", outputs)).isTrue()
+        assertThat(payloadOutputIsAccepted("different-output", outputs)).isFalse()
+    }
+
+    @Test
     fun skippedNativePatchIsRetriedWhenACompatibleInputAppears() {
         val inputs = setOf("supported-input")
         val outputs = setOf("patched-output")
