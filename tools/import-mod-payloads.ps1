@@ -1,6 +1,9 @@
 param(
     [Parameter(Mandatory = $false)]
-    [string]$WemuRoot = "C:\Projects\New folder (10)",
+    [string]$ModRoot = "",
+
+    [Parameter(Mandatory = $false)]
+    [string]$StardewBuildInputRoot = "",
 
     [Parameter(Mandatory = $false)]
     [string]$PayloadVersion = "launcher-2026.08.30-mod-sync-2"
@@ -9,7 +12,14 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $assetRoot = Join-Path $projectRoot "launcher\src\main\assets\mods"
-$modRoot = Join-Path $WemuRoot "dualscreen\mods"
+$modRoot = if ([string]::IsNullOrWhiteSpace($ModRoot)) {
+    Join-Path $projectRoot "pc\mods"
+} else {
+    [IO.Path]::GetFullPath($ModRoot)
+}
+if (-not (Test-Path -LiteralPath $modRoot -PathType Container)) {
+    throw "PC mod source root does not exist: $modRoot"
+}
 $importedEntries = 0
 
 function Reset-Payload([string]$Id) {
@@ -128,9 +138,41 @@ Add-PayloadFile $entries $payload (Join-Path $modRoot "ValheimSecondScreen\bin\R
 Write-Manifest $directory $version $entries
 $importedEntries += $entries.Count
 
-& (Join-Path $PSScriptRoot "import-stardew-native-payload.ps1") -WemuRoot $WemuRoot
-if ($LASTEXITCODE -ne 0) { throw "The Stardew native payload import failed" }
-$stardewManifest = Get-Content -Raw (Join-Path $assetRoot "stardew-valley\manifest.json") | ConvertFrom-Json
+$stardewManifestPath = Join-Path $assetRoot "stardew-valley\manifest.json"
+if (-not [string]::IsNullOrWhiteSpace($StardewBuildInputRoot)) {
+    & (Join-Path $PSScriptRoot "import-stardew-native-payload.ps1") `
+        -BuildInputRoot $StardewBuildInputRoot
+    if ($LASTEXITCODE -ne 0) { throw "The Stardew native payload import failed" }
+} elseif (-not (Test-Path -LiteralPath $stardewManifestPath -PathType Leaf)) {
+    throw "The Stardew payload is missing. Supply -StardewBuildInputRoot to regenerate its verified binary deltas."
+} else {
+    Write-Output "Retaining the existing verified Stardew binary deltas. Supply -StardewBuildInputRoot to regenerate them."
+}
+$stardewManifest = Get-Content -Raw $stardewManifestPath | ConvertFrom-Json
 $importedEntries += @($stardewManifest.files).Count + @($stardewManifest.patches).Count
+
+# Switch dual-screen mods share the same signed payload update channel as PC mods. Each title
+# owns an independent manifest and optional payload directory so future ROMFS/ExeFS updates can
+# be delivered without replacing user-installed mods. Emulator-core changes still ship with the
+# signed APK; data-driven game mod updates are applied atomically by SwitchModPayloadManager.
+$switchModRoot = Join-Path $projectRoot "switch\mods"
+$switchAssetRoot = Join-Path $assetRoot "switch"
+if (-not (Test-Path -LiteralPath $switchModRoot -PathType Container)) {
+    throw "Switch mod source root does not exist: $switchModRoot"
+}
+if (Test-Path -LiteralPath $switchAssetRoot) {
+    Remove-Item -LiteralPath $switchAssetRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Path $switchAssetRoot -Force | Out-Null
+Get-ChildItem -LiteralPath $switchModRoot -Directory | ForEach-Object {
+    $sourceGame = $_.FullName
+    $destinationGame = Join-Path $switchAssetRoot $_.Name
+    Copy-Item -LiteralPath $sourceGame -Destination $destinationGame -Recurse
+    $manifest = Get-Content -Raw (Join-Path $destinationGame "manifest.json") | ConvertFrom-Json
+    if ($manifest.schema -ne 1 -or [string]::IsNullOrWhiteSpace($manifest.titleId)) {
+        throw "Invalid Switch mod manifest: $($_.Name)"
+    }
+    $importedEntries += @($manifest.files).Count
+}
 
 Write-Output "Imported $importedEntries payload entries into $assetRoot"

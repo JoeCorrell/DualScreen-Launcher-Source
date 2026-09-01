@@ -24,11 +24,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Gamepad
@@ -37,6 +39,7 @@ import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SettingsApplications
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Troubleshoot
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -58,11 +61,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.dualscreen.launcher.switch.SwitchOperationState
+import com.dualscreen.launcher.switch.SwitchSystemState
 
 @Composable
 internal fun SettingsPage(
     settings: LauncherSettings,
     installed: Map<String, InstalledGame>,
+    switchSystemState: SwitchSystemState,
+    switchOperation: SwitchOperationState,
     gpuDrivers: List<LauncherGpuDriver>,
     gpuDriverImportState: GpuDriverImportState,
     gpuDriverMessage: String?,
@@ -70,6 +77,11 @@ internal fun SettingsPage(
     onResolution: (GameResolution) -> Unit,
     onGpuDriver: (String) -> Unit,
     onImportGpuDriver: () -> Unit,
+    onAddSwitchKeys: () -> Unit,
+    onAddSwitchFirmware: () -> Unit,
+    onAddSwitchGpuDriver: () -> Unit,
+    onOpenSwitchDriverDownloader: () -> Unit,
+    onOpenEdenGlobalSettings: () -> Unit,
 ) {
     val selectedDriver = gpuDrivers.firstOrNull { it.id == settings.gpuDriverId }
     Column(
@@ -118,7 +130,7 @@ internal fun SettingsPage(
             verticalArrangement = Arrangement.spacedBy(9.dp),
         ) {
             item {
-                LauncherCard(compact = true) {
+                LauncherCard(modifier = Modifier.height(230.dp), compact = true) {
                     SettingsSectionHeading(
                         icon = Icons.Default.Smartphone,
                         title = "Display & session",
@@ -157,11 +169,11 @@ internal fun SettingsPage(
             }
 
             item {
-                LauncherCard(compact = true) {
+                LauncherCard(modifier = Modifier.height(230.dp), compact = true) {
                     SettingsSectionHeading(
                         icon = Icons.Default.SettingsApplications,
-                        title = "GPU driver",
-                        detail = "Bundled and uploaded AdrenoTools packages",
+                        title = "PC GPU driver",
+                        detail = "Applied to the predefined Windows game containers",
                     )
                     Row(
                         modifier = Modifier
@@ -224,7 +236,111 @@ internal fun SettingsPage(
             }
 
             item {
-                LauncherCard(compact = true) {
+                LauncherCard(modifier = Modifier.height(334.dp), compact = true) {
+                    SettingsSectionHeading(
+                        icon = Icons.Default.SportsEsports,
+                        title = "Nintendo Switch system",
+                        detail = "Production keys and firmware for embedded Eden DS",
+                    )
+                    PrimaryAction(
+                        label = "Eden global settings",
+                        icon = Icons.Default.SettingsApplications,
+                        onClick = onOpenEdenGlobalSettings,
+                        enabled = !switchOperation.running,
+                        primary = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    InformationRow(
+                        "Production keys",
+                        if (switchSystemState.keysPresent) "Installed" else "Required",
+                        emphasized = switchSystemState.keysPresent,
+                    )
+                    InformationRow(
+                        "Firmware",
+                        switchSystemState.firmwareVersion ?: "Not installed",
+                        emphasized = !switchSystemState.firmwareVersion.isNullOrBlank(),
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        PrimaryAction(
+                            label = if (switchSystemState.keysPresent) "Replace prod.keys" else "Add prod.keys",
+                            icon = Icons.Default.FolderOpen,
+                            onClick = onAddSwitchKeys,
+                            enabled = !switchOperation.running,
+                            modifier = Modifier.weight(1f),
+                        )
+                        PrimaryAction(
+                            label = "Install Firmware ZIP",
+                            icon = Icons.Default.FileDownload,
+                            onClick = onAddSwitchFirmware,
+                            enabled = !switchOperation.running,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text("SWITCH GPU DRIVERS", style = settingLabelStyle())
+                    Text(
+                        "Installed driver library. Choose the active driver in each game's Eden settings.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 9.sp,
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(switchSystemState.gpuDrivers, key = { it.id }) { driver ->
+                            CompactChoice(
+                                label = buildString {
+                                    append(driver.name)
+                                    if (driver.version.isNotBlank()) append(" • ${driver.version}")
+                                },
+                                selected = driver.path.isBlank(),
+                                onClick = onOpenSwitchDriverDownloader,
+                                modifier = Modifier.width(224.dp).height(44.dp),
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        PrimaryAction(
+                            label = "Open Eden driver downloader",
+                            icon = Icons.Default.CloudDownload,
+                            onClick = onOpenSwitchDriverDownloader,
+                            enabled = !switchOperation.running,
+                            primary = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        PrimaryAction(
+                            label = "Install driver ZIP",
+                            icon = Icons.Default.FileDownload,
+                            onClick = onAddSwitchGpuDriver,
+                            enabled = !switchOperation.running,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (switchOperation.gameId == null &&
+                        (switchOperation.running || switchOperation.error != null)
+                    ) {
+                        Text(
+                            switchOperation.error ?: switchOperation.detail,
+                            color = if (switchOperation.error == null) LauncherAccent else LauncherDanger,
+                            fontSize = 10.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        if (switchOperation.running) {
+                            LauncherProgress(
+                                switchOperation.fraction,
+                                Modifier.fillMaxWidth().height(4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                LauncherCard(modifier = Modifier.height(334.dp), compact = true) {
                     SettingsSectionHeading(
                         icon = Icons.Default.Archive,
                         title = "Library & payloads",
@@ -240,7 +356,7 @@ internal fun SettingsPage(
                 }
             }
 
-            item {
+            item(span = { GridItemSpan(maxLineSpan) }) {
                 LauncherCard(compact = true) {
                     SettingsSectionHeading(
                         icon = Icons.Default.CheckCircle,

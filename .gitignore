@@ -4,6 +4,9 @@
 **/.cxx/
 local.properties
 *.iml
+*.log
+*.pyc
+**/__pycache__/
 .idea/
 captures/
 externalNativeBuild/
@@ -21,3 +24,17 @@ keystore.properties
 /skyrim-new-confirm.png
 /tools/BinaryDeltaPacker/bin/
 /tools/BinaryDeltaPacker/obj/
+/build-logic/**/bin/
+/pc/mods/**/build/
+/pc/mods/**/bin/
+/pc/mods/**/obj/
+/pc/mods/**/dist/
+/pc/mods/**/package/
+/pc/mods/**/artifacts/
+/pc/mods/**/.work/
+/pc/mods/**/*.dll
+/pc/mods/**/*.exe
+/pc/mods/**/*.pdb
+/pc/mods/**/*.lib
+/pc/mods/**/*.exp
+/pc/mods/**/*.ilk

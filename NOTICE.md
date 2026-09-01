@@ -13,6 +13,7 @@ which half is its own has lost track of something worth knowing.
 | [Winlator](https://github.com/brunodev85/winlator) — brunodev85 | GPL-3.0 | The foundation of every fork below: the X server, the Wine container model, the Box64 integration. Also serves the `input_controls` profiles. |
 | [Winlator Ludashi](https://github.com/StevenMXZ/Winlator-Ludashi) — StevenMXZ | GPL-3.0 | The direct upstream of this fork. 218 files and roughly 35,500 lines were migrated from `com.winlator.cmod` into `com.wemu.engine.*`. |
 | [Bannerlator](https://github.com/The412Banner/Bannerlator) — The412Banner | GPL-3.0 | The Steam client protocol layer under `com.wemu.steam.{client,download,emulator,saves}`. Also hosts the content catalogues this app reads. |
+| [Eden DS](https://github.com/JoeCorrell/Eden-DS) and [Eden Emulator](https://git.eden-emu.dev/eden-emu/eden) | GPL-3.0-or-later | The embedded Nintendo Switch emulator core, Android/JNI runtime, Vulkan renderer, content manager, saves, settings, input, mod support, and dual-display companions under `switch/`. |
 
 Renaming packages and rewriting comments does not make derived code original.
 The migration to `com.wemu.engine.*` was a rename, and the code underneath is
@@ -73,6 +74,8 @@ written here:
 - the preset system and its server under `server/`
 - the Vulkan compositor's frame path, upscalers and post-processing
 
-## If this is ever published
+## Combined-work licence
 
-The table at the top decides the answer, not this file. See [LICENSE](LICENSE).
+Dualscreen Launcher is distributed as a GPL-3.0-or-later combined work. See
+[LICENSE](LICENSE). Individual third-party components retain the copyright and
+licence notices recorded here and in their source trees.

@@ -17,8 +17,8 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 19
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.7"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 21
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
     }
@@ -49,6 +49,7 @@ android {
         }
     }
 
+    buildFeatures { buildConfig = true }
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
     sourceSets["main"].assets.exclude("mods/**/payload/**")
     packaging { jniLibs { useLegacyPackaging = true } }
@@ -61,6 +62,7 @@ dependencies {
     implementation(projects.core.model)
     implementation(projects.core.designsystem)
     implementation(projects.core.display)
+    implementation(projects.switch.edenRuntime)
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

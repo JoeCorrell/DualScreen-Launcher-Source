@@ -59,6 +59,15 @@ internal fun gameArtwork(gameId: String): Int = when (gameId) {
     else -> R.drawable.ic_launcher
 }
 
+internal fun switchGameArtwork(gameId: String): Int = when (gameId) {
+    "mario-kart-8-deluxe" -> R.drawable.art_switch_mario_kart_8
+    "breath-of-the-wild" -> R.drawable.art_switch_botw
+    "pokemon-legends-za" -> R.drawable.art_switch_pokemon_za
+    "skyward-sword-hd" -> R.drawable.art_switch_skyward_sword
+    "xenoblade-chronicles-x" -> R.drawable.art_switch_xenoblade_x
+    else -> R.drawable.ic_launcher
+}
+
 internal fun gameShortTitle(gameId: String): String = when (gameId) {
     "skyrim-se" -> "Skyrim Special Edition"
     "fallout3" -> "Fallout 3"

@@ -5,6 +5,27 @@ dual-screen mods. It is intentionally separate from WEMU and has a different
 application ID (`com.dualscreen.launcher`), data directory, build, and UI.
 Installing or removing it does not replace WEMU or alter WEMU's containers.
 
+The same APK also embeds Eden DS as its Nintendo Switch backend. The Launcher
+remains the only frontend: PC titles use the existing container engine, while
+Switch titles run through Eden's native core and dual-display runtime without
+requiring or launching a separate emulator application.
+
+All supported-game implementation source is now kept inside this project:
+PC mod sources live under [`pc/mods`](pc/mods), while Eden DS and its Switch
+dual-screen implementations live under
+[`switch/eden-upstream`](switch/eden-upstream). Generated payloads remain
+separate from source under `launcher/src/main/assets/mods`. The build no longer
+depends on the former external WEMU mod-source directory.
+
+## Switch library
+
+The Switch Games tab supports Mario Kart 8 Deluxe, The Legend of Zelda: Breath
+of the Wild, Pokémon Legends: Z-A, and The Legend of Zelda: Skyward Sword HD.
+Each title has separate base-NSP, update, DLC, mod, save, and per-game settings
+controls. NSP metadata and title IDs are checked before any content is installed.
+Existing Eden DS user data is migrated on the first Switch runtime initialization
+when Android permits access to the previous app-specific directory.
+
 This project was built from WEMU's production runtime/renderer modules. It does
 not include or depend on the old prototype launcher. There are no Steam, Epic,
 GOG, community, store, container-editor, or arbitrary-shortcut screens.

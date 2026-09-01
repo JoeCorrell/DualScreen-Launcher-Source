@@ -1,0 +1,3 @@
+LIBRARY skse64_steam_loader.dll
+EXPORTS
+  InitSKSESteamLoader

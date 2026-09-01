@@ -43,8 +43,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private val LibraryCardOutline = Color(0xFF5A482A)
-private val LibraryCardFooter = Color(0xFF141611)
+internal val LibraryCardOutline = Color(0xFF5A482A)
+internal val LibraryCardFooter = Color(0xFF141611)
 
 @Composable
 internal fun GamesPage(
@@ -58,46 +58,13 @@ internal fun GamesPage(
             .fillMaxSize()
             .padding(start = 20.dp, end = 20.dp, top = 13.dp, bottom = 10.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
-            ) {
-                Text(
-                    "YOUR LIBRARY",
-                    color = LauncherAccent,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 8.sp,
-                    letterSpacing = 1.5.sp,
-                )
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        "Games",
-                        fontSize = 25.sp,
-                        lineHeight = 27.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(Modifier.width(15.dp))
-                    Text(
-                        "Select a title to install, configure, or play.",
-                        modifier = Modifier.padding(bottom = 3.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 10.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            LibrarySummary(
-                ready = installed.size,
-                supported = GameCatalog.games.size,
-            )
-        }
+        LibraryPageHeader(
+            eyebrow = "YOUR LIBRARY",
+            title = "Games",
+            subtitle = "Select a title to install, configure, or play.",
+            ready = installed.size,
+            supported = GameCatalog.games.size,
+        )
         Spacer(Modifier.height(14.dp))
         LazyRow(
             modifier = Modifier
@@ -123,7 +90,54 @@ internal fun GamesPage(
 }
 
 @Composable
-private fun LibrarySummary(ready: Int, supported: Int) {
+internal fun LibraryPageHeader(
+    eyebrow: String,
+    title: String,
+    subtitle: String,
+    ready: Int,
+    supported: Int,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.Bottom,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                eyebrow,
+                color = LauncherAccent,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp,
+                letterSpacing = 1.5.sp,
+            )
+            Row(verticalAlignment = Alignment.Bottom) {
+                Text(
+                    title,
+                    fontSize = 25.sp,
+                    lineHeight = 27.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(15.dp))
+                Text(
+                    subtitle,
+                    modifier = Modifier.padding(bottom = 3.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        LibrarySummary(ready = ready, supported = supported)
+    }
+}
+
+@Composable
+internal fun LibrarySummary(ready: Int, supported: Int) {
     Row(
         modifier = Modifier
             .background(Color(0xB512140F))

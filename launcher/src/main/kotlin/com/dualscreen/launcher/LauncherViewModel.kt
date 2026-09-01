@@ -11,6 +11,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.atomic.AtomicBoolean
+import com.dualscreen.launcher.switch.SwitchContentKind
+import com.dualscreen.launcher.switch.SwitchGameDefinition
+import com.dualscreen.launcher.switch.SwitchGameSettings
+import com.dualscreen.launcher.switch.SwitchDriverArtifact
+import com.dualscreen.launcher.switch.SwitchDriverRelease
 
 sealed interface ArchiveReviewState {
     data object Idle : ArchiveReviewState
@@ -28,6 +33,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val saveProgress = app.saveImporter.progress
     val settings = app.settings.settings
     val launchStatus = app.launchStatus.status
+    val switchInstallations = app.switchBackend.installations
+    val switchOperation = app.switchBackend.operation
+    val switchSystemState = app.switchBackend.systemState
     val gpuDrivers = app.gpuDrivers.drivers
     val gpuDriverImportState = app.gpuDrivers.importState
     internal val payloadState = app.payloads.state
@@ -92,6 +100,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 app.installer.ensureCurrentPayload(game)
             }
         }
+        app.switchBackend.synchronizePayloads()
         mutableInstalled.value = app.registry.all()
         synchronizedPayloadVersion = ready.version
     }
@@ -202,5 +211,85 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 synchronizeInstalledMods()
             }
         }
+    }
+
+    fun addSwitchBase(game: SwitchGameDefinition, uri: Uri) {
+        viewModelScope.launch { app.switchBackend.addBaseGame(game, uri) }
+    }
+
+    fun prepareSwitchSystem() {
+        viewModelScope.launch { app.switchBackend.prepare() }
+    }
+
+    fun installSwitchContent(game: SwitchGameDefinition, uri: Uri, kind: SwitchContentKind) {
+        viewModelScope.launch { app.switchBackend.installContent(game, uri, kind) }
+    }
+
+    fun installSwitchMod(game: SwitchGameDefinition, uri: Uri) {
+        viewModelScope.launch { app.switchBackend.installMod(game, uri) }
+    }
+
+    fun setSwitchPatchEnabled(game: SwitchGameDefinition, name: String, enabled: Boolean) {
+        viewModelScope.launch { app.switchBackend.setPatchEnabled(game, name, enabled) }
+    }
+
+    fun removeSwitchPatch(
+        game: SwitchGameDefinition,
+        patch: com.dualscreen.launcher.switch.SwitchPatch,
+    ) {
+        viewModelScope.launch { app.switchBackend.removePatch(game, patch) }
+    }
+
+    fun refreshSwitchGame(game: SwitchGameDefinition) {
+        viewModelScope.launch { app.switchBackend.refresh(game) }
+    }
+
+    suspend fun readSwitchSettings(game: SwitchGameDefinition): Result<SwitchGameSettings> =
+        app.switchBackend.readSettings(game)
+
+    fun saveSwitchSettings(game: SwitchGameDefinition, settings: SwitchGameSettings) {
+        viewModelScope.launch { app.switchBackend.saveSettings(game, settings) }
+    }
+
+    suspend fun readSwitchGlobalSettings(): Result<SwitchGameSettings> =
+        app.switchBackend.readGlobalSettings()
+
+    fun saveSwitchGlobalSettings(settings: SwitchGameSettings) {
+        viewModelScope.launch { app.switchBackend.saveGlobalSettings(settings) }
+    }
+
+    fun selectSwitchGlobalGpuDriver(driverPath: String) {
+        viewModelScope.launch { app.switchBackend.selectGlobalGpuDriver(driverPath) }
+    }
+
+    fun selectSwitchGpuDriver(game: SwitchGameDefinition, driverPath: String) {
+        viewModelScope.launch { app.switchBackend.selectGpuDriver(game, driverPath) }
+    }
+
+    fun importSwitchSave(game: SwitchGameDefinition, archive: Uri) {
+        viewModelScope.launch { app.switchBackend.importSave(game, archive) }
+    }
+
+    fun exportSwitchSave(game: SwitchGameDefinition, destination: Uri) {
+        viewModelScope.launch { app.switchBackend.exportSave(game, destination) }
+    }
+
+    fun installSwitchKeys(uri: Uri) {
+        viewModelScope.launch { app.switchBackend.installKeys(uri) }
+    }
+
+    fun installSwitchFirmware(uri: Uri) {
+        viewModelScope.launch { app.switchBackend.installFirmware(uri) }
+    }
+
+    fun installSwitchGpuDriver(uri: Uri) {
+        viewModelScope.launch { app.switchBackend.installGpuDriver(uri) }
+    }
+
+    suspend fun fetchSwitchGpuDrivers(): Result<List<SwitchDriverRelease>> =
+        app.switchBackend.fetchGpuDriverReleases()
+
+    fun downloadSwitchGpuDriver(artifact: SwitchDriverArtifact) {
+        viewModelScope.launch { app.switchBackend.downloadGpuDriver(artifact) }
     }
 }

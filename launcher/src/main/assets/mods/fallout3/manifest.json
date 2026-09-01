@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.09.01-fo3-native-sync-2",
+    "version":  "launcher-2026.09.01-fo3-map-radio-status-2",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "dinput8.dll",
-                      "sha256":  "ea5289e7cd0c1cc3c7361974742ee9eddc58005ae8c5efab6342d3539ad6a304"
+                      "sha256":  "2178436f6b078585b63aa2f1b0cfc2c63209862970ca0e1657918b05453def39"
                   },
                   {
                       "source":  "Fallout3SecondScreen.ini",

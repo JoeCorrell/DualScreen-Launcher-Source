@@ -22,7 +22,7 @@ javaToolchain = "17"
 # alone. Raising this number does not produce a warning, it produces an emulator
 # that cannot start Wine. minSdk is 26 to match, since the engine's own
 # assumptions were written against it.
-compileSdk = "35"
+compileSdk = "36"
 targetSdk = "28"
 minSdk = "26"
 

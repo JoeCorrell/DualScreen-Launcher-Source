@@ -1,6 +1,7 @@
 param(
-    [Parameter(Mandatory = $false)]
-    [string]$WemuRoot = "C:\Projects\New folder (10)"
+    [Parameter(Mandatory = $true)]
+    [ValidateNotNullOrEmpty()]
+    [string]$BuildInputRoot
 )
 
 $ErrorActionPreference = "Stop"
@@ -9,12 +10,13 @@ $payloadRoot = Join-Path $projectRoot "launcher\src\main\assets\mods\stardew-val
 $payload = Join-Path $payloadRoot "payload"
 $deltaProject = Join-Path $projectRoot "tools\BinaryDeltaPacker\BinaryDeltaPacker.csproj"
 
-$gogOriginal = Join-Path $WemuRoot ".work\stardew-native\device-original\Stardew Valley.dll"
-$steamOriginal = Join-Path $WemuRoot ".work\stardew-native\steam-original\Stardew Valley.dll"
-$gogDisplaySync = Join-Path $WemuRoot "artifacts\stardew-native-1.6.15.24356\Stardew Valley.dll"
-$steamDisplaySync = Join-Path $WemuRoot "artifacts\stardew-native-steam-1.6.15.24356\Stardew Valley.dll"
-$gogRestored = Join-Path $WemuRoot ".work\stardew-native\previous-patched\gog\Stardew Valley.dll"
-$steamRestored = Join-Path $WemuRoot ".work\stardew-native\previous-patched\steam\Stardew Valley.dll"
+$buildInputs = [IO.Path]::GetFullPath($BuildInputRoot)
+$gogOriginal = Join-Path $buildInputs "device-original\Stardew Valley.dll"
+$steamOriginal = Join-Path $buildInputs "steam-original\Stardew Valley.dll"
+$gogDisplaySync = Join-Path $buildInputs "display-sync\gog\Stardew Valley.dll"
+$steamDisplaySync = Join-Path $buildInputs "display-sync\steam\Stardew Valley.dll"
+$gogRestored = Join-Path $buildInputs "restored\gog\Stardew Valley.dll"
+$steamRestored = Join-Path $buildInputs "restored\steam\Stardew Valley.dll"
 
 $expected = [ordered]@{
     gogInput = "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c"
