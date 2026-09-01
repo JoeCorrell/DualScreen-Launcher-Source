@@ -59,6 +59,7 @@ internal fun GameDetailsPage(
     val state = resolveGameInstallState(installed, progress, saveProgress)
     val busy = operationBusy ||
         state == GameInstallState.INSTALLING ||
+        state == GameInstallState.UPDATING_MOD ||
         state == GameInstallState.IMPORTING_SAVE
 
     LazyColumn(
@@ -217,7 +218,10 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
                     when (state) {
                         GameInstallState.READY -> LauncherSuccess
                         GameInstallState.ERROR -> LauncherDanger
-                        GameInstallState.INSTALLING, GameInstallState.IMPORTING_SAVE -> LauncherAccent
+                        GameInstallState.INSTALLING,
+                        GameInstallState.UPDATING_MOD,
+                        GameInstallState.IMPORTING_SAVE,
+                        -> LauncherAccent
                         GameInstallState.NOT_INSTALLED -> LauncherOutline
                     },
                 ),
@@ -254,6 +258,7 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
             when (state) {
                 GameInstallState.NOT_INSTALLED -> "Add your game ZIP to begin."
                 GameInstallState.INSTALLING -> "Setup is running on the lower screen."
+                GameInstallState.UPDATING_MOD -> "The dual-screen mod is being updated."
                 GameInstallState.IMPORTING_SAVE -> "Save files are being imported."
                 GameInstallState.READY -> "Installed, modded, and ready to play."
                 GameInstallState.ERROR -> "Open setup feedback for the exact error."
@@ -367,14 +372,15 @@ private fun SetupFeedback(
     saveProgress: SaveImportProgress?,
 ) {
     val state = resolveGameInstallState(installed, progress, saveProgress)
-    val activeFraction = if (state == GameInstallState.IMPORTING_SAVE) {
-        saveProgress?.fraction ?: 0f
-    } else {
-        progress?.fraction ?: if (installed != null) 1f else 0f
+    val activeFraction = when (state) {
+        GameInstallState.IMPORTING_SAVE -> saveProgress?.fraction ?: 0f
+        GameInstallState.UPDATING_MOD -> modUpdateFraction(progress)
+        else -> progress?.fraction ?: if (installed != null) 1f else 0f
     }
     val title = when (state) {
         GameInstallState.NOT_INSTALLED -> "Ready for your archive"
         GameInstallState.INSTALLING -> progress?.detail ?: "Preparing game"
+        GameInstallState.UPDATING_MOD -> progress?.detail ?: "Updating dual-screen mod"
         GameInstallState.IMPORTING_SAVE -> saveProgress?.detail ?: "Importing save"
         GameInstallState.READY -> "Setup complete"
         GameInstallState.ERROR -> "Setup needs attention"
@@ -410,7 +416,11 @@ private fun SetupFeedback(
             }
             if (state == GameInstallState.READY) {
                 Icon(Icons.Default.CheckCircle, contentDescription = null, tint = LauncherSuccess, modifier = Modifier.size(24.dp))
-            } else if (state == GameInstallState.INSTALLING || state == GameInstallState.IMPORTING_SAVE) {
+            } else if (
+                state == GameInstallState.INSTALLING ||
+                state == GameInstallState.UPDATING_MOD ||
+                state == GameInstallState.IMPORTING_SAVE
+            ) {
                 Text(
                     "${installPercent(activeFraction)}%",
                     color = LauncherAccent,
@@ -420,7 +430,11 @@ private fun SetupFeedback(
                 )
             }
         }
-        if (state == GameInstallState.INSTALLING || state == GameInstallState.IMPORTING_SAVE) {
+        if (
+            state == GameInstallState.INSTALLING ||
+            state == GameInstallState.UPDATING_MOD ||
+            state == GameInstallState.IMPORTING_SAVE
+        ) {
             LauncherProgress(
                 fraction = activeFraction,
                 modifier = Modifier.fillMaxWidth().height(5.dp),

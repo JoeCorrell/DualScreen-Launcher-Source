@@ -238,6 +238,12 @@ class GameInstaller(
                         allowUnsupportedPatches = installed.untestedBuild,
                     )
                 }
+                publish(
+                    game.id,
+                    InstallStage.VERIFYING,
+                    InstallStage.VERIFYING.baseProgress,
+                    "Verifying ${game.title} mod update",
+                )
                 withContext(Dispatchers.IO) {
                     verify(
                         game,

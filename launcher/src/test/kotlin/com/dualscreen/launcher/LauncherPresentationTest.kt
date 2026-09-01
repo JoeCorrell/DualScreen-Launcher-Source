@@ -45,6 +45,38 @@ class LauncherPresentationTest {
     }
 
     @Test
+    fun `payload refresh has a dedicated mod update state`() {
+        val updating = InstallProgress(
+            gameId = "fallout3",
+            stage = InstallStage.PATCHING,
+            fraction = InstallStage.PATCHING.baseProgress,
+            running = true,
+        )
+
+        assertThat(resolveGameInstallState(installed, updating, null))
+            .isEqualTo(GameInstallState.UPDATING_MOD)
+        assertThat(modUpdateFraction(updating)).isEqualTo(0f)
+        assertThat(
+            modUpdateFraction(
+                updating.copy(
+                    fraction = (
+                        InstallStage.PATCHING.baseProgress +
+                            InstallStage.CONFIGURING.baseProgress
+                        ) / 2f,
+                ),
+            ),
+        ).isWithin(0.001f).of(0.45f)
+        assertThat(
+            modUpdateFraction(
+                updating.copy(
+                    stage = InstallStage.VERIFYING,
+                    fraction = InstallStage.VERIFYING.baseProgress,
+                ),
+            ),
+        ).isEqualTo(0.96f)
+    }
+
+    @Test
     fun `errors remain visible after work stops`() {
         val failed = InstallProgress(
             gameId = "fallout3",

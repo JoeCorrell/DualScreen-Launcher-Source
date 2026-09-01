@@ -255,6 +255,7 @@ internal fun StatusPill(state: GameInstallState) {
     val (label, tint) = when (state) {
         GameInstallState.NOT_INSTALLED -> "NOT INSTALLED" to Color(0xFF969389)
         GameInstallState.INSTALLING -> "INSTALLING" to LauncherAccent
+        GameInstallState.UPDATING_MOD -> "UPDATING MOD" to LauncherAccent
         GameInstallState.IMPORTING_SAVE -> "IMPORTING SAVE" to LauncherAccent
         GameInstallState.READY -> "READY" to LauncherSuccess
         GameInstallState.ERROR -> "ACTION NEEDED" to LauncherDanger
