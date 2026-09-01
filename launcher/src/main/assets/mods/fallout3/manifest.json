@@ -1,10 +1,10 @@
 {
-    "version":  "launcher-2026.08.31-mod-sync-9",
+    "version":  "launcher-2026.08.31-fo3-map-stats-2",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "dinput8.dll",
-                      "sha256":  "675786af5592dcd1d94338dadf8850bbbc91249f45c4e23cfed302ba4252c60e"
+                      "sha256":  "1b0ca9fc3d85ab13aca7c61d6409209e96010e568ffcec3acc7410785486e74a"
                   },
                   {
                       "source":  "Fallout3SecondScreen.ini",
