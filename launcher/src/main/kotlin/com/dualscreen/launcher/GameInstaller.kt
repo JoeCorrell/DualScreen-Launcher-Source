@@ -1452,7 +1452,7 @@ class GameInstaller(
     private fun readPayloadManifest(game: SupportedGame): PayloadManifest {
         val manifestPath = "mods/${game.id}/manifest.json"
         val manifestText = runCatching {
-            context.assets.open(manifestPath).bufferedReader().use { it.readText() }
+            PayloadAssetStore.open(context, manifestPath).bufferedReader().use { it.readText() }
         }.getOrElse { error("No deployable dual-screen mod is bundled for ${game.title}") }
         val json = JSONObject(manifestText.trimStart('\uFEFF'))
         val files = json.optJSONArray("files")

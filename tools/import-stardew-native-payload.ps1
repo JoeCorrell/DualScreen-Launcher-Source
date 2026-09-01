@@ -13,12 +13,16 @@ $gogOriginal = Join-Path $WemuRoot ".work\stardew-native\device-original\Stardew
 $steamOriginal = Join-Path $WemuRoot ".work\stardew-native\steam-original\Stardew Valley.dll"
 $gogPatched = Join-Path $WemuRoot "artifacts\stardew-native-1.6.15.24356\Stardew Valley.dll"
 $steamPatched = Join-Path $WemuRoot "artifacts\stardew-native-steam-1.6.15.24356\Stardew Valley.dll"
+$gogPrevious = Join-Path $WemuRoot ".work\stardew-native\previous-patched\gog\Stardew Valley.dll"
+$steamPrevious = Join-Path $WemuRoot ".work\stardew-native\previous-patched\steam\Stardew Valley.dll"
 
 $expected = [ordered]@{
     gogInput = "078c04dcf34fdd8df3ec1ddce062d3dfd4a34d94614d806466adc78754a7693c"
     gogOutput = "58fd97df1e77d03a4bf2196a69b7732eefbb1d1e1743535af1d2ab1162053539"
+    gogPrevious = "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466"
     steamInput = "7f1e5b8e58d2758b78570ba771bbeb03d33522f62188bf6c32edf0cf626deaee"
     steamOutput = "9b03cc5106f24e861e3bceb38e68ae6b286b77b83f4c804bd3818b16c1dbc172"
+    steamPrevious = "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c"
 }
 
 function Assert-Hash([string]$Path, [string]$ExpectedHash) {
@@ -33,8 +37,10 @@ function Assert-Hash([string]$Path, [string]$ExpectedHash) {
 
 Assert-Hash $gogOriginal $expected.gogInput
 Assert-Hash $gogPatched $expected.gogOutput
+Assert-Hash $gogPrevious $expected.gogPrevious
 Assert-Hash $steamOriginal $expected.steamInput
 Assert-Hash $steamPatched $expected.steamOutput
+Assert-Hash $steamPrevious $expected.steamPrevious
 
 if (Test-Path -LiteralPath $payloadRoot) {
     $resolved = (Resolve-Path -LiteralPath $payloadRoot).Path
@@ -50,10 +56,16 @@ New-Item -ItemType Directory -Path $payload -Force | Out-Null
 
 $gogPatch = Join-Path $payload "stardew-1.6.15.24356-gog.dsdiff.gz"
 $steamPatch = Join-Path $payload "stardew-1.6.15.24356-steam.dsdiff.gz"
+$gogMigrationPatch = Join-Path $payload "stardew-1.6.15.24356-gog-prior-to-current.dsdiff.gz"
+$steamMigrationPatch = Join-Path $payload "stardew-1.6.15.24356-steam-prior-to-current.dsdiff.gz"
 & dotnet run --project $deltaProject -c Release -- $gogOriginal $gogPatched $gogPatch
 if ($LASTEXITCODE -ne 0) { throw "Could not create the GOG Stardew native delta" }
 & dotnet run --project $deltaProject -c Release -- $steamOriginal $steamPatched $steamPatch
 if ($LASTEXITCODE -ne 0) { throw "Could not create the Steam Stardew native delta" }
+& dotnet run --project $deltaProject -c Release -- $gogPrevious $gogPatched $gogMigrationPatch
+if ($LASTEXITCODE -ne 0) { throw "Could not create the prior GOG Stardew migration delta" }
+& dotnet run --project $deltaProject -c Release -- $steamPrevious $steamPatched $steamMigrationPatch
+if ($LASTEXITCODE -ne 0) { throw "Could not create the prior Steam Stardew migration delta" }
 
 $patches = @(
     [ordered]@{
@@ -69,10 +81,24 @@ $patches = @(
         sha256 = (Get-FileHash -LiteralPath $steamPatch -Algorithm SHA256).Hash.ToLowerInvariant()
         inputSha256 = $expected.steamInput
         outputSha256 = $expected.steamOutput
+    },
+    [ordered]@{
+        source = [IO.Path]::GetFileName($gogMigrationPatch)
+        target = "Stardew Valley.dll"
+        sha256 = (Get-FileHash -LiteralPath $gogMigrationPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+        inputSha256 = $expected.gogPrevious
+        outputSha256 = $expected.gogOutput
+    },
+    [ordered]@{
+        source = [IO.Path]::GetFileName($steamMigrationPatch)
+        target = "Stardew Valley.dll"
+        sha256 = (Get-FileHash -LiteralPath $steamMigrationPatch -Algorithm SHA256).Hash.ToLowerInvariant()
+        inputSha256 = $expected.steamPrevious
+        outputSha256 = $expected.steamOutput
     }
 )
 $manifest = [ordered]@{
-    version = "native-1.6.15.24356-2026.08.31-display-sync-1"
+    version = "native-1.6.15.24356-2026.08.31-display-sync-2"
     files = @()
     patches = $patches
     remove = @(

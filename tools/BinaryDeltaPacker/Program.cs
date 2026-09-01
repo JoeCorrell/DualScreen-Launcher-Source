@@ -12,14 +12,26 @@ internal static class Program
 
     private static int Main(string[] args)
     {
-        if (args.Length != 3)
+        bool apply = args.Length == 4 &&
+                     args[0].Equals("apply", StringComparison.OrdinalIgnoreCase);
+        if (args.Length != 3 && !apply)
         {
-            Console.Error.WriteLine("Usage: BinaryDeltaPacker <original> <patched> <output.dsdiff.gz>");
+            Console.Error.WriteLine(
+                "Usage:\n" +
+                "  BinaryDeltaPacker <original> <patched> <output.dsdiff.gz>\n" +
+                "  BinaryDeltaPacker apply <source> <patch.dsdiff.gz> <output>");
             return 2;
         }
 
         try
         {
+            if (apply)
+            {
+                ApplyPatch(args[1], args[2], args[3]);
+                Console.WriteLine($"Applied {Path.GetFileName(args[2])} to {Path.GetFileName(args[3])}.");
+                return 0;
+            }
+
             byte[] original = File.ReadAllBytes(args[0]);
             byte[] patched = File.ReadAllBytes(args[1]);
             string output = Path.GetFullPath(args[2]);
@@ -35,6 +47,76 @@ internal static class Program
         {
             Console.Error.WriteLine(error);
             return 1;
+        }
+    }
+
+    private static void ApplyPatch(string sourcePath, string patchPath, string outputPath)
+    {
+        byte[] source = File.ReadAllBytes(sourcePath);
+        string output = Path.GetFullPath(outputPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+
+        using FileStream file = File.OpenRead(patchPath);
+        using GZipStream gzip = new(file, CompressionMode.Decompress);
+        using BinaryReader reader = new(gzip, Encoding.UTF8);
+        if (!reader.ReadBytes(Magic.Length).SequenceEqual(Magic))
+            throw new InvalidDataException("Bad magic");
+        if (reader.ReadInt64() != source.Length)
+            throw new InvalidDataException("Patch input length does not match source");
+        if (!reader.ReadBytes(32).SequenceEqual(SHA256.HashData(source)))
+            throw new InvalidDataException("Patch input hash does not match source");
+
+        long outputLength = reader.ReadInt64();
+        if (outputLength < 0 || outputLength > int.MaxValue)
+            throw new InvalidDataException("Unsupported patch output length");
+        byte[] outputHash = reader.ReadBytes(32);
+        using MemoryStream reconstructed = new(checked((int)outputLength));
+        while (true)
+        {
+            byte opcode = reader.ReadByte();
+            if (opcode == byte.MaxValue) break;
+            if (opcode == 0)
+            {
+                long offset = reader.ReadInt64();
+                int length = reader.ReadInt32();
+                if (offset < 0 || length < 0 || offset + length > source.Length)
+                    throw new InvalidDataException("Patch copy range is outside the source");
+                reconstructed.Write(source, checked((int)offset), length);
+            }
+            else if (opcode == 1)
+            {
+                int length = reader.ReadInt32();
+                if (length < 0) throw new InvalidDataException("Negative patch literal length");
+                byte[] literal = reader.ReadBytes(length);
+                if (literal.Length != length) throw new EndOfStreamException("Truncated patch literal");
+                reconstructed.Write(literal);
+            }
+            else
+            {
+                throw new InvalidDataException($"Unknown opcode {opcode}");
+            }
+
+            if (reconstructed.Length > outputLength)
+                throw new InvalidDataException("Patch produced more data than declared");
+        }
+
+        byte[] result = reconstructed.ToArray();
+        if (result.Length != outputLength ||
+            !SHA256.HashData(result).SequenceEqual(outputHash))
+        {
+            throw new InvalidDataException("Patch output verification failed");
+        }
+
+        string temporary = output + ".partial";
+        File.Delete(temporary);
+        try
+        {
+            File.WriteAllBytes(temporary, result);
+            File.Move(temporary, output, overwrite: true);
+        }
+        finally
+        {
+            File.Delete(temporary);
         }
     }
 

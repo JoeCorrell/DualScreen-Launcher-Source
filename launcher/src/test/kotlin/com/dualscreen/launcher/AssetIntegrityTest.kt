@@ -116,9 +116,20 @@ class AssetIntegrityTest {
         val manifest = JSONObject(File(root, "manifest.json").readText())
         assertThat(manifest.getJSONArray("files").length()).isEqualTo(0)
         val patches = manifest.getJSONArray("patches")
-        assertThat(patches.length()).isEqualTo(2)
+        assertThat(patches.length()).isEqualTo(4)
         assertThat((0 until patches.length()).map { patches.getJSONObject(it).getString("target") })
-            .containsExactly("Stardew Valley.dll", "Stardew Valley.dll")
+            .containsExactly(
+                "Stardew Valley.dll",
+                "Stardew Valley.dll",
+                "Stardew Valley.dll",
+                "Stardew Valley.dll",
+            )
+        assertThat((0 until patches.length()).map {
+            patches.getJSONObject(it).getString("inputSha256")
+        }).containsAtLeast(
+            "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466",
+            "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c",
+        )
         assertThat(root.walkTopDown().filter(File::isFile).map { it.name }.toList())
             .doesNotContain("StardewDualScreen.dll")
         assertThat((0 until manifest.getJSONArray("remove").length()).map {
