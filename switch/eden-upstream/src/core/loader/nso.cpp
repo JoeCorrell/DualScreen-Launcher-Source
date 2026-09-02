@@ -103,8 +103,16 @@ constexpr u32 BotwEatGameplayEntryOffset = 0x00E3EDE4;
 constexpr u32 BotwEatGameplayExitHookOffset = 0x00E3F0B8;
 constexpr u32 BotwEatGameplayExitHookInstruction = 0xF95B1660;
 constexpr u32 BotwEatGameplayEpilogueOffset = 0x00E3ED98;
+// Player::updateCookEffects copies the queued values written by the pouch consume path into
+// the live effect timers/modifiers.  The vanilla pause flow reaches this when gameplay resumes;
+// a companion consume has no pause transition, so it must run explicitly.
+constexpr u32 BotwUpdateCookEffectsOffset = 0x00CF05F0;
 constexpr u32 BotwEatNotifyOffset = 0x00D4279C;
 constexpr u32 BotwEatNotifyStorageOffset = 0x01E15FB8;
+// The always-live gameplay notifier owns a fully registered actor-message sender here.  Unlike
+// the pause-menu sender used by the vanilla Hold button, it exists without opening that menu.
+constexpr u32 BotwGameplayMessageSenderOffset = 0x198;
+constexpr u32 BotwGameplayMessageDispatcherOffset = BotwGameplayMessageSenderOffset + 0x08;
 constexpr u32 BotwEatScreenRegistryOffset = 0x01E374B8;
 constexpr u32 BotwActorMessageSendOffset = 0x0154C61C;
 constexpr u32 BotwCaptureSpawnedActorOffset = 0x00CC12F0;
@@ -1139,10 +1147,12 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const auto branch_hold_empty = emit(0);
     emit_stage(0x30);
     emit_unlock();
-    emit_load_address(0, BotwPlayerInfoStorageOffset);
-    const auto branch_hold_no_player_info = emit(0);
-    emit(EncodeLoadUnsigned64(8, 0, 0x68));
-    const auto branch_hold_player_link_unavailable = emit(0);
+    emit_load_address(0, BotwEatNotifyStorageOffset);
+    const auto branch_hold_no_gameplay_notifier = emit(0);
+    emit(EncodeLoadUnsigned64(8, 0, BotwGameplayMessageDispatcherOffset));
+    const auto branch_hold_message_sender_unavailable = emit(0);
+    emit(EncodeLoadUnsigned64(8, 8, 0));
+    const auto branch_hold_message_dispatcher_unavailable = emit(0);
     emit(0xF94013E0U);
     emit_call(BotwCanGrabAnotherItemOffset);
     const auto branch_hold_capacity_race = emit(0);
@@ -1152,11 +1162,9 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit_page_address(14, mailbox_main_offset);
     emit(0xF94023EBU);
     emit(0xB9402168U);
-    emit(EncodeStoreUnsigned32(8, 14,
-                               BotwActionDiagnosticGuestQuantityAfterOffset));
+    emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticGuestQuantityAfterOffset));
     emit(0x39409569U);
-    emit(EncodeStoreUnsigned32(9, 14,
-                               BotwActionDiagnosticGuestInInventoryAfterOffset));
+    emit(EncodeStoreUnsigned32(9, 14, BotwActionDiagnosticGuestInInventoryAfterOffset));
     emit(EncodeLoadUnsigned32(9, 14, 0xE0));
     emit(0x51000529U);
     emit(0x6B09011FU);
@@ -1173,9 +1181,9 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit(0xAA0503E0U);
     emit_call(BotwGetActorMessageIdOffset);
     emit(0xAA0003E1U);
-    emit_load_address(0, BotwPlayerInfoStorageOffset);
+    emit_load_address(0, BotwEatNotifyStorageOffset);
     const auto branch_hold_no_sender_after_mutation = emit(0);
-    emit(EncodeAddImmediate64(0, 0, 0x68));
+    emit(EncodeAddImmediate64(0, 0, BotwGameplayMessageSenderOffset));
     emit_page_address(14, mailbox_main_offset);
     emit(EncodeAddImmediate64(2, 14, BotwHoldMessageScratchOffset));
     emit(0x52800068U);
@@ -1249,19 +1257,24 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit(0x2A1F03FAU);
     emit(0x1280001CU);
     const auto eat_gameplay_jump = code.size();
-    emit(EncodeRelativeBranch(
-        bridge_main_offset + static_cast<u32>(eat_gameplay_jump * sizeof(u32)),
-        BotwEatGameplayEntryOffset));
+    emit(
+        EncodeRelativeBranch(bridge_main_offset + static_cast<u32>(eat_gameplay_jump * sizeof(u32)),
+                             BotwEatGameplayEntryOffset));
 
     const auto eat_return = code.size();
+    emit_load_address(0, BotwPlayerInfoStorageOffset);
+    const auto branch_eat_refresh_no_player_info = emit(0);
+    emit_call(BotwGetPlayerOffset);
+    const auto branch_eat_refresh_no_player = emit(0);
+    emit(0x2A1F03E1U);
+    emit_call(BotwUpdateCookEffectsOffset);
+    const auto eat_effect_refresh_done = code.size();
     emit(0xF94023EBU);
     emit_page_address(14, mailbox_main_offset);
     emit(0xB9402168U);
-    emit(EncodeStoreUnsigned32(8, 14,
-                               BotwActionDiagnosticGuestQuantityAfterOffset));
+    emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticGuestQuantityAfterOffset));
     emit(0x39409568U);
-    emit(EncodeStoreUnsigned32(8, 14,
-                               BotwActionDiagnosticGuestInInventoryAfterOffset));
+    emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticGuestInInventoryAfterOffset));
     emit(0x52800028U);
     emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticNativeResultOffset));
     emit(0x9100A16AU);
@@ -1559,63 +1572,61 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     code[branch_unequip] = EncodeConditionalBranch(0, branch_unequip, unequip);
     code[branch_wrong_equip_type] =
         EncodeConditionalBranch(1, branch_wrong_equip_type, unlock_reject);
-    code[branch_weapon_type] =
-        EncodeConditionalBranch(9, branch_weapon_type, weapon);
-    code[branch_bad_armor_type] =
-        EncodeConditionalBranch(8, branch_bad_armor_type, unlock_reject);
+    code[branch_weapon_type] = EncodeConditionalBranch(9, branch_weapon_type, weapon);
+    code[branch_bad_armor_type] = EncodeConditionalBranch(8, branch_bad_armor_type, unlock_reject);
     code[branch_armor_staged] = EncodeLocalBranch(branch_armor_staged, staged);
     code[branch_weapon_reject] =
         EncodeCompareBranchZero(false, 0, branch_weapon_reject, reject_stack);
     code[branch_weapon_staged] = EncodeLocalBranch(branch_weapon_staged, staged);
     code[branch_hold_wrong_type] =
         EncodeConditionalBranch(1, branch_hold_wrong_type, unlock_reject);
-    code[branch_hold_empty] =
-        EncodeConditionalBranch(0xB, branch_hold_empty, unlock_reject);
-    code[branch_hold_no_player_info] = EncodeCompareBranchZero(
-        true, 0, branch_hold_no_player_info, reject_stack);
-    code[branch_hold_player_link_unavailable] = EncodeCompareBranchZero(
-        true, 8, branch_hold_player_link_unavailable, reject_stack);
-    code[branch_hold_capacity_race] = EncodeCompareBranchZero(
-        false, 0, branch_hold_capacity_race, reject_stack);
-    code[branch_hold_quantity_mismatch] = EncodeConditionalBranch(
-        1, branch_hold_quantity_mismatch, hold_native_rejected);
-    code[branch_hold_no_captured_actor] = EncodeCompareBranchZero(
-        true, 8, branch_hold_no_captured_actor, hold_no_captured_actor);
+    code[branch_hold_empty] = EncodeConditionalBranch(0xB, branch_hold_empty, unlock_reject);
+    code[branch_hold_no_gameplay_notifier] =
+        EncodeCompareBranchZero(true, 0, branch_hold_no_gameplay_notifier, reject_stack);
+    code[branch_hold_message_sender_unavailable] =
+        EncodeCompareBranchZero(true, 8, branch_hold_message_sender_unavailable, reject_stack);
+    code[branch_hold_message_dispatcher_unavailable] =
+        EncodeCompareBranchZero(true, 8, branch_hold_message_dispatcher_unavailable, reject_stack);
+    code[branch_hold_capacity_race] =
+        EncodeCompareBranchZero(false, 0, branch_hold_capacity_race, reject_stack);
+    code[branch_hold_quantity_mismatch] =
+        EncodeConditionalBranch(1, branch_hold_quantity_mismatch, hold_native_rejected);
+    code[branch_hold_no_captured_actor] =
+        EncodeCompareBranchZero(true, 8, branch_hold_no_captured_actor, hold_no_captured_actor);
     code[branch_hold_no_sender_after_mutation] = EncodeCompareBranchZero(
         true, 0, branch_hold_no_sender_after_mutation, hold_no_captured_actor);
     code[branch_hold_success] = EncodeLocalBranch(branch_hold_success, success_stack);
-    code[branch_hold_no_captured_actor_success] = EncodeLocalBranch(
-        branch_hold_no_captured_actor_success, success_stack);
+    code[branch_hold_no_captured_actor_success] =
+        EncodeLocalBranch(branch_hold_no_captured_actor_success, success_stack);
     code[branch_hold_native_rejected_publish] =
         EncodeLocalBranch(branch_hold_native_rejected_publish, reject_stack);
-    code[branch_eat_food] =
-        EncodeConditionalBranch(0, branch_eat_food, eat_type_allowed);
-    code[branch_eat_wrong_type] =
-        EncodeConditionalBranch(1, branch_eat_wrong_type, unlock_reject);
-    code[branch_eat_wrong_use] =
-        EncodeConditionalBranch(1, branch_eat_wrong_use, unlock_reject);
-    code[branch_eat_empty] =
-        EncodeConditionalBranch(0xB, branch_eat_empty, unlock_reject);
+    code[branch_eat_food] = EncodeConditionalBranch(0, branch_eat_food, eat_type_allowed);
+    code[branch_eat_wrong_type] = EncodeConditionalBranch(1, branch_eat_wrong_type, unlock_reject);
+    code[branch_eat_wrong_use] = EncodeConditionalBranch(1, branch_eat_wrong_use, unlock_reject);
+    code[branch_eat_empty] = EncodeConditionalBranch(0xB, branch_eat_empty, unlock_reject);
     code[branch_eat_no_player_info] =
         EncodeCompareBranchZero(true, 0, branch_eat_no_player_info, reject_stack);
     code[branch_eat_no_player] =
         EncodeCompareBranchZero(true, 0, branch_eat_no_player, reject_stack);
+    code[branch_eat_refresh_no_player_info] = EncodeCompareBranchZero(
+        true, 0, branch_eat_refresh_no_player_info, eat_effect_refresh_done);
+    code[branch_eat_refresh_no_player] =
+        EncodeCompareBranchZero(true, 0, branch_eat_refresh_no_player, eat_effect_refresh_done);
     code[branch_eat_no_notifier] =
         EncodeCompareBranchZero(true, 0, branch_eat_no_notifier, eat_notify_done);
     code[branch_eat_no_registry] =
         EncodeCompareBranchZero(true, 8, branch_eat_no_registry, reject_stack);
-    code[branch_eat_no_registry_array] = EncodeCompareBranchZero(
-        true, 8, branch_eat_no_registry_array, reject_stack);
-    code[eat_return_adr] = EncodeAdr(
-        30, bridge_main_offset + static_cast<u32>(eat_return_adr * sizeof(u32)),
-        bridge_main_offset + static_cast<u32>(eat_return * sizeof(u32)));
+    code[branch_eat_no_registry_array] =
+        EncodeCompareBranchZero(true, 8, branch_eat_no_registry_array, reject_stack);
+    code[eat_return_adr] =
+        EncodeAdr(30, bridge_main_offset + static_cast<u32>(eat_return_adr * sizeof(u32)),
+                  bridge_main_offset + static_cast<u32>(eat_return * sizeof(u32)));
     code[branch_eat_success] = EncodeLocalBranch(branch_eat_success, success_stack);
-    code[branch_unequip_not_equipped] = EncodeCompareBranchZero(
-        false, 8, branch_unequip_not_equipped, unlock_reject);
+    code[branch_unequip_not_equipped] =
+        EncodeCompareBranchZero(false, 8, branch_unequip_not_equipped, unlock_reject);
     code[branch_unequip_bad_high] =
         EncodeConditionalBranch(8, branch_unequip_bad_high, unlock_reject);
-    code[branch_unequip_arrow] =
-        EncodeConditionalBranch(0, branch_unequip_arrow, unlock_reject);
+    code[branch_unequip_arrow] = EncodeConditionalBranch(0, branch_unequip_arrow, unlock_reject);
     code[branch_unequip_no_player_info] = EncodeCompareBranchZero(
         true, 0, branch_unequip_no_player_info, reject_stack);
     code[branch_unequip_no_player] = EncodeCompareBranchZero(
@@ -1750,6 +1761,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwCanGrabAnotherItemOffset, 0x91411008U, "hold capacity"},
         {BotwEatGameplayEntryOffset, 0x90007968U, "eat gameplay entry"},
         {BotwEatGameplayEpilogueOffset, 0xA9474FF4U, "eat gameplay epilogue"},
+        {BotwUpdateCookEffectsOffset, 0xFC1C0FE8U, "live cook-effect update"},
         {BotwEatNotifyOffset, 0xD10243FFU, "eat animation event"},
         {BotwActorMessageSendOffset, 0xA9BC7BFDU, "actor message send"},
         {BotwCaptureSpawnedActorOffset, 0xD0008A88U, "spawned actor capture"},
@@ -1761,16 +1773,14 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwHoldControllerGotLoadOffset, 0xF942A908U, "hold controller GOT"},
         {BotwHoldControllerObjectLoadOffset, 0xF9400100U, "hold controller object"},
         {BotwEatTargetReadOffset, 0xF95B267AU, "eat target read"},
-        {BotwEatGameplayExitHookOffset, BotwEatGameplayExitHookInstruction,
-         "eat exit hook"},
+        {BotwEatGameplayExitHookOffset, BotwEatGameplayExitHookInstruction, "eat exit hook"},
         {BotwRequestEquippedItemOffset, 0xD10103FFU, "equipment request"},
         {BotwEquipmentActorsReadyOffset, 0x39422008U, "equipment actor state"},
         {BotwGetPlayerOffset, 0xF9403001U, "player lookup"},
         {BotwSwitchEquipmentCalcOffset, 0xA9BD7BFDU, "equipment calculation"},
         {BotwSwitchEquipmentApplyOffset, 0xB94C9A88U, "equipment application"},
         {BotwSwitchEquipmentApplyOffset + 8, 0x321B0108U, "equipment apply flags"},
-        {BotwSwitchEquipmentApplyOffset + 12, 0xB90C9A88U,
-         "equipment apply store"},
+        {BotwSwitchEquipmentApplyOffset + 12, 0xB90C9A88U, "equipment apply store"},
         {BotwPlayerSwitchEquipmentOffset, 0xD101C3FFU, "player equipment switch"},
         {BotwRequestArmorOffset, 0xD10183FFU, "armor request"},
         {BotwRuneSetCurrentOffset, 0xA9BD7BFDU, "rune selection"},

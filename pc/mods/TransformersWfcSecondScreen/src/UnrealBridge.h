@@ -57,7 +57,11 @@ bool UnrealReadByteProperty(void* object, const wchar_t* property_name,
 bool UnrealReadFloatProperty(void* object, const wchar_t* property_name,
                              float* output);
 bool UnrealReadStringProperty(void* object, const wchar_t* property_name,
-                              char* output, size_t capacity);
+                               char* output, size_t capacity);
+bool UnrealReadStringArrayElementProperty(void* object,
+                                          const wchar_t* property_name,
+                                          int32_t index, char* output,
+                                          size_t capacity);
 bool UnrealReadArrayProperty(void* object, const wchar_t* property_name,
                              UnrealArrayView* output);
 bool UnrealReadFloatArrayElement(const UnrealArrayView& array, int32_t index,
@@ -81,6 +85,10 @@ bool UnrealReadStructArrayFloatField(const UnrealStructArrayView& array,
                                      int32_t index,
                                      const wchar_t* field_name,
                                      float* output);
+bool UnrealReadStructArrayIntField(const UnrealStructArrayView& array,
+                                   int32_t index,
+                                   const wchar_t* field_name,
+                                   int32_t* output);
 bool UnrealReadStructFloatProperty(void* object,
                                    const wchar_t* property_name,
                                    const wchar_t* field_name, float* output);

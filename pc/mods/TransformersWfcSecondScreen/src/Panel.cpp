@@ -32,6 +32,8 @@ constexpr COLORREF kPanelAlt = RGB(6, 22, 31);
 constexpr COLORREF kCyan = RGB(0, 183, 235);
 constexpr COLORREF kCyanDim = RGB(10, 74, 96);
 constexpr COLORREF kOrange = RGB(255, 151, 0);
+constexpr COLORREF kTransformYellow = RGB(255, 193, 7);
+constexpr COLORREF kTransformYellowPressed = RGB(255, 211, 64);
 constexpr COLORREF kWhite = RGB(226, 232, 235);
 constexpr COLORREF kMuted = RGB(148, 164, 171);
 
@@ -46,6 +48,8 @@ HFONT g_font_label = nullptr;
 HFONT g_font_body = nullptr;
 HFONT g_font_title = nullptr;
 HFONT g_font_action = nullptr;
+HFONT g_font_mode = nullptr;
+HFONT g_font_transform = nullptr;
 SOCKET g_socket = INVALID_SOCKET;
 bool g_winsock = false;
 PanelPage g_page = PanelPage::kCombat;
@@ -205,7 +209,7 @@ void DrawStatus(HDC dc, const Snapshot& state) {
   Segments(dc, Rect(700, 153, 955, 180), state.resource,
            state.max_resource, kOrange);
   Text(dc, L"MODE", Rect(985, 111, 1070, 145), g_font_label, kWhite);
-  Text(dc, ModeText(state.mode), Rect(985, 150, 1147, 188), g_font_label,
+  Text(dc, ModeText(state.mode), Rect(985, 146, 1134, 192), g_font_mode,
        kCyan);
   DrawCachedAsset(dc, "OptimusPortrait", Rect(1145, 103, 1216, 198));
 }
@@ -242,7 +246,7 @@ void DrawAbility(HDC dc, RECT rect, const wchar_t* label,
   RECT icon = Rect(rect.left + 60, rect.top + 54, rect.right - 60,
                    rect.bottom - 100);
   Fill(dc, icon, kPanelAlt);
-  Frame(dc, icon, ability.available ? kCyan : kCyanDim, 2);
+  Frame(dc, icon, assigned ? kCyan : kCyanDim, 2);
   if (!assigned || !DrawCachedAsset(dc, ability.icon_key, icon))
     Text(dc, L"--", icon, g_font_label,
          ability.available ? kCyan : kMuted,
@@ -275,18 +279,19 @@ void DrawAction(HDC dc, RECT rect, const wchar_t* label, const char* icon_key,
                 HitTarget target, bool enabled, bool orange = false) {
   const bool active = Pressed(target) || Focused(target);
   if (orange) {
-    Fill(dc, rect, enabled ? RGB(35, 26, 8) : kPanel);
-    Frame(dc, rect, enabled ? kOrange : kCyanDim, enabled ? 3 : 2);
+    Fill(dc, rect, active ? kTransformYellowPressed : kTransformYellow);
+    Frame(dc, rect, active ? kWhite : kOrange, active ? 4 : 3);
   } else {
     PanelBox(dc, rect, active);
   }
-  if (active) {
+  if (active && !orange) {
     RECT inset = rect;
     InflateRect(&inset, -4, -4);
     Fill(dc, inset, RGB(15, 39, 47));
     Frame(dc, rect, orange ? kOrange : kCyan, 4);
   }
-  const COLORREF color = enabled ? (orange ? kOrange : kCyan) : kMuted;
+  const COLORREF color = orange ? kBackground
+                                : (enabled ? kCyan : kMuted);
   if (icon_key && *icon_key)
     DrawCachedAsset(dc, icon_key,
                     Rect(rect.left + 55, rect.top + 18, rect.right - 55,
@@ -294,7 +299,7 @@ void DrawAction(HDC dc, RECT rect, const wchar_t* label, const char* icon_key,
   Text(dc, label,
        Rect(rect.left + 8, rect.bottom - 72, rect.right - 8,
             rect.bottom - 14),
-       orange ? g_font_action : g_font_title, color,
+       orange ? g_font_transform : g_font_title, color,
        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
@@ -812,6 +817,8 @@ DWORD WINAPI PanelThread(void*) {
   g_font_body = Font(28, FW_NORMAL);
   g_font_title = Font(35, FW_BOLD);
   g_font_action = Font(50, FW_BOLD);
+  g_font_mode = Font(21, FW_SEMIBOLD);
+  g_font_transform = Font(40, FW_BOLD);
   if (!InitializeAssetCache(g_module))
     Log(LogLevel::kWarning,
         "[DualScreen] GDI+ asset cache unavailable; text fallbacks active");
@@ -841,6 +848,8 @@ DWORD WINAPI PanelThread(void*) {
   if (g_font_body) DeleteObject(g_font_body);
   if (g_font_title) DeleteObject(g_font_title);
   if (g_font_action) DeleteObject(g_font_action);
+  if (g_font_mode) DeleteObject(g_font_mode);
+  if (g_font_transform) DeleteObject(g_font_transform);
   ShutdownAssetCache();
   g_window = nullptr;
   UnregisterClassW(cls.lpszClassName, g_module);

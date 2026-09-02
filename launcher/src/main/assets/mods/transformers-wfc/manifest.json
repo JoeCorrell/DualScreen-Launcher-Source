@@ -1,10 +1,10 @@
 {
-    "version":  "wfc-64caf8252ef2-c152d1b70ed3-5a1b8e3f9fef",
+    "version":  "wfc-e0faeaa74fcf-c152d1b70ed3-5a1b8e3f9fef",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "Binaries/dinput8.dll",
-                      "sha256":  "64caf8252ef283e82c483f15896ae4f900d59001f6a148203b8121016df5380e"
+                      "sha256":  "e0faeaa74fcf4373f517e654fe1c91176b145284a40fa0adbcfb90d93a72cc73"
                   },
                   {
                       "source":  "TransformersWfcSecondScreen.ini",

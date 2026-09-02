@@ -853,11 +853,42 @@ bool UnrealReadFloatProperty(void* object, const wchar_t* property_name,
 }
 
 bool UnrealReadStringProperty(void* object, const wchar_t* property_name,
-                              char* output, size_t capacity) {
+                               char* output, size_t capacity) {
   UnrealArrayView value;
   return ReadPropertyBytes(object, property_name, L"StrProperty", &value,
                            sizeof(value)) &&
          CopyUnrealString(value, output, capacity);
+}
+
+bool UnrealReadStringArrayElementProperty(void* object,
+                                          const wchar_t* property_name,
+                                          int32_t index, char* output,
+                                          size_t capacity) {
+  if (!output || !capacity) return false;
+  output[0] = '\0';
+  if (!UnrealObjectValid(object) || index < 0) return false;
+  void* array_field = FindField(object, property_name);
+  if (!array_field || !UnrealObjectIsA(array_field, L"ArrayProperty") ||
+      !Readable(static_cast<uint8_t*>(array_field) + 0x40, sizeof(void*)))
+    return false;
+  void* inner = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(array_field) + 0x40);
+  if (!UnrealObjectValid(inner) || !UnrealObjectIsA(inner, L"StrProperty") ||
+      FieldElementSize(inner) != sizeof(UnrealArrayView))
+    return false;
+  UnrealArrayView values;
+  if (!ReadPropertyBytes(object, property_name, L"ArrayProperty", &values,
+                         sizeof(values)) ||
+      values.count < 0 || values.capacity < values.count ||
+      values.count > 4096 || values.capacity > 4096 || index >= values.count ||
+      !values.data ||
+      !Readable(values.data, static_cast<size_t>(values.count) *
+                                 sizeof(UnrealArrayView)))
+    return false;
+  UnrealArrayView value;
+  const auto* element = static_cast<const UnrealArrayView*>(values.data) + index;
+  std::memcpy(&value, element, sizeof(value));
+  return CopyUnrealString(value, output, capacity);
 }
 
 bool UnrealReadArrayProperty(void* object, const wchar_t* property_name,
@@ -996,6 +1027,14 @@ bool UnrealReadStructArrayFloatField(const UnrealStructArrayView& array,
                                      const wchar_t* field_name,
                                      float* output) {
   return ReadStructFieldBytes(array, index, field_name, L"FloatProperty",
+                              output, sizeof(*output));
+}
+
+bool UnrealReadStructArrayIntField(const UnrealStructArrayView& array,
+                                   int32_t index,
+                                   const wchar_t* field_name,
+                                   int32_t* output) {
+  return ReadStructFieldBytes(array, index, field_name, L"IntProperty",
                               output, sizeof(*output));
 }
 

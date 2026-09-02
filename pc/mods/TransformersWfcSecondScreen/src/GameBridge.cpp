@@ -25,9 +25,6 @@ constexpr ULONGLONG kResolveIntervalMs = 250;
 constexpr ULONGLONG kWorldStabilizeMs = 750;
 constexpr ULONGLONG kResolveDiagnosticIntervalMs = 5000;
 constexpr ULONGLONG kLiveSummaryIntervalMs = 10000;
-constexpr ULONGLONG kAiSquadRescanIntervalMs = 5000;
-constexpr uint32_t kAiSquadScanBatch = 128;
-constexpr int32_t kAiSquadScanWindow = 8192;
 
 extern "C" void WfcCallThisTick(void* function, void* self, float delta);
 
@@ -149,11 +146,6 @@ void* g_controller = nullptr;
 void* g_pawn = nullptr;
 void* g_campaign_game = nullptr;
 void* g_game_replication_info = nullptr;
-void* g_ai_squad = nullptr;
-int32_t g_ai_squad_scan_index = -1;
-int32_t g_ai_squad_scan_floor = -1;
-bool g_ai_squad_scan_complete = false;
-ULONGLONG g_ai_squad_retry_at = 0;
 uint64_t g_world_epoch = 1;
 std::array<void*, kSquadCapacity> g_squad_controllers = {};
 std::array<void*, kSquadCapacity> g_squad_pawns = {};
@@ -305,11 +297,6 @@ void ClearResolvedWorld(const char* reason) {
   g_world_info = nullptr;
   g_campaign_game = nullptr;
   g_game_replication_info = nullptr;
-  g_ai_squad = nullptr;
-  g_ai_squad_scan_index = -1;
-  g_ai_squad_scan_floor = -1;
-  g_ai_squad_scan_complete = false;
-  g_ai_squad_retry_at = 0;
   g_pending_ability_release = {};
   g_world_ready_since = 0;
   ++g_world_epoch;
@@ -317,80 +304,6 @@ void ClearResolvedWorld(const char* reason) {
   Log(LogLevel::kInfo, "[Lifecycle] world invalidated reason=%s epoch=%llu",
       reason ? reason : "transition",
       static_cast<unsigned long long>(g_world_epoch));
-}
-
-void DiscoverAiSquad() {
-  if (g_ai_squad && !UnrealObjectValid(g_ai_squad)) {
-    g_ai_squad = nullptr;
-    g_ai_squad_scan_index = -1;
-    g_ai_squad_scan_floor = -1;
-    g_ai_squad_scan_complete = false;
-    g_ai_squad_retry_at = 0;
-  }
-  if (UnrealObjectValid(g_ai_squad) || !UnrealObjectValid(g_world_info))
-    return;
-  const ULONGLONG now = GetTickCount64();
-  if (g_ai_squad_scan_complete) {
-    if (now < g_ai_squad_retry_at) return;
-    g_ai_squad_scan_index = -1;
-    g_ai_squad_scan_floor = -1;
-    g_ai_squad_scan_complete = false;
-  }
-  if (g_ai_squad_scan_index < 0) {
-    const int32_t object_count = UnrealObjectCount();
-    g_ai_squad_scan_index = object_count - 1;
-    g_ai_squad_scan_floor = object_count > kAiSquadScanWindow
-                                ? object_count - kAiSquadScanWindow
-                                : 0;
-  }
-  void* player_team = TeamFor(g_controller, g_pawn);
-  if (!player_team) return;
-  // Runtime instances are appended near the end of GObjects. Scan backwards
-  // in small bounded batches so discovery cannot create a long game-tick
-  // hitch under Box64.
-  for (uint32_t examined = 0;
-       g_ai_squad_scan_index >= g_ai_squad_scan_floor &&
-       examined < kAiSquadScanBatch;
-       --g_ai_squad_scan_index, ++examined) {
-    void* candidate = UnrealObjectAt(g_ai_squad_scan_index);
-    if (!candidate || !UnrealObjectIsA(candidate, L"TnAiSquad"))
-      continue;
-    char object_name[128] = {};
-    UnrealObjectName(candidate, object_name, sizeof(object_name));
-    if (std::strncmp(object_name, "Default__", 9) == 0) continue;
-    UnrealStructArrayView records;
-    if (!UnrealReadStructArrayProperty(candidate, L"Members", &records) ||
-        records.count <= 0 || records.count > 8)
-      continue;
-    for (int32_t member = 0; member < records.count; ++member) {
-      void* controller = nullptr;
-      if (!UnrealReadStructArrayObjectField(records, member,
-                                            L"CharacterController",
-                                            &controller) ||
-          !UnrealObjectValid(controller) ||
-          !UnrealObjectIsA(controller, L"TnAiController"))
-        continue;
-      void* member_pawn = ControllerPawn(controller);
-      void* member_world = nullptr;
-      if (UnrealReadObjectProperty(controller, L"WorldInfo", &member_world) &&
-          member_world == g_world_info && member_pawn &&
-          UnrealObjectIsA(member_pawn, L"TnAiPawn") &&
-          PawnController(member_pawn) == controller &&
-          TeamFor(controller, member_pawn) == player_team) {
-        g_ai_squad = candidate;
-        Log(LogLevel::kInfo,
-            "[Squad] discovered live native TnAiSquad=%p members=%d object=%s",
-            candidate, records.count, object_name);
-        return;
-      }
-    }
-  }
-  if (g_ai_squad_scan_index < g_ai_squad_scan_floor) {
-    g_ai_squad_scan_complete = true;
-    g_ai_squad_retry_at = now + kAiSquadRescanIntervalMs;
-    Log(LogLevel::kWarning,
-        "[Squad] no live TnAiSquad object found in current world");
-  }
 }
 
 void ResolveStableObjects(ULONGLONG now) {
@@ -462,14 +375,6 @@ void ResolveStableObjects(ULONGLONG now) {
   g_game_replication_info = replication_info;
   if (world_changed) {
     g_world_ready_since = now;
-    g_ai_squad = nullptr;
-    g_ai_squad_scan_index = UnrealObjectCount() - 1;
-    g_ai_squad_scan_floor = g_ai_squad_scan_index + 1 > kAiSquadScanWindow
-                                ? g_ai_squad_scan_index + 1 -
-                                      kAiSquadScanWindow
-                                : 0;
-    g_ai_squad_scan_complete = false;
-    g_ai_squad_retry_at = 0;
     g_pending_ability_release = {};
     ++g_world_epoch;
     RejectStaleCommands(g_world_epoch);
@@ -480,7 +385,6 @@ void ResolveStableObjects(ULONGLONG now) {
   } else if (!g_world_ready_since) {
     g_world_ready_since = now;
   }
-  DiscoverAiSquad();
 }
 
 bool ReadCharacterStructName(void* owner, const wchar_t* property_name,
@@ -876,8 +780,8 @@ void ReadSquad(Snapshot* state, bool switching_allowed) {
   g_squad_controllers[0] = g_controller;
   g_squad_pawns[0] = g_pawn;
   state->squad_count = 1;
-  void* squad = UnrealObjectValid(g_ai_squad) ? g_ai_squad : nullptr;
-  if (!squad && UnrealObjectValid(g_campaign_game) &&
+  void* squad = nullptr;
+  if (UnrealObjectValid(g_campaign_game) &&
       !UnrealReadObjectProperty(g_campaign_game, L"AiSquad", &squad))
     UnrealReadObjectProperty(g_campaign_game, L"_AiSquad", &squad);
   UnrealStructArrayView records;
@@ -1001,10 +905,15 @@ void ConsiderObjectiveMarkers(const UnrealStructArrayView& markers,
   // hitch on Box64.
   const int32_t marker_count = markers.count < 128 ? markers.count : 128;
   for (int32_t index = 0; index < marker_count; ++index) {
+    int32_t marker_id = 0;
+    if (!UnrealReadStructArrayIntField(markers, index, L"MarkerId",
+                                       &marker_id) ||
+        marker_id == 0)
+      continue;
     void* marker_base = nullptr;
     if (!UnrealReadStructArrayObjectField(markers, index, L"MarkerBase",
                                           &marker_base) ||
-        !marker_base)
+        !marker_base || PendingDestroy(marker_base))
       continue;
     char description[256] = {};
     UnrealReadStructArrayStringField(markers, index, L"Description",
@@ -1012,11 +921,21 @@ void ConsiderObjectiveMarkers(const UnrealStructArrayView& markers,
     void* marker_type = nullptr;
     UnrealReadStructArrayObjectField(markers, index, L"MarkerType",
                                      &marker_type);
+    void* marker_type_class = nullptr;
+    UnrealReadStructArrayObjectField(markers, index, L"MarkerTypeClass",
+                                     &marker_type_class);
+    char marker_type_class_name[128] = {};
+    if (marker_type_class)
+      UnrealObjectName(marker_type_class, marker_type_class_name,
+                       sizeof(marker_type_class_name));
     const bool description_match = !objective_token.empty() &&
                                    Token(description) == objective_token;
     const bool objective_marker = marker_type &&
         UnrealObjectIsA(marker_type, L"TnObjectiveMarkerTypeObjective");
-    if (!description_match && !objective_marker) continue;
+    const bool objective_marker_class =
+        Token(marker_type_class_name) == "tnobjectivemarkertypeobjective";
+    if (!description_match && !objective_marker && !objective_marker_class)
+      continue;
     float x = 0.0f, y = 0.0f, z = 0.0f;
     if (!ReadLocation(marker_base, &x, &y, &z)) continue;
     const float dx = x - player_x;
@@ -1080,11 +999,23 @@ void ReadObjective(Snapshot* state) {
   ReadCampaignContext(state);
   void* manager = nullptr;
   if (!UnrealReadObjectProperty(g_game_replication_info,
-                                L"_ObjectiveManager", &manager) || !manager)
+                                L"_ObjectiveManager", &manager) || !manager ||
+      PendingDestroy(manager))
     return;
   char objective[sizeof(state->objective.text)] = {};
-  UnrealReadStringProperty(g_game_replication_info, L"ActiveObjectives",
-                           objective, sizeof(objective));
+  int32_t current_objective = -1;
+  const bool current_objective_known =
+      UnrealReadIntProperty(manager, L"CurrentObjective", &current_objective);
+  if (current_objective_known && current_objective < 0) return;
+  if (current_objective_known)
+    UnrealReadStringArrayElementProperty(manager, L"ObjectiveBank",
+                                         current_objective, objective,
+                                         sizeof(objective));
+  // ActiveObjectives is a HUD-updated cache and may be empty when the native
+  // HUD is not observing. Keep it only as a compatibility fallback.
+  if (!objective[0])
+    UnrealReadStringProperty(g_game_replication_info, L"ActiveObjectives",
+                             objective, sizeof(objective));
   if (!objective[0]) return;
   state->objective.objective_object_index = UnrealObjectIndex(manager);
   state->objective.active = 1;
@@ -1775,11 +1706,6 @@ void ShutdownGameBridge() {
   g_pawn = nullptr;
   g_campaign_game = nullptr;
   g_game_replication_info = nullptr;
-  g_ai_squad = nullptr;
-  g_ai_squad_scan_index = -1;
-  g_ai_squad_scan_floor = -1;
-  g_ai_squad_scan_complete = false;
-  g_ai_squad_retry_at = 0;
   g_squad_controllers.fill(nullptr);
   g_squad_pawns.fill(nullptr);
   g_switch_in_progress = false;

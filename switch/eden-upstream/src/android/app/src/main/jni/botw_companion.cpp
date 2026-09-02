@@ -48,27 +48,31 @@ constexpr VAddr ComponentMaxStaminaOffset = 0x186C;
 constexpr VAddr HealthGetterVtableOffset = 0x2B8;
 constexpr VAddr PlayerMatrixOffset = 0x398;
 constexpr float HyruleWorldLimit = 20'000.0f;
-constexpr VAddr PlayerSpeedEffectOneSecondsOffset = 0x1180;
-constexpr VAddr PlayerSpeedEffectOneLevelOffset = 0x1184;
-constexpr VAddr PlayerSpeedEffectTwoSecondsOffset = 0x1188;
-constexpr VAddr PlayerSpeedEffectTwoLevelOffset = 0x118C;
-constexpr VAddr PlayerSpeedEffectThreeSecondsOffset = 0x1190;
-constexpr VAddr PlayerSpeedEffectThreeLevelOffset = 0x1194;
-constexpr VAddr PlayerAttackEffectSecondsOffset = 0x11A8;
-constexpr VAddr PlayerAttackEffectLevelOffset = 0x11AC;
-constexpr VAddr PlayerDefenseEffectSecondsOffset = 0x11B0;
-constexpr VAddr PlayerDefenseEffectLevelOffset = 0x11B4;
-constexpr VAddr PlayerHeatEffectSecondsOffset = 0x11B8;
-constexpr VAddr PlayerHeatEffectLevelOffset = 0x11BC;
-constexpr VAddr PlayerColdEffectSecondsOffset = 0x11C0;
-constexpr VAddr PlayerColdEffectLevelOffset = 0x11C4;
-constexpr VAddr PlayerFireproofEffectSecondsOffset = 0x11C8;
-constexpr VAddr PlayerFireproofEffectLevelOffset = 0x11CC;
-constexpr VAddr PlayerShockEffectSecondsOffset = 0x11D8;
-constexpr VAddr PlayerShockEffectLevelOffset = 0x11DC;
-constexpr VAddr PlayerStealthEffectSecondsOffset = 0x11E8;
-constexpr VAddr PlayerStealthEffectLevelOffset = 0x11EC;
+// The pouch consume routine first writes requested effect level/duration pairs at
+// Player+0x1180..0x11EC. Player::updateCookEffects then commits them to these live countdowns.
+// Read the live values so the companion reflects actual gameplay state and decreasing timers.
+constexpr VAddr PlayerSpeedEffectOneFramesOffset = 0x1EDC;
+constexpr VAddr PlayerSpeedEffectOneLevelOffset = 0x1FF0;
+constexpr VAddr PlayerSpeedEffectTwoFramesOffset = 0x1EE8;
+constexpr VAddr PlayerSpeedEffectTwoLevelOffset = 0x1FF4;
+constexpr VAddr PlayerSpeedEffectThreeFramesOffset = 0x1EF4;
+constexpr VAddr PlayerSpeedEffectThreeLevelOffset = 0x1FF8;
+constexpr VAddr PlayerAttackEffectFramesOffset = 0x1F18;
+constexpr VAddr PlayerAttackEffectLevelOffset = 0x2004;
+constexpr VAddr PlayerDefenseEffectFramesOffset = 0x1F24;
+constexpr VAddr PlayerDefenseEffectLevelOffset = 0x2008;
+constexpr VAddr PlayerHeatEffectFramesOffset = 0x1F30;
+constexpr VAddr PlayerHeatEffectLevelOffset = 0x200C;
+constexpr VAddr PlayerColdEffectFramesOffset = 0x1F3C;
+constexpr VAddr PlayerColdEffectLevelOffset = 0x2010;
+constexpr VAddr PlayerFireproofEffectFramesOffset = 0x1F48;
+constexpr VAddr PlayerFireproofEffectLevelOffset = 0x2014;
+constexpr VAddr PlayerShockEffectFramesOffset = 0x1F60;
+constexpr VAddr PlayerShockEffectLevelOffset = 0x201C;
+constexpr VAddr PlayerStealthEffectFramesOffset = 0x1F78;
+constexpr VAddr PlayerStealthEffectLevelOffset = 0x2024;
 constexpr s32 MaximumCookEffectSeconds = 86'400;
+constexpr float CookEffectFramesPerSecond = 30.0f;
 
 // qst::Manager::sInstance is direct storage in this exact executable. Manager::mQuests is a
 // sead::ObjArray whose count and pointer buffer live at +0xB8/+0xC0. Quest and Step offsets are
@@ -182,11 +186,11 @@ constexpr VAddr EatScreenRegistryOffset = 0x01E374B8;
 constexpr VAddr HoldControllerGotOffset = 0x01D6A550;
 constexpr VAddr PlayerInfoStorageOffset = 0x01E13ED0;
 constexpr VAddr PlayerInfoActorOffset = 0x60;
-constexpr VAddr PlayerInfoLinkOffset = 0x68;
 constexpr VAddr HoldControllerPlayerLinkOffset = 0x150;
-constexpr VAddr BaseProcLinkIdOffset = 0x8;
-constexpr VAddr BaseProcLinkAcquiredOffset = 0xC;
-constexpr u32 InvalidBaseProcLinkId = 0xFFFFFFFFU;
+// The gameplay notifier owns a registered ActorMessage sender at +0x198. Its dispatcher at
+// +0x1A0 is initialized during ordinary gameplay and does not depend on PauseMenuController.
+constexpr VAddr GameplayMessageSenderOffset = 0x198;
+constexpr VAddr GameplayMessageDispatcherOffset = GameplayMessageSenderOffset + sizeof(u64);
 
 constexpr bool IsEquipMailboxBusy(u32 state) {
     return state == EquipMailboxQueued || state == EquipMailboxRunning ||
@@ -204,8 +208,6 @@ constexpr std::string_view ItemActionName(int action) {
     default: return "Unknown";
     }
 }
-
-
 
 constexpr VAddr RuneManagerStaticOffset = 0x01E0CD40;
 constexpr VAddr RuneManagerSelectedTypeOffset = 0x240;
@@ -873,59 +875,54 @@ std::optional<PlayerMapSnapshot> ReadPlayerMap(Core::Memory::Memory& memory, VAd
 }
 
 std::vector<ActiveEffectSnapshot> ReadActiveCookEffects(Core::Memory::Memory& memory,
-                                                         VAddr player_actor) {
+                                                        VAddr player_actor) {
     std::vector<ActiveEffectSnapshot> effects;
     effects.reserve(8);
-    const auto add_integer_effect = [&](std::string_view name, VAddr seconds_offset,
-                                        VAddr level_offset) {
-        const auto seconds = Read<s32>(memory, player_actor + seconds_offset);
-        const auto level = Read<float>(memory, player_actor + level_offset);
-        if (seconds && level && *seconds > 0 && *seconds <= MaximumCookEffectSeconds &&
-            std::isfinite(*level) && *level > 0.0f && *level <= 10000.0f) {
-            effects.push_back({name, *seconds, *level});
+    const auto add_effect = [&](std::string_view name, VAddr frames_offset, VAddr level_offset) {
+        const auto frames = Read<float>(memory, player_actor + frames_offset);
+        const auto level = Read<s32>(memory, player_actor + level_offset);
+        if (frames && level && std::isfinite(*frames) && *frames > 0.0f &&
+            *frames <= static_cast<float>(MaximumCookEffectSeconds) * CookEffectFramesPerSecond &&
+            *level > 0 && *level <= 3) {
+            effects.push_back({name,
+                               static_cast<s32>(std::ceil(*frames / CookEffectFramesPerSecond)),
+                               static_cast<float>(*level)});
         }
     };
-    add_integer_effect("Attack Up", PlayerAttackEffectSecondsOffset,
-                       PlayerAttackEffectLevelOffset);
-    add_integer_effect("Defense Up", PlayerDefenseEffectSecondsOffset,
-                       PlayerDefenseEffectLevelOffset);
-    add_integer_effect("Heat Resistance", PlayerHeatEffectSecondsOffset,
-                       PlayerHeatEffectLevelOffset);
-    add_integer_effect("Cold Resistance", PlayerColdEffectSecondsOffset,
-                       PlayerColdEffectLevelOffset);
-    add_integer_effect("Flame Guard", PlayerFireproofEffectSecondsOffset,
-                       PlayerFireproofEffectLevelOffset);
-    add_integer_effect("Shock Resistance", PlayerShockEffectSecondsOffset,
-                       PlayerShockEffectLevelOffset);
-    add_integer_effect("Stealth Up", PlayerStealthEffectSecondsOffset,
-                       PlayerStealthEffectLevelOffset);
+    add_effect("Attack Up", PlayerAttackEffectFramesOffset, PlayerAttackEffectLevelOffset);
+    add_effect("Defense Up", PlayerDefenseEffectFramesOffset, PlayerDefenseEffectLevelOffset);
+    add_effect("Heat Resistance", PlayerHeatEffectFramesOffset, PlayerHeatEffectLevelOffset);
+    add_effect("Cold Resistance", PlayerColdEffectFramesOffset, PlayerColdEffectLevelOffset);
+    add_effect("Flame Guard", PlayerFireproofEffectFramesOffset, PlayerFireproofEffectLevelOffset);
+    add_effect("Shock Resistance", PlayerShockEffectFramesOffset, PlayerShockEffectLevelOffset);
+    add_effect("Stealth Up", PlayerStealthEffectFramesOffset, PlayerStealthEffectLevelOffset);
 
-    float speed_seconds = 0.0f;
-    float speed_level = 0.0f;
-    for (const auto [seconds_offset, level_offset] :
-         std::array<std::pair<VAddr, VAddr>, 3>{{
-             {PlayerSpeedEffectOneSecondsOffset, PlayerSpeedEffectOneLevelOffset},
-             {PlayerSpeedEffectTwoSecondsOffset, PlayerSpeedEffectTwoLevelOffset},
-             {PlayerSpeedEffectThreeSecondsOffset, PlayerSpeedEffectThreeLevelOffset},
+    float speed_frames = 0.0f;
+    s32 speed_level = 0;
+    for (const auto [frames_offset, level_offset] : std::array<std::pair<VAddr, VAddr>, 3>{{
+             {PlayerSpeedEffectOneFramesOffset, PlayerSpeedEffectOneLevelOffset},
+             {PlayerSpeedEffectTwoFramesOffset, PlayerSpeedEffectTwoLevelOffset},
+             {PlayerSpeedEffectThreeFramesOffset, PlayerSpeedEffectThreeLevelOffset},
          }}) {
-        const auto seconds = Read<float>(memory, player_actor + seconds_offset);
-        const auto level = Read<float>(memory, player_actor + level_offset);
-        if (seconds && level && std::isfinite(*seconds) && std::isfinite(*level) &&
-            *seconds > 0.0f && *seconds <= static_cast<float>(MaximumCookEffectSeconds) &&
-            *level > 0.0f && *level <= 10000.0f) {
-            speed_seconds = std::max(speed_seconds, *seconds);
+        const auto frames = Read<float>(memory, player_actor + frames_offset);
+        const auto level = Read<s32>(memory, player_actor + level_offset);
+        if (frames && level && std::isfinite(*frames) && *frames > 0.0f &&
+            *frames <= static_cast<float>(MaximumCookEffectSeconds) * CookEffectFramesPerSecond &&
+            *level > 0 && *level <= 3) {
+            speed_frames = std::max(speed_frames, *frames);
             speed_level = std::max(speed_level, *level);
         }
     }
-    if (speed_seconds > 0.0f) {
-        effects.push_back(
-            {"Speed Up", static_cast<s32>(std::ceil(speed_seconds)), speed_level});
+    if (speed_frames > 0.0f) {
+        effects.push_back({"Speed Up",
+                           static_cast<s32>(std::ceil(speed_frames / CookEffectFramesPerSecond)),
+                           static_cast<float>(speed_level)});
     }
     return effects;
 }
 
 std::optional<std::vector<QuestSnapshot>> ReadQuests(Core::Memory::Memory& memory,
-                                                      VAddr main_base) {
+                                                     VAddr main_base) {
     const auto manager = Read<u64>(memory, main_base + QuestManagerStaticOffset);
     if (!manager || !*manager) {
         return std::nullopt;
@@ -2032,15 +2029,20 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     }
     const VAddr equip_mailbox = action_mailbox;
     const bool equip_bridge = pouch_items && action_bridge;
-    const auto player_link_proc = Read<u64>(memory, *player + PlayerInfoLinkOffset);
-    const auto player_link_id = Read<u32>(memory, *player + PlayerInfoLinkOffset +
-                                                     BaseProcLinkIdOffset);
     const bool player_alive = valid_health && *health > 0;
-    const bool hold_bridge = equip_bridge && player_alive && player_link_proc &&
-                             *player_link_proc && player_link_id &&
-                             *player_link_id != InvalidBaseProcLinkId;
-    const auto eat_screen_registry =
-        Read<u64>(memory, main_base + EatScreenRegistryOffset);
+    const auto gameplay_notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
+    const auto gameplay_message_dispatcher =
+        gameplay_notifier && *gameplay_notifier
+            ? Read<u64>(memory, *gameplay_notifier + GameplayMessageDispatcherOffset)
+            : std::nullopt;
+    const auto gameplay_message_vtable = gameplay_message_dispatcher && *gameplay_message_dispatcher
+                                             ? Read<u64>(memory, *gameplay_message_dispatcher)
+                                             : std::nullopt;
+    const bool hold_bridge = equip_bridge && player_alive && gameplay_notifier &&
+                             *gameplay_notifier && gameplay_message_dispatcher &&
+                             *gameplay_message_dispatcher && gameplay_message_vtable &&
+                             *gameplay_message_vtable;
+    const auto eat_screen_registry = Read<u64>(memory, main_base + EatScreenRegistryOffset);
     const auto eat_screen_count = eat_screen_registry && *eat_screen_registry
                                       ? Read<u32>(memory, *eat_screen_registry + 0x28)
                                       : std::nullopt;
@@ -2591,68 +2593,63 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
         const auto player_actor = player_info && *player_info
                                       ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
                                       : std::nullopt;
-        const auto player_link_proc = player_info && *player_info
-                                          ? Read<u64>(memory, *player_info + PlayerInfoLinkOffset)
-                                          : std::nullopt;
-        const auto player_link_id = player_info && *player_info
-                                        ? Read<u32>(memory, *player_info + PlayerInfoLinkOffset +
-                                                               BaseProcLinkIdOffset)
-                                        : std::nullopt;
-        const auto player_link_acquired =
-            player_info && *player_info
-                ? Read<u8>(memory, *player_info + PlayerInfoLinkOffset +
-                                       BaseProcLinkAcquiredOffset)
+        const auto gameplay_notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
+        const auto gameplay_message_dispatcher =
+            gameplay_notifier && *gameplay_notifier
+                ? Read<u64>(memory, *gameplay_notifier + GameplayMessageDispatcherOffset)
+                : std::nullopt;
+        const auto gameplay_message_vtable =
+            gameplay_message_dispatcher && *gameplay_message_dispatcher
+                ? Read<u64>(memory, *gameplay_message_dispatcher)
                 : std::nullopt;
         if (!player_info || !*player_info || !player_actor || !*player_actor ||
-            !player_link_proc || !*player_link_proc || !player_link_id ||
-            *player_link_id == InvalidBaseProcLinkId || !player_link_acquired) {
-            LOG_WARNING(Frontend,
-                        "[BOTW-HOLD] rejected reason=player-link-unavailable "
-                        "playerInfo={:016X} player={:016X} linkProc={:016X} linkId={} "
-                        "linkAcquired={}",
-                        player_info.value_or(0), player_actor.value_or(0),
-                        player_link_proc.value_or(0),
-                        player_link_id ? std::to_string(*player_link_id) : "unavailable",
-                        player_link_acquired ? std::to_string(*player_link_acquired)
-                                             : "unavailable");
+            !gameplay_notifier || !*gameplay_notifier || !gameplay_message_dispatcher ||
+            !*gameplay_message_dispatcher || !gameplay_message_vtable ||
+            !*gameplay_message_vtable) {
+            LOG_WARNING(
+                Frontend,
+                "[BOTW-HOLD] rejected reason=native-context-unavailable "
+                "playerInfo={:016X} player={:016X} gameplayNotifier={:016X} "
+                "messageSender={:016X} messageDispatcher={:016X} "
+                "messageVtable={:016X}",
+                player_info.value_or(0), player_actor.value_or(0), gameplay_notifier.value_or(0),
+                gameplay_notifier.value_or(0) + GameplayMessageSenderOffset,
+                gameplay_message_dispatcher.value_or(0), gameplay_message_vtable.value_or(0));
             return false;
         }
-        const auto controller_storage =
-            Read<u64>(memory, main_base + HoldControllerGotOffset);
+        const auto controller_storage = Read<u64>(memory, main_base + HoldControllerGotOffset);
         const auto controller = controller_storage && *controller_storage
                                     ? Read<u64>(memory, *controller_storage)
                                     : std::nullopt;
-        const auto active_flag_pointer = controller && *controller
-                                             ? Read<u64>(memory, *controller + 0x40)
-                                             : std::nullopt;
+        const auto active_flag_pointer =
+            controller && *controller ? Read<u64>(memory, *controller + 0x40) : std::nullopt;
         const auto active_flag = active_flag_pointer && *active_flag_pointer
                                      ? Read<u8>(memory, *active_flag_pointer)
                                      : std::nullopt;
-        const auto controller_state = controller && *controller
-                                          ? Read<s32>(memory, *controller + 0xA0)
-                                          : std::nullopt;
-        const auto controller_action = controller && *controller
-                                           ? Read<s32>(memory, *controller + 0x30)
-                                           : std::nullopt;
-        const auto controller_target = controller && *controller
-                                           ? Read<u64>(memory, *controller + 0xA8)
-                                           : std::nullopt;
-        const auto controller_link_first = controller && *controller
-                                               ? Read<u64>(memory, *controller +
-                                                                      HoldControllerPlayerLinkOffset)
-                                               : std::nullopt;
+        const auto controller_state =
+            controller && *controller ? Read<s32>(memory, *controller + 0xA0) : std::nullopt;
+        const auto controller_action =
+            controller && *controller ? Read<s32>(memory, *controller + 0x30) : std::nullopt;
+        const auto controller_target =
+            controller && *controller ? Read<u64>(memory, *controller + 0xA8) : std::nullopt;
+        const auto controller_link_first =
+            controller && *controller
+                ? Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset)
+                : std::nullopt;
         const auto controller_link_second =
             controller && *controller
                 ? Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset + sizeof(u64))
                 : std::nullopt;
         LOG_INFO(Frontend,
                  "[BOTW-HOLD] validated playerInfo={:016X} player={:016X} "
-                 "playerLinkProc={:016X} playerLinkId={} playerLinkAcquired={} "
+                 "gameplayNotifier={:016X} messageSender={:016X} "
+                 "messageDispatcher={:016X} messageVtable={:016X} "
                  "heldBefore={}/{} nativeMutation=main+00D9F0E8 "
                  "nativeCapture=main+00CC12F0 nativeAttachMessage=08000003 "
                  "menuControllerRequired=false gameThreadDispatch=guest-hook",
-                 *player_info, *player_actor, *player_link_proc, *player_link_id,
-                 *player_link_acquired, *held_count, PouchGrabbedItemCapacity);
+                 *player_info, *player_actor, *gameplay_notifier,
+                 *gameplay_notifier + GameplayMessageSenderOffset, *gameplay_message_dispatcher,
+                 *gameplay_message_vtable, *held_count, PouchGrabbedItemCapacity);
         hold_controller_address = controller.value_or(0);
         hold_active_flag_pointer_address = active_flag_pointer.value_or(0);
         hold_controller_target_before = controller_target.value_or(0);
@@ -2692,9 +2689,8 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                                           : std::nullopt;
         if (!eat_selection || eat_selection->tab >= PouchTabCount ||
             eat_selection->slot >= PouchItemsPerTab || !player_info || !*player_info ||
-            !player_actor || !*player_actor ||
-            !screen_registry || !*screen_registry || !screen_count || !screen_array ||
-            !*screen_array) {
+            !player_actor || !*player_actor || !screen_registry || !*screen_registry ||
+            !screen_count || !screen_array || !*screen_array) {
             LOG_WARNING(Frontend,
                         "[BOTW-EAT] rejected reason=native-context-invalid actor={} "
                         "target={:016X} selection={} tab={} slot={} notifier={:016X} "
@@ -2705,8 +2701,7 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                         target->name, target->address, eat_selection.has_value(),
                         eat_selection ? eat_selection->tab : std::numeric_limits<u32>::max(),
                         eat_selection ? eat_selection->slot : std::numeric_limits<u32>::max(),
-                        notifier.value_or(0), notifier_actor.value_or(0),
-                        player_info.value_or(0),
+                        notifier.value_or(0), notifier_actor.value_or(0), player_info.value_or(0),
                         player_actor.value_or(0), screen_registry.value_or(0),
                         screen_array.value_or(0),
                         screen_count ? std::to_string(*screen_count) : "unavailable");
@@ -2721,24 +2716,20 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                  "screenRegistry={:016X} screenArray={:016X} screenCount={} "
                  "screenCandidate={:016X} inventoryMenuState=not-consulted "
                  "menuContextRequired=false nativeGameplay=00E3EDE4 nativePouchUse=00D97B84 "
-                 "nativeAnimationEvent=00D4279C gameThreadDispatch=guest-hook",
-                 target->name, target->address, target->type, target->value,
-                 eat_selection->tab, eat_selection->slot, eat_selection->tab_head,
-                 eat_selection->tab_item_count, eat_selection->node_offset, *player_actor,
-                 *pouch_manager,
-                 notifier.value_or(0), notifier_actor.value_or(0), *screen_registry,
-                 *screen_array, *screen_count,
+                 "nativeLiveEffectUpdate=00CF05F0 nativeAnimationEvent=00D4279C "
+                 "gameThreadDispatch=guest-hook",
+                 target->name, target->address, target->type, target->value, eat_selection->tab,
+                 eat_selection->slot, eat_selection->tab_head, eat_selection->tab_item_count,
+                 eat_selection->node_offset, *player_actor, *pouch_manager, notifier.value_or(0),
+                 notifier_actor.value_or(0), *screen_registry, *screen_array, *screen_count,
                  screen_candidate.value_or(0));
     }
 
     const u64 mailbox_request = target->address;
-    const u32 mailbox_type = action == ActionEatItem
-                                 ? EatMailboxTypeSentinel
-                             : action == ActionHoldItem
-                                 ? HoldMailboxTypeSentinel
-                             : action == ActionUnequipItem
-                                 ? UnequipMailboxTypeSentinel
-                                 : static_cast<u32>(target->type);
+    const u32 mailbox_type = action == ActionEatItem       ? EatMailboxTypeSentinel
+                             : action == ActionHoldItem    ? HoldMailboxTypeSentinel
+                             : action == ActionUnequipItem ? UnequipMailboxTypeSentinel
+                                                           : static_cast<u32>(target->type);
 
     std::scoped_lock action_lock{EquipActionMutex};
     if (!IsEquipMailboxAvailable(system, equip_mailbox)) {
@@ -2898,15 +2889,13 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
              "controllerTargetBefore={:016X} controllerLinkFirst={:016X} "
              "controllerLinkSecond={:016X} mailbox={:016X}",
              diagnostic_sequence, diagnostic_validation_flags, target->name, target->address,
-             *pouch_manager, action_player_address, target->type, target->item_use,
-             target->value,
+             *pouch_manager, action_player_address, target->type, target->item_use, target->value,
              eat_selection ? std::to_string(eat_selection->tab) : "unavailable",
              eat_selection ? std::to_string(eat_selection->slot) : "unavailable",
              eat_selection ? std::to_string(eat_selection->node_offset) : "unavailable",
              eat_selection ? eat_selection->tab_head : 0,
              eat_selection ? std::to_string(eat_selection->tab_item_count) : "unavailable",
-             held_count ? std::to_string(*held_count) : "unavailable",
-             hold_controller_address,
+             held_count ? std::to_string(*held_count) : "unavailable", hold_controller_address,
              hold_controller_state_before == ActionDiagnosticUnavailable
                  ? "unavailable"
                  : std::to_string(static_cast<s32>(hold_controller_state_before)),
@@ -2916,15 +2905,15 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
              hold_controller_active_before == ActionDiagnosticUnavailable
                  ? "unavailable"
                  : std::to_string(hold_controller_active_before),
-             hold_controller_target_before, hold_controller_link_first,
-             hold_controller_link_second, equip_mailbox);
+             hold_controller_target_before, hold_controller_link_first, hold_controller_link_second,
+             equip_mailbox);
     if (action == ActionEatItem) {
         LOG_INFO(Frontend,
                  "[BOTW-EAT] queued actor={} target={:016X} type={} quantityBefore={} "
                  "tab={} slot={} state={} nativeGameplay=00E3EDE4 nativePouchUse=00D97B84 "
-                 "nativeAnimationEvent=00D4279C",
-                 target->name, target->address, target->type, target->value,
-                 eat_selection->tab, eat_selection->slot, EquipMailboxQueued);
+                 "nativeLiveEffectUpdate=00CF05F0 nativeAnimationEvent=00D4279C",
+                 target->name, target->address, target->type, target->value, eat_selection->tab,
+                 eat_selection->slot, EquipMailboxQueued);
         LOG_INFO(Frontend,
                  "[BOTW-ANIMATION] queued action=Eat actor={} nativeEvent=main+00D4279C "
                  "dispatchAfterNativeConsume=true",
@@ -2933,8 +2922,8 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
         LOG_INFO(Frontend,
                  "[BOTW-ITEM-ACTION] queued action=Hold actor={} target={:016X} "
                  "controller={:016X} quantityBefore={} heldBefore={}/{} native=00DA46A0",
-                 target->name, target->address, hold_controller_address, target->value,
-                 *held_count, PouchGrabbedItemCapacity);
+                 target->name, target->address, hold_controller_address, target->value, *held_count,
+                 PouchGrabbedItemCapacity);
     } else if (action == ActionUnequipItem) {
         LOG_INFO(Frontend,
                  "[BOTW-EQUIP] queued action=Unequip actor={} target={:016X} type={} "
