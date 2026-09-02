@@ -80,7 +80,7 @@ def main() -> int:
     title_keys_path = args.title_keys
     requested_rights_id = selected_header[0x230:0x240].hex()
     title_keys = read_keys(args.title_keys)
-    if requested_rights_id not in title_keys:
+    if requested_rights_id != "0" * 32 and requested_rights_id not in title_keys:
         ticket_entry = next(
             (entry for entry in pfs_files if entry.name.endswith(".tik")), None
         )

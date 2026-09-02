@@ -24,6 +24,7 @@ import androidx.preference.PreferenceManager
 import com.dualscreen.launcher.CompanionTheme
 import com.dualscreen.launcher.DualScreenLauncherApplication
 import com.dualscreen.launcher.DualscreenStorage
+import com.dualscreen.launcher.ExecutableDllOverrideConfiguration
 import com.dualscreen.launcher.GameCatalog
 import com.dualscreen.launcher.Fallout3LaunchConfiguration
 import com.dualscreen.launcher.GameResolution
@@ -32,6 +33,7 @@ import com.dualscreen.launcher.LowerPanelMode
 import com.dualscreen.launcher.PresetContainerManager
 import com.dualscreen.launcher.SupportedGame
 import com.dualscreen.launcher.SkyrimGamepadConfiguration
+import com.dualscreen.launcher.WfcPrerequisiteConfiguration
 import com.dualscreen.launcher.resolveConfigurationLauncherExecutable
 import com.dualscreen.launcher.supportedGameLaunchEnvironment
 import com.thor.core.display.DisplayTopology
@@ -55,6 +57,7 @@ import com.wemu.runtime.WemuRuntimeEngine
 import com.wemu.session.secondscreen.SecondScreen
 import com.wemu.session.secondscreen.StardewPanelControl
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -291,6 +294,28 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                 "cwd=${target.parentFile?.absolutePath} readable=${target.canRead()}",
         )
 
+        if (!configurationLauncher && game.nativeDllOverrides.isNotEmpty()) {
+            val registry = withContext(Dispatchers.IO) {
+                runCatching {
+                    ExecutableDllOverrideConfiguration.ensure(
+                        container.rootDir,
+                        target.name,
+                        game.nativeDllOverrides,
+                    )
+                }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not apply the native panel proxy policy", failure)
+                finishWithMessage("Native dual-screen setup failed: ${failure.message}")
+                return
+            }
+            launchStatus.record(
+                "COMPATIBILITY",
+                "Executable-scoped overrides verified for ${target.name}: " +
+                    game.nativeDllOverrides.entries.joinToString { "${it.key}=${it.value}" } +
+                    " registry=${registry.absolutePath}",
+            )
+        }
+
         if (game.id == "fallout3") {
             val gameRoot = target.parentFile
             val guestGameRoot = shortcut.path
@@ -368,6 +393,49 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             launchStatus.record("SHORTCUT", "Migrated launch-only DLL overrides: $launchEnvironment")
         }
 
+        val wfcPrerequisites = if (!configurationLauncher && game.id == "transformers-wfc") {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    WfcPrerequisiteConfiguration.prepare(
+                        container.rootDir,
+                        target,
+                        shortcut.path,
+                    )
+                }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not verify the Transformers prerequisite payload", failure)
+                finishWithMessage("Transformers prerequisite setup failed: ${failure.message}")
+                return
+            }
+        } else {
+            null
+        }
+        val runtimeShortcut = if (wfcPrerequisites != null && !wfcPrerequisites.installed) {
+            val bootstrap = withContext(Dispatchers.IO) {
+                WfcPrerequisiteConfiguration.createBootstrapShortcut(
+                    container,
+                    shortcut,
+                    wfcPrerequisites,
+                )
+            }
+            launchStatus.record(
+                "PREREQUISITES",
+                "PhysX, Visual C++ 2005 SP1 x86, and DirectX require verified one-time setup; " +
+                    "bootstrap=${wfcPrerequisites.guestBootstrapPath} " +
+                    "receipt=${wfcPrerequisites.receipt.absolutePath}",
+            )
+            bootstrap
+        } else {
+            if (wfcPrerequisites != null) {
+                launchStatus.record(
+                    "PREREQUISITES",
+                    "Verified persistent PhysX, Visual C++ 2005 SP1 x86, and DirectX installation; " +
+                        "receipt=${wfcPrerequisites.receipt.absolutePath}",
+                )
+            }
+            shortcut
+        }
+
         guestOutputCallback = Callback<String> { line: String -> launchStatus.guest(line) }.also {
             ProcessHelper.addDebugCallback(it)
         }
@@ -398,7 +466,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     "shortcutContext=retained bridge=WinHandler/CoreCLR",
             )
         }
-        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, shortcut)
+        val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, runtimeShortcut)
         session.setShortcutLaunchDeferred(deferredStardewLaunch)
         runtime = session
         if (game.id == "skyrim-se") {
@@ -433,13 +501,21 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         )
         attachRenderer(xServer, session)
         watchForGameWindow(xServer, game, configurationLauncher)
+        val installingWfcPrerequisites = wfcPrerequisites != null && !wfcPrerequisites.installed
         updateStatus(
-            if (configurationLauncher) {
+            if (installingWfcPrerequisites) {
+                "INSTALLING REQUIRED WINDOWS COMPONENTS"
+            } else if (configurationLauncher) {
                 "STARTING ${game.title.uppercase(Locale.ROOT)} LAUNCHER"
             } else {
                 "STARTING ${game.title.uppercase(Locale.ROOT)}"
             },
-            "Submitting the final guest command",
+            if (installingWfcPrerequisites) {
+                "First-time setup can take several minutes. Keep this screen open while " +
+                    "PhysX, Visual C++, and DirectX are installed."
+            } else {
+                "Submitting the final guest command"
+            },
         )
 
         val started = withContext(Dispatchers.IO) { runCatching { session.start() } }
@@ -448,6 +524,9 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             Log.e(TAG, "Runtime start failed", failure)
             finishWithMessage(failure?.message ?: "The game could not be started")
             return
+        }
+        if (wfcPrerequisites != null && !wfcPrerequisites.installed) {
+            monitorWfcPrerequisiteBootstrap(container, wfcPrerequisites)
         }
         if (deferredStardewLaunch) {
             val command = deferredGuestCommand(shortcut.path, shortcut.getExtra("execArgs"))
@@ -461,6 +540,47 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         runCatching { preset.markLaunchMaterialized(container) }
             .onFailure { Log.e(TAG, "Could not record runtime materialization", it) }
         launchStatus.record("PROCESS", "Process creation returned successfully; waiting for the game window")
+    }
+
+    private fun monitorWfcPrerequisiteBootstrap(
+        container: Container,
+        preparation: WfcPrerequisiteConfiguration.Preparation,
+    ) {
+        lifecycleScope.launch {
+            val deadline = android.os.SystemClock.elapsedRealtime() + WFC_PREREQUISITE_TIMEOUT_MS
+            while (!isFinishing && android.os.SystemClock.elapsedRealtime() < deadline) {
+                val result = withContext(Dispatchers.IO) {
+                    when {
+                        preparation.failure.isFile ->
+                            preparation.failure.readText().trim().ifBlank { "unknown installer error" }
+                        WfcPrerequisiteConfiguration.prerequisitesAreCurrent(container.rootDir) -> ""
+                        else -> null
+                    }
+                }
+                if (result == "") {
+                    launchStatus.record(
+                        "PREREQUISITES",
+                        "Installer exit codes, receipt revision, and installed component files verified; " +
+                            "TWFC launch released",
+                    )
+                    updateStatus(
+                        "STARTING TRANSFORMERS: WAR FOR CYBERTRON",
+                        "Required Windows components verified",
+                    )
+                    return@launch
+                }
+                if (result != null) {
+                    withContext(Dispatchers.IO) { runtime?.stop() }
+                    finishWithMessage("Transformers prerequisite installation failed: $result")
+                    return@launch
+                }
+                delay(500)
+            }
+            if (!isFinishing) {
+                withContext(Dispatchers.IO) { runtime?.stop() }
+                finishWithMessage("Transformers prerequisite installation timed out before verification")
+            }
+        }
     }
 
     private fun attachRenderer(xServer: XServer, session: RuntimeSession) {
@@ -1103,6 +1223,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
 
     companion object {
         private const val TAG = "DualScreenGameLaunch"
+        private const val WFC_PREREQUISITE_TIMEOUT_MS = 15 * 60 * 1000L
         private const val NATIVE_PANEL_TRIGGER_THRESHOLD = 0.55f
         const val EXTRA_GAME_ID = "gameId"
         const val EXTRA_CONTAINER_ID = "containerId"

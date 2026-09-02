@@ -19,7 +19,31 @@ constexpr std::array<u8, 0x20> BuildId{
 };
 
 constexpr u32 Magic = 0x4C505353; // "SSPL" in little-endian memory.
-constexpr u32 Version = 1;
+constexpr u32 Version = 2;
+
+enum class MapCaptureState : u32 {
+    Idle = 0,
+    Pending = 1,
+    Ready = 2,
+    Rejected = 3,
+};
+
+enum class MapCaptureResult : u32 {
+    Success = 0,
+    NoStage = 1,
+    StageChanged = 2,
+    NoTexture = 3,
+    InvalidTexture = 4,
+    NoMapGlobal = 5,
+    InvalidMapScale = 6,
+    InvalidCaptureWidth = 7,
+    InvalidCaptureHeight = 8,
+    InvalidMapFloor = 9,
+    MissingMapFloor = 10,
+    TextureWidthZero = 11,
+    TextureHeightZero = 12,
+    TextureDataMissing = 13,
+};
 
 // Written by the injected, game-thread main-loop payload and read by the Android companion.
 // Sequence is a seqlock: odd while the payload writes and even once a frame is complete.
@@ -40,11 +64,39 @@ struct Mailbox {
     u8 current_night;
     u8 current_trial;
     std::array<u8, 3> reserved;
+
+    // Host writes only map_request/map_acknowledged. The injected game-thread
+    // bridge owns every other map field and is the only writer to dStage.
+    // map_metadata_sequence is a seqlock: odd while metadata changes, even
+    // after stage/texture/data/dimensions describe one completed capture.
+    u32 map_metadata_sequence;
+    u32 map_state;
+    u32 map_request;
+    u32 map_in_flight;
+    u32 map_completed;
+    u32 map_acknowledged;
+    u32 map_result;
+    u32 map_reserved;
+    u64 map_stage;
+    u64 map_texture;
+    u64 map_data;
+    u16 map_width;
+    u16 map_height;
+    u8 map_format;
+    s8 map_floor;
+    u16 map_reserved2;
+    std::array<char, 8> map_stage_name;
 };
 
-static_assert(sizeof(Mailbox) == 0x48);
+static_assert(sizeof(Mailbox) == 0x90);
 static_assert(offsetof(Mailbox, sequence) == 0x0C);
 static_assert(offsetof(Mailbox, file_manager) == 0x10);
 static_assert(offsetof(Mailbox, stage_name) == 0x38);
+static_assert(offsetof(Mailbox, map_metadata_sequence) == 0x48);
+static_assert(offsetof(Mailbox, map_state) == 0x4C);
+static_assert(offsetof(Mailbox, map_request) == 0x50);
+static_assert(offsetof(Mailbox, map_stage) == 0x68);
+static_assert(offsetof(Mailbox, map_data) == 0x78);
+static_assert(offsetof(Mailbox, map_stage_name) == 0x88);
 
 } // namespace Loader::SshdCompanionPayload

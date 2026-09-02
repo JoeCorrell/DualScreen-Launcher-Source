@@ -53,6 +53,9 @@ object NativeLibrary {
     init {
         try {
             System.loadLibrary("yuzu-android")
+            if (BuildConfig.EDEN_EMBEDDED_RUNTIME) {
+                System.loadLibrary("sshd-companion")
+            }
         } catch (ex: UnsatisfiedLinkError) {
             error("[NativeLibrary] $ex")
         }
@@ -193,7 +196,26 @@ object NativeLibrary {
 
     external fun fillPlzaCompanionSnapshot(output: ByteBuffer): Int
 
-    external fun fillSshdCompanionSnapshot(output: ByteBuffer): Int
+    private external fun fillSshdCompanionSnapshotV4(output: ByteBuffer): Int
+
+    private external fun copySshdCompanionMapImageV1(output: ByteBuffer): Int
+
+    private external fun performSshdCompanionActionV4(action: Int, argument: Int): Boolean
+
+    fun fillSshdCompanionSnapshot(output: ByteBuffer): Int =
+        fillSshdCompanionSnapshotV4(output)
+
+    fun copySshdCompanionMapImage(output: ByteBuffer): Int =
+        copySshdCompanionMapImageV1(output)
+
+    fun performSshdCompanionAction(action: Int, argument: Int): Boolean =
+        performSshdCompanionActionV4(action, argument)
+
+    external fun fillXcxCompanionSnapshot(output: ByteBuffer): Int
+
+    external fun readXcxGameFlags(bitWidth: Int, flagIds: IntArray): ByteArray?
+
+    external fun performXcxCompanionAction(action: Int, argument: Int): Boolean
 
     external fun performPlzaCompanionAction(action: Int, argument: Int): Boolean
 

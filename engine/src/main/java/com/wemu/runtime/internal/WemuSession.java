@@ -1072,11 +1072,13 @@ public class WemuSession implements RuntimeSession {
         boolean relaxedBarriers = "1".equals(dxwrapperConfig.get("relaxedBarriers"));
         String affinity = container.getExtra("affinityCores");
         if (affinity == null || affinity.isEmpty()) affinity = "automatic";
-        // ARM64EC Wine is hard-routed to libwow64fex.dll by the guest launcher.
-        // Report the translator which will actually execute x64 code, not an
-        // ignored emulator value retained by an older container.
-        boolean fex = wineInfo != null && wineInfo.isArm64EC();
+        // Resolve through the guest launcher's policy so diagnostics cannot
+        // drift from HODLL selection. Ordinary ARM64EC sessions remain on FEX;
+        // the authenticated Transformers preset is the explicit Box64 exception.
+        String effectiveEmulator = guestProgramLauncherComponent.getEffectiveEmulator();
+        boolean fex = !"box64".equalsIgnoreCase(effectiveEmulator);
         String translator = fex ? "FEXCore" : "Box64";
+        String pinnedBox64 = guestProgramLauncherComponent.getPinnedBox64RuntimeDiagnostic();
 
         Log.i(TAG, "Effective performance: renderer=" + getDisplayRenderer()
                 + ", directScanout="
@@ -1099,7 +1101,8 @@ public class WemuSession implements RuntimeSession {
                 + ", affinity=" + affinity
                 + ", translator=" + translator + "/"
                 + resolve(fex ? "fexcorePreset" : "box64Preset",
-                        fex ? container.getFEXCorePreset() : container.getBox64Preset()));
+                        fex ? container.getFEXCorePreset() : container.getBox64Preset())
+                + (pinnedBox64.isEmpty() ? "" : ", pinnedBox64=" + pinnedBox64));
     }
 
     /**

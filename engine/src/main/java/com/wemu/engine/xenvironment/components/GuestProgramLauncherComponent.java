@@ -94,6 +94,47 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
     public Container getContainer() { return this.container; }
     public void setContainer(Container container) { this.container = container; }
 
+    private SharedBox64RuntimeState.RuntimeRequest resolveBox64RuntimeRequest() {
+        String box64Version = container.getBox64Version();
+        if (shortcut != null) {
+            box64Version = shortcut.getExtra(
+                    "box64Version", shortcut.container.getBox64Version());
+        }
+        return SharedBox64RuntimeState.runtimeRequest(
+                container.getExtra(
+                        SharedBox64RuntimeState.MANAGED_STEAM_CONTAINER_MARKER_KEY),
+                container.getExtra(
+                        SharedBox64RuntimeState.MANAGED_STEAM_SPEC_MARKER_KEY),
+                container.getExtra(
+                        SharedBox64RuntimeState.MANAGED_STEAM_CONTAINER_REVISION_KEY),
+                container.getWineVersion(),
+                box64Version,
+                container.getExtra(SharedBox64RuntimeState.PINNED_RUNTIME_KEY));
+    }
+
+    /** Returns the same translator choice execGuestProgram will apply. */
+    public String getEffectiveEmulator() {
+        SharedBox64RuntimeState.RuntimeRequest request = activeBox64RuntimeRequest != null
+                ? activeBox64RuntimeRequest : resolveBox64RuntimeRequest();
+        String shortcutEmulator = shortcut == null
+                ? null : shortcut.getExtra("emulator", "");
+        return SharedBox64RuntimeState.resolveEmulator(
+                request,
+                container.getEmulator(),
+                shortcutEmulator,
+                wineInfo != null && wineInfo.isArm64EC());
+    }
+
+    /** Full authenticated identity for diagnostics; empty for an ordinary selection. */
+    public String getPinnedBox64RuntimeDiagnostic() {
+        SharedBox64RuntimeState.RuntimeRequest request = activeBox64RuntimeRequest != null
+                ? activeBox64RuntimeRequest : resolveBox64RuntimeRequest();
+        if (!request.forceBox64Translator) return "";
+        return request.version
+                + "/box64-sha256=" + request.requiredSha256
+                + "/wowbox64-sha256=" + request.requiredWowBox64Sha256;
+    }
+
     private void extractBox64Files() {
         synchronized (BOX64_EXTRACTION_LOCK) {
             extractSharedBox64Files();
@@ -104,22 +145,8 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         ImageFs imageFs = environment.getImageFs();
         Context context = environment.getContext();
 
-        String box64Version = container.getBox64Version();
-
-        if (shortcut != null)
-            box64Version = shortcut.getExtra("box64Version", shortcut.container.getBox64Version());
-
-        SharedBox64RuntimeState.RuntimeRequest box64Request =
-                SharedBox64RuntimeState.runtimeRequest(
-                        container.getExtra(
-                                SharedBox64RuntimeState.MANAGED_STEAM_CONTAINER_MARKER_KEY),
-                        container.getExtra(
-                                SharedBox64RuntimeState.MANAGED_STEAM_SPEC_MARKER_KEY),
-                        container.getExtra(
-                                SharedBox64RuntimeState.MANAGED_STEAM_CONTAINER_REVISION_KEY),
-                        container.getWineVersion(),
-                        box64Version);
-        box64Version = box64Request.version;
+        SharedBox64RuntimeState.RuntimeRequest box64Request = resolveBox64RuntimeRequest();
+        String box64Version = box64Request.version;
 
         Log.d("GuestProgramLauncherComponent", "box64Version: " + box64Version);
 
@@ -268,6 +295,13 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             fexcoreVersion = shortcut.getExtra("fexcoreVersion", shortcut.container.getFEXCoreVersion());
         }
 
+        SharedBox64RuntimeState.RuntimeRequest pinnedRequest = activeBox64RuntimeRequest;
+        if (pinnedRequest != null && pinnedRequest.forceBox64Translator) {
+            // extractSharedBox64Files validated any shortcut version override
+            // before this ARM64EC companion DLL is considered.
+            wowbox64Version = pinnedRequest.version;
+        }
+
         Log.d("GuestProgramLauncherComponent", "box64Version in use: " + wowbox64Version);
         Log.d("GuestProgramLauncherComponent", "fexcoreVersion in use: " + fexcoreVersion);
 
@@ -280,17 +314,54 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         File wowbox64Dll = new File(system32dir, "wowbox64.dll");
         File fexDll = new File(system32dir, "libwow64fex.dll");
 
-        if (!wowbox64Version.equals(container.getExtra("box64Version")) || !wowbox64Dll.isFile()) {
+        File wowbox64Marker = SharedBox64RuntimeState.markerFile(
+                new File(context.getFilesDir(), "runtime/wowbox64"));
+        boolean pinnedWowBox64 = pinnedRequest != null
+                && pinnedRequest.requiredWowBox64Sha256 != null;
+        boolean wowbox64Current = pinnedWowBox64
+                ? SharedBox64RuntimeState.isCurrent(
+                        wowbox64Dll,
+                        wowbox64Marker,
+                        pinnedRequest.markerId,
+                        pinnedRequest.requiredWowBox64Sha256)
+                : wowbox64Version.equals(container.getExtra("box64Version"))
+                        && wowbox64Dll.isFile();
+        if (!wowbox64Current) {
+            if (pinnedWowBox64) {
+                try {
+                    SharedBox64RuntimeState.invalidate(wowbox64Marker);
+                } catch (IOException e) {
+                    throw new IllegalStateException(
+                            "Could not invalidate the pinned WOWBox64 marker", e);
+                }
+                installPinnedWowBox64Binary(
+                        context,
+                        wowbox64Version,
+                        wowbox64Dll,
+                        pinnedRequest.requiredWowBox64Sha256);
+            }
             ContentProfile profile = contentsManager.getProfileByEntryName("wowbox64-" + wowbox64Version);
-            boolean provisioned = profile != null
+            boolean provisioned = pinnedWowBox64 || (profile != null
                     ? contentsManager.applyContent(profile)
                     : TarCompressorUtils.extract(TarCompressorUtils.Type.ZSTD,
                             environment.getContext(),
                             "wowbox64/wowbox64-" + wowbox64Version + ".tzst",
-                            system32dir);
+                            system32dir));
             if (!provisioned || !wowbox64Dll.isFile()) {
                 throw new IllegalStateException("wowbox64 " + wowbox64Version
                         + " did not produce " + wowbox64Dll);
+            }
+            if (pinnedWowBox64) {
+                try {
+                    SharedBox64RuntimeState.publish(
+                            wowbox64Marker,
+                            pinnedRequest.markerId,
+                            wowbox64Dll,
+                            pinnedRequest.requiredWowBox64Sha256);
+                } catch (IOException e) {
+                    throw new IllegalStateException(
+                            "Could not verify the pinned WOWBox64 runtime", e);
+                }
             }
             container.putExtra("box64Version", wowbox64Version);
             containerDataChanged = true;
@@ -316,6 +387,47 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         }
     }
 
+    /** Extracts only the authenticated WEMU DLL, then publishes it atomically. */
+    private void installPinnedWowBox64Binary(
+            Context context,
+            String version,
+            File liveBinary,
+            String requiredSha256) {
+        File extractionDirectory = null;
+        try {
+            File stagingRoot = new File(context.getFilesDir(), "runtime/wowbox64/staging");
+            if (!stagingRoot.isDirectory() && !stagingRoot.mkdirs()
+                    && !stagingRoot.isDirectory()) {
+                throw new IOException("Could not create the private WOWBox64 staging directory");
+            }
+            extractionDirectory = Files.createTempDirectory(
+                    stagingRoot.toPath(), "bundled-").toFile();
+            boolean extracted = TarCompressorUtils.extract(
+                    TarCompressorUtils.Type.ZSTD,
+                    context,
+                    "wowbox64/wowbox64-" + version + ".tzst",
+                    extractionDirectory);
+            if (!extracted) {
+                throw new IOException("Could not extract bundled WOWBox64 " + version);
+            }
+            File sourceBinary = new File(extractionDirectory, "wowbox64.dll");
+            SharedBox64RuntimeState.installBinaryAtomically(
+                    sourceBinary,
+                    extractionDirectory,
+                    liveBinary,
+                    environment.getImageFs().getRootDir(),
+                    requiredSha256);
+        } catch (IOException e) {
+            throw new IllegalStateException("Could not stage WOWBox64 " + version, e);
+        } finally {
+            if (extractionDirectory != null && !FileUtils.delete(extractionDirectory)) {
+                Log.w("GuestProgramLauncherComponent",
+                        "Could not remove private WOWBox64 staging directory: "
+                                + extractionDirectory);
+            }
+        }
+    }
+
     public GuestProgramLauncherComponent(ContentsManager contentsManager, ContentProfile wineProfile, Shortcut shortcut) {
         this.contentsManager = contentsManager;
         this.wineProfile = wineProfile;
@@ -326,10 +438,17 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
     public void start() {
         synchronized (lock) {
             stopping = false;
-            if (wineInfo.isArm64EC())
+            if (wineInfo.isArm64EC()) {
+                if (!SharedBox64RuntimeState.isEmpty(
+                        container.getExtra(SharedBox64RuntimeState.PINNED_RUNTIME_KEY))) {
+                    // The ARM64EC path executes WOWBox64, but the requested
+                    // WEMU Box64 build is still staged and authenticated too.
+                    extractBox64Files();
+                }
                 extractEmulatorsDlls();
-            else
+            } else {
                 extractBox64Files();
+            }
             pid = execGuestProgram();
             if (pid <= 0) {
                 String target = guestArgv != null
@@ -340,7 +459,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             }
             applyCpuAffinity();
             if (activeBox64RuntimeRequest != null
-                    && !activeBox64RuntimeRequest.allowInstalledProfile
+                    && activeBox64RuntimeRequest.managedSteamRuntime
                     && shutdownWinePrefix != null
                     && !shutdownWinePrefix.isEmpty()) {
                 steamHealthMonitor = new OfficialSteamProcessHealthMonitor(shutdownWinePrefix);
@@ -860,7 +979,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         boolean softwareSteamCef = shortcut != null
                 && "1".equals(shortcut.getExtra("steamClientSoftwareCef"));
         boolean managedOfficialSteamRuntime = activeBox64RuntimeRequest != null
-                && !activeBox64RuntimeRequest.allowInstalledProfile;
+                && activeBox64RuntimeRequest.managedSteamRuntime;
         if (managedOfficialSteamRuntime) {
             // The exact managed tuple was authenticated before the shared
             // translator was staged. Apply the genuine Windows-client policy
@@ -897,13 +1016,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
          */
         ensureManagedSteamPrefixCurrent(execEnvVars, winePath, rootDir);
 
-        String emulator = container.getEmulator();
-        if (shortcut != null)
-            emulator = shortcut.getExtra("emulator", container.getEmulator());
-
-        if (wineInfo.isArm64EC()) {
-            emulator = "fexcore";
-        }
+        String emulator = getEffectiveEmulator();
 
         String command = "";
         String overriddenCommand = execEnvVars.get("GUEST_PROGRAM_LAUNCHER_COMMAND");

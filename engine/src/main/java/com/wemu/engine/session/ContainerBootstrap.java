@@ -44,7 +44,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -324,10 +323,22 @@ public class ContainerBootstrap {
             }
 
             String wincomponents = requestedWinComponents();
-            if (!wincomponents.equals(container.getExtra("wincomponents"))) {
-                if (!extractWinComponentFiles()) {
+            boolean winComponentsMaterialized = areNativeWinComponentsMaterialized(
+                    imageFs.getRootDir(), wincomponents);
+            if (!wincomponents.equals(container.getExtra("wincomponents"))
+                    || !winComponentsMaterialized) {
+                if (!winComponentsMaterialized
+                        && wincomponents.equals(container.getExtra("wincomponents"))) {
+                    Log.w(TAG, "Container " + container.id + " recorded its native Windows "
+                            + "components but required DLLs are missing; reapplying them");
+                }
+                if (!extractWinComponentFiles(!winComponentsMaterialized)) {
                     throw new IllegalStateException(
                             "Could not provision the selected Windows components");
+                }
+                if (!areNativeWinComponentsMaterialized(imageFs.getRootDir(), wincomponents)) {
+                    throw new IllegalStateException(
+                            "Selected native Windows components did not materialize completely");
                 }
                 container.putExtra("wincomponents", wincomponents);
                 containerDataChanged = true;
@@ -862,7 +873,7 @@ public class ContainerBootstrap {
             return success;
         }
 
-        private boolean extractWinComponentFiles() {
+        private boolean extractWinComponentFiles(boolean forceRefresh) {
             Log.d("XServerDisplayActivity", "Extracting WinComponents");
             File rootDir = imageFs.getRootDir();
             File windowsDir = new File(rootDir, ImageFs.WINEPREFIX + "/drive_c/windows");
@@ -875,13 +886,15 @@ public class ContainerBootstrap {
                 ArrayList<String> dlls = new ArrayList<>();
                 String wincomponents = requestedWinComponents();
 
-                Iterator<String[]> oldWinComponentsIter = new KeyValueSet(
-                        container.getExtra("wincomponents", Container.FALLBACK_WINCOMPONENTS)).iterator();
+                KeyValueSet oldWinComponents = new KeyValueSet(
+                        container.getExtra("wincomponents", Container.FALLBACK_WINCOMPONENTS));
 
                 for (String[] wincomponent : new KeyValueSet(wincomponents)) {
-                    if (wincomponent[1].equals(oldWinComponentsIter.next()[1]) && !firstTimeBoot)
-                        continue;
                     String identifier = wincomponent[0];
+                    if (!forceRefresh
+                            && wincomponent[1].equals(oldWinComponents.get(identifier))
+                            && !firstTimeBoot)
+                        continue;
                     boolean useNative = wincomponent[1].equals("1");
 
                     if (useNative) {
@@ -916,6 +929,44 @@ public class ContainerBootstrap {
             }
             return success;
         }
+
+        /**
+         * A component receipt is only useful when the files it represents are
+         * still in this prefix. Interrupted first boots and copied WEMU preset
+         * receipts can otherwise make bootstrap skip extraction forever.
+         *
+         * Requiring both system32 and syswow64 is intentional: ARM64EC Proton
+         * uses the first for its 64-bit side while 32-bit games such as
+         * Transformers WFC load the second through WOWBox64.
+         */
+        static boolean areNativeWinComponentsMaterialized(
+                File imageRoot, String wincomponents) {
+            File windowsDir = new File(imageRoot, ImageFs.WINEPREFIX + "/drive_c/windows");
+            File system32 = new File(windowsDir, "system32");
+            File syswow64 = new File(windowsDir, "syswow64");
+            KeyValueSet selected = new KeyValueSet(wincomponents);
+
+            for (String[] component : NATIVE_WINCOMPONENT_SENTINELS) {
+                if (!selected.getBoolean(component[0], false)) continue;
+                for (int i = 1; i < component.length; i++) {
+                    if (!new File(system32, component[i]).isFile()
+                            || !new File(syswow64, component[i]).isFile()) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        private static final String[][] NATIVE_WINCOMPONENT_SENTINELS = {
+                {"direct3d", "d3dx9_42.dll"},
+                {"directsound", "dsound.dll"},
+                {"directmusic", "dmusic.dll"},
+                {"directshow", "quartz.dll"},
+                {"directplay", "dplayx.dll"},
+                {"xaudio", "xactengine3_0.dll", "xaudio2_7.dll"},
+                {"vcrun2010", "msvcr100.dll"},
+        };
 
         /**
          * The user's component selection, plus compatibility WEMU can prove the

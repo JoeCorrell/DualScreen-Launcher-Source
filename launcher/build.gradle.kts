@@ -39,8 +39,11 @@ android {
     buildTypes {
         debug { isMinifyEnabled = false }
         release {
+            // Minify the release requested for device testing. Resource shrinking stays
+            // disabled because the native runtime resolves several packaged resources by
+            // name and because it adds a second high-memory analysis pass.
             isMinifyEnabled = true
-            isShrinkResources = true
+            isShrinkResources = false
             signingConfig = localReleaseSigning
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -51,7 +54,23 @@ android {
 
     buildFeatures { buildConfig = true }
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
-    sourceSets["main"].assets.exclude("mods/**/payload/**")
+    // Most established mod payloads are supplied by the signed first-boot pack.
+    // WFC is deliberately embedded in this APK: its new native proxy and original
+    // offline redistributables must be available before a matching remote pack
+    // exists and independently of the user's game-directory redist folder.
+    listOf(
+        "dead-island-de",
+        "deus-ex-hrdc",
+        "fallout3",
+        "fallout4",
+        "grim-dawn",
+        "skyrim-se",
+        "stardew-valley",
+        "valheim",
+    ).forEach { gameId ->
+        sourceSets["main"].assets.exclude("mods/$gameId/payload/**")
+    }
+    sourceSets["main"].assets.exclude("mods/switch/**/payload/**")
     packaging { jniLibs { useLegacyPackaging = true } }
 }
 

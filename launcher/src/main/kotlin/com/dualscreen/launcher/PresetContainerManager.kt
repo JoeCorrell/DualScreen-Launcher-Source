@@ -28,7 +28,7 @@ import kotlin.coroutines.resumeWithException
 
 internal typealias ProgressReporter = (InstallStage, Float, String) -> Unit
 
-/** Owns immutable app-private presets, with Stardew isolated from every other game. */
+/** Owns immutable app-private presets, including games with pinned runtime requirements. */
 class PresetContainerManager(private val context: Context) {
     private val preferences = context.getSharedPreferences("preset_container", Context.MODE_PRIVATE)
     private val sharedStorage = DualscreenStorage()
@@ -357,13 +357,22 @@ class PresetContainerManager(private val context: Context) {
             expectedName = "proton 9",
             allowGpuOverride = false,
         )
+        private val TRANSFORMERS_WFC_PRESET = PresetSpecification(
+            key = "transformers-wfc",
+            asset = "presets/transformers-wfc.json",
+            expectedName = "Transformers WFC",
+            allowGpuOverride = true,
+        )
         private const val KEY_CONTAINER_ID = "containerId"
         private const val KEY_FINGERPRINT = "fingerprint"
         private const val KEY_MATERIALIZATION_REVISION = "companionPresetMaterialization"
         private const val MATERIALIZATION_REVISION = "3"
 
-        private fun presetFor(game: SupportedGame): PresetSpecification =
-            if (game.id == "stardew-valley") STARDEW_PRESET else DEFAULT_PRESET
+        private fun presetFor(game: SupportedGame): PresetSpecification = when (game.id) {
+            "stardew-valley" -> STARDEW_PRESET
+            "transformers-wfc" -> TRANSFORMERS_WFC_PRESET
+            else -> DEFAULT_PRESET
+        }
 
         private fun containerIdKey(specification: PresetSpecification): String =
             if (specification == DEFAULT_PRESET) KEY_CONTAINER_ID

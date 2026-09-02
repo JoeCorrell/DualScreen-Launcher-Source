@@ -25,6 +25,7 @@
 #include "core/hle/kernel/k_thread.h"
 #include "core/loader/nso.h"
 #include "core/loader/sshd_companion_payload.h"
+#include "core/loader/xcx_companion_payload.h"
 #include "core/memory.h"
 
 #ifdef HAS_NCE
@@ -97,7 +98,7 @@ constexpr u32 BotwUnequipOffset = 0x00D9A590;
 constexpr u32 BotwGetDefaultEquipmentOffset = 0x00D940C4;
 constexpr u32 BotwRequestArmorOffset = 0x00B252C4;
 constexpr u32 BotwHoldItemOffset = 0x00D9F0E8;
-constexpr u32 BotwHoldActionOffset = 0x00DA46A0;
+constexpr u32 BotwCanGrabAnotherItemOffset = 0x00D9A63C;
 constexpr u32 BotwEatGameplayEntryOffset = 0x00E3EDE4;
 constexpr u32 BotwEatGameplayExitHookOffset = 0x00E3F0B8;
 constexpr u32 BotwEatGameplayExitHookInstruction = 0xF95B1660;
@@ -115,6 +116,8 @@ constexpr u32 BotwHoldCallerSenderOffset = 0x00DA47D0;
 constexpr u32 BotwHoldControllerGotLoadOffset = 0x00E47B10;
 constexpr u32 BotwHoldControllerObjectLoadOffset = 0x00E47B14;
 constexpr u32 BotwEatTargetReadOffset = 0x00E3EE40;
+constexpr u32 BotwHoldCaptureScratchOffset = 0x160;
+constexpr u32 BotwHoldMessageScratchOffset = 0x180;
 
 
 
@@ -191,19 +194,71 @@ constexpr u32 SshdRoDataSize = 0x005010B0;
 constexpr u32 SshdDataLocation = 0x0155F000;
 constexpr u32 SshdDataSize = 0x002BDCE0;
 constexpr u32 SshdBssSize = 0x2B816320;
-constexpr u32 SshdMainLoopHookOffset = 0x00E3E818;
-constexpr u32 SshdMainLoopHookInstruction = 0x2A1303E1; // mov w1, w19
+// dStage's native local-map capture tick. This path executes whenever the active
+// stage owns a map renderer, immediately before it tests the render-request byte
+// at dStageRoom+0x562. The previous actor-update site at 0xE3E818 stopped running
+// once its actor left the scene, which left host requests permanently queued.
+constexpr u32 SshdMapCaptureHookOffset = 0x00E26E2C;
+constexpr u32 SshdMapCaptureHookInstruction = 0x39558AE8; // ldrb w8, [x23, #0x562]
 constexpr u32 SshdTelemetryBridgeOffset = SshdTextFileSize;
 constexpr u32 SshdTelemetryBridgeSize = SshdRoDataLocation - SshdTelemetryBridgeOffset;
 constexpr u32 SshdCompanionMailboxPageSize = 0x1000;
+constexpr u32 SshdCompanionBridgePageSize = 0x1000;
 
-// These are main-NSO-relative addresses. They are deliberately kept in the payload beside the
-// exact executable fingerprint instead of being applied to an unverified game build.
-constexpr u32 SshdPlayerPointerOffset = 0x02BFD940;
-constexpr u32 SshdFileManagerPointerOffset = 0x02BFDCC0;
-constexpr u32 SshdCurrentStageNameOffset = 0x02BFD8D8;
-constexpr u32 SshdStoryFlagManagerOffset = 0x018321F0;
-constexpr u32 SshdItemFlagManagerOffset = 0x01832168;
+constexpr u32 XcxTextLocation = 0x00000000;
+constexpr u32 XcxTextFileSize = 0x01735050;
+constexpr u32 XcxRoDataLocation = 0x01736000;
+constexpr u32 XcxRoDataSize = 0x004E7000;
+constexpr u32 XcxDataLocation = 0x01C1D000;
+constexpr u32 XcxDataSize = 0x0019F848;
+constexpr u32 XcxBssSize = 0x02A027B8;
+constexpr u32 XcxPartyManagerUpdateHookOffset = 0x002FB350;
+constexpr u32 XcxPartyManagerUpdateHookInstruction = 0xA9BD7BFD;
+constexpr u32 XcxQueueCharacterSwitchOffset = 0x002FB338;
+constexpr u32 XcxMapJumpOffset = 0x00131358;
+constexpr u32 XcxIsEventSceneOffset = 0x000CC394;
+constexpr u32 XcxPauseManagerGotOffset = 0x01D54EC0;
+constexpr u32 XcxBattleRegistryOffset = 0x01D557A8;
+constexpr u32 XcxCollectBattleActorsOffset = 0x001F5750;
+constexpr u32 XcxSelectedActorRootOffset = 0x026D7228;
+constexpr u32 XcxCompanionMailboxPageSize = 0x1000;
+constexpr u32 XcxCompanionBridgePageSize = 0x1000;
+
+// These are raw main-NSO-text-relative addresses. The reverse-engineering
+// symbols use a 0x7100004000 image base, whereas Eden's main_base starts at
+// NSO text, so their 0x4000 MOD0/image bias has already been removed here.
+// They remain beside the exact executable fingerprint so they are never used
+// with an unverified build.
+constexpr u32 SshdCurrentStageNameOffset = 0x02BF98D8;
+constexpr u32 SshdStageRoomManagerPointerOffset = 0x02BF9D90;
+constexpr u32 SshdMapGlobalPointerOffset = 0x0183C440;
+// dLytMapGlobal is embedded at dLytMapMain+0x10D38 and dLytMapCapture at
+// dLytMapMain+0x1EE0. Their relative placement lets the capture bridge use
+// the native capture pane dimensions without retaining a stale actor pointer.
+constexpr u32 SshdMapGlobalToCaptureDelta = 0xEE58;
+constexpr u32 SshdMapCaptureWidthOffset = 0xA0;
+constexpr u32 SshdMapCaptureHeightOffset = 0xA8;
+constexpr u32 SshdMapGlobalScrollOffset = 0x00;
+constexpr u32 SshdMapGlobalRotationCenterOffset = 0x14;
+constexpr u32 SshdMapGlobalRotationOffset = 0x3C;
+constexpr u32 SshdMapGlobalScaleOffset = 0x44;
+constexpr u32 SshdMapGlobalFloorOffset = 0x48;
+constexpr u32 SshdMapGlobalZoomOffset = 0x64;
+constexpr u32 SshdMapFloorTableOffset = 0x368;
+constexpr u32 SshdMapFloorStride = 0x1C;
+constexpr u32 SshdMapScrollOffset = 0x43C;
+constexpr u32 SshdMapScaleOffset = 0x448;
+constexpr u32 SshdMapRotationCenterOffset = 0x454;
+constexpr u32 SshdMapZoomOffset = 0x460;
+constexpr u32 SshdMapRotationOffset = 0x55A;
+constexpr u32 SshdMapRendererTextureOffset = 0x550;
+constexpr u32 SshdMapRendererFloorOffset = 0x561;
+constexpr u32 SshdMapRendererRequestOffset = 0x562;
+constexpr u32 SshdMapRendererAllocationOffset = 0x564;
+constexpr u32 SshdCpuTextureWidthOffset = 0x08;
+constexpr u32 SshdCpuTextureHeightOffset = 0x0A;
+constexpr u32 SshdCpuTextureFormatOffset = 0x0D;
+constexpr u32 SshdCpuTextureDataOffset = 0x18;
 
 constexpr u32 EncodeCompareBranchZero(bool is_64_bit, u32 target_register,
                                       size_t instruction_index, size_t target_index) {
@@ -316,10 +371,41 @@ constexpr u32 EncodeLoadUnsigned32(u32 target_register, u32 base_register,
            ((base_register & 0x1FU) << 5) | (target_register & 0x1FU);
 }
 
+constexpr u32 EncodeLoadUnsigned16(u32 target_register, u32 base_register,
+                                   u32 byte_offset) {
+    return 0x79400000U | (((byte_offset / 2U) & 0xFFFU) << 10) |
+           ((base_register & 0x1FU) << 5) | (target_register & 0x1FU);
+}
+
 constexpr u32 EncodeStoreUnsigned16(u32 target_register, u32 base_register,
                                     u32 byte_offset) {
     return 0x79000000U | (((byte_offset / sizeof(u16)) & 0xFFFU) << 10) |
            ((base_register & 0x1FU) << 5) | (target_register & 0x1FU);
+}
+
+constexpr u32 EncodeLoadFloat32(u32 target_register, u32 base_register,
+                                u32 byte_offset) {
+    return 0xBD400000U | (((byte_offset / sizeof(u32)) & 0xFFFU) << 10) |
+           ((base_register & 0x1FU) << 5) | (target_register & 0x1FU);
+}
+
+constexpr u32 EncodeStoreFloat32(u32 target_register, u32 base_register,
+                                 u32 byte_offset) {
+    return 0xBD000000U | (((byte_offset / sizeof(u32)) & 0xFFFU) << 10) |
+           ((base_register & 0x1FU) << 5) | (target_register & 0x1FU);
+}
+
+constexpr u32 EncodeSubtractRegisters64(u32 target_register, u32 left_register,
+                                        u32 right_register) {
+    return 0xCB000000U | ((right_register & 0x1FU) << 16) |
+           ((left_register & 0x1FU) << 5) | (target_register & 0x1FU);
+}
+
+constexpr u32 EncodeMultiplyAdd64(u32 target_register, u32 left_register,
+                                  u32 right_register, u32 add_register) {
+    return 0x9B000000U | ((right_register & 0x1FU) << 16) |
+           ((add_register & 0x1FU) << 10) | ((left_register & 0x1FU) << 5) |
+           (target_register & 0x1FU);
 }
 
 bool IsExactBotwCompanionMain(const NSOHeader& header, std::string_view name) {
@@ -370,6 +456,18 @@ bool IsExactSshdCompanionMain(const NSOHeader& header, std::string_view name) {
            header.segments[2].bss_size == SshdBssSize;
 }
 
+bool IsExactXcxCompanionMain(const NSOHeader& header, std::string_view name) {
+    return name == "main" &&
+           header.build_id == XcxCompanionPayload::BuildId &&
+           header.segments[0].location == XcxTextLocation &&
+           header.segments[0].size == XcxTextFileSize &&
+           header.segments[1].location == XcxRoDataLocation &&
+           header.segments[1].size == XcxRoDataSize &&
+           header.segments[2].location == XcxDataLocation &&
+           header.segments[2].size == XcxDataSize &&
+           header.segments[2].bss_size == XcxBssSize;
+}
+
 u32 ReadCodeWord(const std::vector<u8>& image, size_t offset) {
     u32 word{};
     if (offset + sizeof(word) <= image.size()) {
@@ -393,13 +491,17 @@ std::optional<CompanionMemoryReservation> ReserveCompanionMailbox(
     const bool mk8d = IsExactMk8dCompanionMain(header, name);
     const bool plza = IsExactPlzaCompanionMain(header, name);
     const bool sshd = IsExactSshdCompanionMain(header, name);
+    const bool xcx = IsExactXcxCompanionMain(header, name);
     const u32 bridge_size = botw ? BotwCompanionBridgePageSize
-                                 : plza ? PlzaCompanionBridgePageSize : 0;
+                                 : plza ? PlzaCompanionBridgePageSize
+                                 : sshd ? SshdCompanionBridgePageSize
+                                 : xcx ? XcxCompanionBridgePageSize : 0;
     const u32 mailbox_size = mk8d ? Mk8dCompanionMailboxPageSize
                                   : plza ? PlzaCompanionMailboxPageSize
                                   : sshd ? SshdCompanionMailboxPageSize
+                                  : xcx ? XcxCompanionMailboxPageSize
                                          : BotwCompanionMailboxPageSize;
-    if ((!botw && !mk8d && !plza && !sshd) ||
+    if ((!botw && !mk8d && !plza && !sshd && !xcx) ||
         bridge_size > std::numeric_limits<u32>::max() - mailbox_size ||
         image_size > std::numeric_limits<u32>::max() - bridge_size - mailbox_size) {
         return std::nullopt;
@@ -426,11 +528,12 @@ std::optional<CompanionMemoryReservation> ReserveCompanionMailbox(
 }
 
 bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_start,
-                                          u32 mailbox_main_offset) {
+                                          u32 mailbox_main_offset,
+                                          u32 bridge_main_offset, u32 bridge_size) {
     using Payload = SshdCompanionPayload::Mailbox;
 
     std::vector<u32> code;
-    code.reserve(128);
+    code.reserve(192);
     const auto emit = [&](u32 instruction) {
         const size_t index = code.size();
         code.push_back(instruction);
@@ -438,13 +541,13 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     };
     const auto emit_address = [&](u32 target_register, u32 target_offset) {
         const auto instruction_offset =
-            SshdTelemetryBridgeOffset + static_cast<u32>(code.size() * sizeof(u32));
+            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
         emit(EncodeAdrp(target_register, instruction_offset, target_offset));
         emit(EncodeAddPageOffset(target_register, target_offset));
     };
     const auto emit_load_address = [&](u32 target_register, u32 target_offset) {
         const auto instruction_offset =
-            SshdTelemetryBridgeOffset + static_cast<u32>(code.size() * sizeof(u32));
+            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
         emit(EncodeAdrp(target_register, instruction_offset, target_offset));
         emit(EncodeLoadUnsigned64(target_register, target_register, target_offset & 0xFFFU));
     };
@@ -461,21 +564,24 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
         emit(base | (high ? 0x00200000U : 0U) | (static_cast<u32>(value) << 5) |
              (target_register & 0x1FU));
     };
+    const auto emit_compare_registers = [&](bool is_64_bit, u32 left, u32 right) {
+        emit((is_64_bit ? 0xEB00001FU : 0x6B00001FU) |
+             ((right & 0x1FU) << 16) | ((left & 0x1FU) << 5));
+    };
 
-    constexpr u32 StackSize = 0x50;
-    emit(0xD1000000U | (StackSize << 10) | (31U << 5) | 31U); // sub sp, sp, #0x50
+    constexpr u32 StackSize = 0x80;
+    emit(0xD1000000U | (StackSize << 10) | (31U << 5) | 31U); // sub sp, sp, #0x80
     emit_store_pair64(9, 10, 0x00);
     emit_store_pair64(11, 12, 0x10);
     emit_store_pair64(13, 14, 0x20);
-    emit_store_pair64(15, 16, 0x30);
-    emit_store_pair64(17, 30, 0x40);
+    emit_store_pair64(15, 30, 0x30);
+    emit(0xD53B4200U | 17U); // mrs x17, nzcv
+    emit(EncodeStoreUnsigned64(17, 31, 0x40));
+    emit(0x3D8017E0U); // str q0, [sp, #0x50]
+    emit(0x3D801BE1U); // str q1, [sp, #0x60]
+    emit(0x3D801FE2U); // str q2, [sp, #0x70]
 
     emit_address(9, mailbox_main_offset);
-    emit(EncodeLoadUnsigned32(10, 9, offsetof(Payload, sequence)));
-    emit(EncodeAddImmediate32(10, 10, 1));
-    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, sequence)));
-    emit(0xD5033BBFU); // dmb ish
-
     emit_move_wide(11, static_cast<u16>(SshdCompanionPayload::Magic & 0xFFFFU), false, false);
     emit_move_wide(11, static_cast<u16>(SshdCompanionPayload::Magic >> 16), true, true);
     emit(EncodeStoreUnsigned32(11, 9, offsetof(Payload, magic)));
@@ -484,87 +590,387 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     emit_move_wide(11, static_cast<u16>(sizeof(Payload)), false, false);
     emit(EncodeStoreUnsigned32(11, 9, offsetof(Payload, size)));
 
-    emit_load_address(11, SshdFileManagerPointerOffset);
-    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, file_manager)));
-    const auto branch_no_file_manager = emit(0);
-    emit(EncodeAddImmediate64(12, 11, 0x10));
-    emit(EncodeStoreUnsigned64(12, 9, offsetof(Payload, save)));
-    const auto branch_after_save = emit(0);
-    const auto no_file_manager = code.size();
-    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, save)));
-    const auto after_save = code.size();
+    emit(EncodeLoadUnsigned32(10, 9, offsetof(Payload, map_state)));
+    emit(EncodeCompareImmediate32(10,
+                                  static_cast<u32>(SshdCompanionPayload::MapCaptureState::Pending)));
+    const auto branch_state_pending = emit(0);
+    emit(EncodeCompareImmediate32(10,
+                                  static_cast<u32>(SshdCompanionPayload::MapCaptureState::Ready)));
+    const auto branch_state_ready = emit(0);
+    emit(EncodeCompareImmediate32(
+        10, static_cast<u32>(SshdCompanionPayload::MapCaptureState::Rejected)));
+    const auto branch_state_rejected = emit(0);
 
-    emit_load_address(11, SshdPlayerPointerOffset);
-    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, player)));
-    emit_load_address(11, SshdStoryFlagManagerOffset);
-    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, story_flag_manager)));
-    emit_load_address(11, SshdItemFlagManagerOffset);
-    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, item_flag_manager)));
+    const auto idle = code.size();
+    emit(EncodeLoadUnsigned32(15, 9, offsetof(Payload, map_request)));
+    const auto branch_no_request = emit(0);
+    emit(EncodeLoadUnsigned32(13, 9, offsetof(Payload, map_completed)));
+    emit_compare_registers(false, 15, 13);
+    const auto branch_request_completed = emit(0);
+    emit(EncodeStoreUnsigned32(15, 9, offsetof(Payload, map_in_flight)));
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, map_reserved)));
+    emit_load_address(11, SshdStageRoomManagerPointerOffset);
+    const auto branch_request_no_stage = emit(0);
+    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, map_stage)));
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, map_result)));
 
-    emit_address(11, SshdCurrentStageNameOffset);
-    emit(EncodeLoadUnsigned64(12, 11, 0));
-    emit(EncodeStoreUnsigned64(12, 9, offsetof(Payload, stage_name)));
-    emit(EncodeLoadUnsigned8(12, 11, 0x22));
-    emit(EncodeStoreUnsigned8(12, 9, offsetof(Payload, current_room)));
-    emit(EncodeLoadUnsigned8(12, 11, 0x23));
-    emit(EncodeStoreUnsigned8(12, 9, offsetof(Payload, current_layer)));
-    emit(EncodeLoadUnsigned8(12, 11, 0x24));
-    emit(EncodeStoreUnsigned8(12, 9, offsetof(Payload, current_entrance)));
-    emit(EncodeLoadUnsigned8(12, 11, 0x25));
-    emit(EncodeStoreUnsigned8(12, 9, offsetof(Payload, current_night)));
-    emit(EncodeLoadUnsigned8(12, 11, 0x26));
-    emit(EncodeStoreUnsigned8(12, 9, offsetof(Payload, current_trial)));
+    // Reproduce the final state written by dLytMapCapture's native capture
+    // request. Setting dStage+0x562 alone leaves the scroll/scale fields at
+    // their gameplay defaults and collapses the captured local map to a thin
+    // stripe. The real path uses dLytMapGlobal for the active floor, camera,
+    // rotation and zoom, plus dLytMapCapture's pane size for the aspect ratio.
+    emit_load_address(12, SshdMapGlobalPointerOffset);
+    const auto branch_request_no_map_global = emit(0);
+    emit_move_wide(13, static_cast<u16>(SshdMapGlobalToCaptureDelta), false, false);
+    emit(EncodeSubtractRegisters64(13, 12, 13)); // capture = global - 0xEE58
+    emit(EncodeLoadUnsigned32(17, 12, SshdMapGlobalScaleOffset));
+    const auto branch_invalid_map_scale = emit(0);
+    emit(EncodeLoadUnsigned32(17, 13, SshdMapCaptureWidthOffset));
+    const auto branch_invalid_capture_width = emit(0);
+    emit(EncodeLoadUnsigned32(17, 13, SshdMapCaptureHeightOffset));
+    const auto branch_invalid_capture_height = emit(0);
 
+    emit(EncodeLoadUnsigned32(10, 12, SshdMapGlobalFloorOffset));
+    emit(EncodeAddImmediate32(14, 10, 3));
+    emit(EncodeCompareImmediate32(14, 7));
+    const auto branch_invalid_map_floor = emit(0);
+    emit_move_wide(15, static_cast<u16>(SshdMapFloorStride), false, false);
+    emit(EncodeMultiplyAdd64(14, 14, 15, 11));
+    emit(EncodeLoadUnsigned8(17, 14, SshdMapFloorTableOffset));
+    const auto branch_missing_map_floor = emit(0);
+    emit(EncodeStoreUnsigned8(10, 11, SshdMapRendererFloorOffset));
+
+    for (u32 component = 0; component < 3; ++component) {
+        emit(EncodeLoadUnsigned32(14, 12, SshdMapGlobalScrollOffset + component * 4));
+        emit(EncodeStoreUnsigned32(14, 11, SshdMapScrollOffset + component * 4));
+    }
+    emit(EncodeLoadFloat32(0, 12, SshdMapGlobalScaleOffset));
+    emit(0x1E2E1001U); // fmov s1, #1.0
+    emit(0x1E201821U); // fdiv s1, s1, s0
+    emit(EncodeLoadFloat32(0, 13, SshdMapCaptureWidthOffset));
+    emit(EncodeLoadFloat32(2, 13, SshdMapCaptureHeightOffset));
+    emit(0x1E210800U); // fmul s0, s0, s1
+    emit(0x1E220821U); // fmul s1, s1, s2
+    emit(EncodeStoreFloat32(0, 11, SshdMapScaleOffset));
+    emit(0x1E2E1002U); // fmov s2, #1.0
+    emit(EncodeStoreFloat32(2, 11, SshdMapScaleOffset + 4));
+    emit(EncodeStoreFloat32(1, 11, SshdMapScaleOffset + 8));
+    for (u32 component = 0; component < 3; ++component) {
+        emit(EncodeLoadUnsigned32(
+            14, 12, SshdMapGlobalRotationCenterOffset + component * 4));
+        emit(EncodeStoreUnsigned32(
+            14, 11, SshdMapRotationCenterOffset + component * 4));
+    }
+    emit(EncodeLoadUnsigned32(14, 12, SshdMapGlobalZoomOffset));
+    emit(EncodeStoreUnsigned32(14, 11, SshdMapZoomOffset));
+    emit(EncodeLoadUnsigned16(17, 12, SshdMapGlobalRotationOffset));
+    emit(0x4B1103F1U); // neg w17, w17
+    emit(EncodeStoreUnsigned16(17, 11, SshdMapRotationOffset));
+
+    // Keep the native GX texture allocated, then let the verified stage map
+    // renderer draw the local map and its discovered-state overlays. It clears
+    // +0x562 only after the image is complete.
+    // +0x564 is a bitfield shared with the game's own render modes, so preserve
+    // every native bit and only enable the allocation bit owned by this capture.
+    emit(EncodeLoadUnsigned8(13, 11, SshdMapRendererAllocationOffset));
+    emit(0x320001ADU); // orr w13, w13, #1
+    emit(EncodeStoreUnsigned8(13, 11, SshdMapRendererAllocationOffset));
+    emit_move_wide(13, 1, false, false);
+    emit(EncodeStoreUnsigned8(13, 11, SshdMapRendererRequestOffset));
     emit(0xD5033BBFU); // dmb ish
-    emit(EncodeAddImmediate32(10, 10, 1));
-    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, sequence)));
+    emit_move_wide(
+        13, static_cast<u16>(SshdCompanionPayload::MapCaptureState::Pending), false, false);
+    emit(EncodeStoreUnsigned32(13, 9, offsetof(Payload, map_state)));
+    const auto branch_request_exit = emit(0);
 
-    emit_load_pair64(9, 10, 0x00);
-    emit_load_pair64(11, 12, 0x10);
+    const auto pending = code.size();
+    emit_load_address(11, SshdStageRoomManagerPointerOffset);
+    const auto branch_pending_no_stage = emit(0);
+    emit(EncodeLoadUnsigned64(12, 9, offsetof(Payload, map_stage)));
+    emit_compare_registers(true, 11, 12);
+    const auto branch_stage_changed = emit(0);
+    emit(EncodeLoadUnsigned8(13, 11, SshdMapRendererRequestOffset));
+    emit(EncodeCompareImmediate32(13, 0));
+    const auto branch_pending_busy = emit(0);
+    emit(EncodeLoadUnsigned64(12, 11, SshdMapRendererTextureOffset));
+    const auto branch_pending_no_texture = emit(0);
+    emit(EncodeLoadUnsigned16(13, 12, SshdCpuTextureWidthOffset));
+    const auto branch_invalid_width = emit(0);
+    emit(EncodeLoadUnsigned16(14, 12, SshdCpuTextureHeightOffset));
+    const auto branch_invalid_height = emit(0);
+    emit(EncodeLoadUnsigned8(10, 12, SshdCpuTextureFormatOffset));
+    emit(EncodeLoadUnsigned64(15, 12, SshdCpuTextureDataOffset));
+    const auto branch_invalid_data = emit(0);
+
+    emit(EncodeLoadUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeAddImmediate32(17, 17, 1));
+    emit(EncodeStoreUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(0xD5033BBFU); // dmb ish
+    emit(EncodeStoreUnsigned64(11, 9, offsetof(Payload, map_stage)));
+    emit(EncodeStoreUnsigned64(12, 9, offsetof(Payload, map_texture)));
+    emit(EncodeStoreUnsigned64(15, 9, offsetof(Payload, map_data)));
+    emit(EncodeStoreUnsigned16(13, 9, offsetof(Payload, map_width)));
+    emit(EncodeStoreUnsigned16(14, 9, offsetof(Payload, map_height)));
+    emit(EncodeStoreUnsigned8(10, 9, offsetof(Payload, map_format)));
+    emit(EncodeLoadUnsigned8(17, 11, SshdMapRendererFloorOffset));
+    emit(EncodeStoreUnsigned8(17, 9, offsetof(Payload, map_floor)));
+    emit_address(17, SshdCurrentStageNameOffset);
+    emit(EncodeLoadUnsigned64(17, 17, 0));
+    emit(EncodeStoreUnsigned64(17, 9, offsetof(Payload, map_stage_name)));
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, map_result)));
+    emit(0xD5033BBFU); // dmb ish
+    emit(EncodeLoadUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeAddImmediate32(17, 17, 1));
+    emit(EncodeStoreUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeLoadUnsigned32(15, 9, offsetof(Payload, map_in_flight)));
+    emit(EncodeStoreUnsigned32(15, 9, offsetof(Payload, map_completed)));
+    emit(0xD5033BBFU); // dmb ish
+    emit_move_wide(13, static_cast<u16>(SshdCompanionPayload::MapCaptureState::Ready),
+                   false, false);
+    emit(EncodeStoreUnsigned32(13, 9, offsetof(Payload, map_state)));
+    const auto branch_ready_exit = emit(0);
+
+    const auto pending_no_texture = code.size();
+    emit_move_wide(10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::NoTexture),
+                   false, false);
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, map_result)));
+    const auto branch_pending_no_texture_wait = emit(0);
+    const auto pending_zero_width = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::TextureWidthZero),
+        false, false);
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, map_result)));
+    const auto branch_pending_zero_width_wait = emit(0);
+    const auto pending_zero_height = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::TextureHeightZero),
+        false, false);
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, map_result)));
+    const auto branch_pending_zero_height_wait = emit(0);
+    const auto pending_missing_data = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::TextureDataMissing),
+        false, false);
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, map_result)));
+
+    const auto pending_not_ready = code.size();
+    emit(EncodeLoadUnsigned32(17, 9, offsetof(Payload, map_reserved)));
+    emit(EncodeAddImmediate32(17, 17, 1));
+    emit(EncodeStoreUnsigned32(17, 9, offsetof(Payload, map_reserved)));
+    emit(EncodeCompareImmediate32(17, 120));
+    const auto branch_pending_retry = emit(0);
+    emit(EncodeLoadUnsigned32(10, 9, offsetof(Payload, map_result)));
+    const auto branch_pending_retry_reject = emit(0);
+
+    const auto wait_ack = code.size();
+    emit(EncodeLoadUnsigned32(13, 9, offsetof(Payload, map_acknowledged)));
+    emit(EncodeLoadUnsigned32(14, 9, offsetof(Payload, map_completed)));
+    emit_compare_registers(false, 13, 14);
+    const auto branch_ack_pending = emit(0);
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, map_state)));
+    const auto branch_ack_exit = emit(0);
+
+    const auto reject_no_stage = code.size();
+    emit_move_wide(10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::NoStage),
+                   false, false);
+    const auto branch_no_stage_reject = emit(0);
+    const auto reject_stage_changed = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::StageChanged), false,
+        false);
+    const auto branch_stage_changed_reject = emit(0);
+    const auto reject_no_texture = code.size();
+    emit_move_wide(10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::NoTexture),
+                   false, false);
+    const auto branch_no_texture_reject = emit(0);
+    const auto reject_no_map_global = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::NoMapGlobal), false,
+        false);
+    const auto branch_no_map_global_reject = emit(0);
+    const auto reject_invalid_map_scale = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::InvalidMapScale), false,
+        false);
+    const auto branch_invalid_map_scale_reject = emit(0);
+    const auto reject_invalid_capture_width = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::InvalidCaptureWidth),
+        false, false);
+    const auto branch_invalid_capture_width_reject = emit(0);
+    const auto reject_invalid_capture_height = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::InvalidCaptureHeight),
+        false, false);
+    const auto branch_invalid_capture_height_reject = emit(0);
+    const auto reject_invalid_map_floor = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::InvalidMapFloor), false,
+        false);
+    const auto branch_invalid_map_floor_reject = emit(0);
+    const auto reject_missing_map_floor = code.size();
+    emit_move_wide(
+        10, static_cast<u16>(SshdCompanionPayload::MapCaptureResult::MissingMapFloor), false,
+        false);
+
+    const auto reject = code.size();
+    emit(EncodeLoadUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeAddImmediate32(17, 17, 1));
+    emit(EncodeStoreUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(0xD5033BBFU); // dmb ish
+    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, map_stage)));
+    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, map_texture)));
+    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, map_data)));
+    emit(EncodeStoreUnsigned16(31, 9, offsetof(Payload, map_width)));
+    emit(EncodeStoreUnsigned16(31, 9, offsetof(Payload, map_height)));
+    emit(EncodeStoreUnsigned8(31, 9, offsetof(Payload, map_format)));
+    emit(EncodeStoreUnsigned8(31, 9, offsetof(Payload, map_floor)));
+    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, map_stage_name)));
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, map_result)));
+    emit(0xD5033BBFU); // dmb ish
+    emit(EncodeLoadUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeAddImmediate32(17, 17, 1));
+    emit(EncodeStoreUnsigned32(17, 9, offsetof(Payload, map_metadata_sequence)));
+    emit(EncodeLoadUnsigned32(13, 9, offsetof(Payload, map_in_flight)));
+    emit(EncodeStoreUnsigned32(13, 9, offsetof(Payload, map_completed)));
+    emit(0xD5033BBFU); // dmb ish
+    emit_move_wide(13, static_cast<u16>(SshdCompanionPayload::MapCaptureState::Rejected),
+                   false, false);
+    emit(EncodeStoreUnsigned32(13, 9, offsetof(Payload, map_state)));
+
+    const auto exit = code.size();
+    emit(0x3DC017E0U); // ldr q0, [sp, #0x50]
+    emit(0x3DC01BE1U); // ldr q1, [sp, #0x60]
+    emit(0x3DC01FE2U); // ldr q2, [sp, #0x70]
+    emit(EncodeLoadUnsigned64(17, 31, 0x40));
+    emit(0xD51B4200U | 17U); // msr nzcv, x17
+    emit_load_pair64(15, 30, 0x30);
     emit_load_pair64(13, 14, 0x20);
-    emit_load_pair64(15, 16, 0x30);
-    emit_load_pair64(17, 30, 0x40);
-    emit(0x91000000U | (StackSize << 10) | (31U << 5) | 31U); // add sp, sp, #0x50
-    emit(SshdMainLoopHookInstruction);
+    emit_load_pair64(11, 12, 0x10);
+    emit_load_pair64(9, 10, 0x00);
+    emit(0x91000000U | (StackSize << 10) | (31U << 5) | 31U); // add sp, sp, #0x80
+    emit(EncodeLoadUnsigned64(16, 31, 0));
+    emit(EncodeLoadUnsigned64(17, 31, 8));
+    emit(0x910043FFU); // add sp, sp, #0x10
+    emit(SshdMapCaptureHookInstruction);
     emit(0xD65F03C0U); // ret
 
-    code[branch_no_file_manager] =
-        EncodeCompareBranchZero(true, 11, branch_no_file_manager, no_file_manager);
-    code[branch_after_save] = EncodeLocalBranch(branch_after_save, after_save);
+    code[branch_state_pending] =
+        EncodeConditionalBranch(0, branch_state_pending, pending);
+    code[branch_state_ready] = EncodeConditionalBranch(0, branch_state_ready, wait_ack);
+    code[branch_state_rejected] =
+        EncodeConditionalBranch(0, branch_state_rejected, wait_ack);
+    code[branch_no_request] =
+        EncodeCompareBranchZero(false, 15, branch_no_request, exit);
+    code[branch_request_completed] =
+        EncodeConditionalBranch(0, branch_request_completed, exit);
+    code[branch_request_no_stage] =
+        EncodeCompareBranchZero(true, 11, branch_request_no_stage, reject_no_stage);
+    code[branch_request_no_map_global] = EncodeCompareBranchZero(
+        true, 12, branch_request_no_map_global, reject_no_map_global);
+    code[branch_invalid_map_scale] = EncodeCompareBranchZero(
+        false, 17, branch_invalid_map_scale, reject_invalid_map_scale);
+    code[branch_invalid_capture_width] = EncodeCompareBranchZero(
+        false, 17, branch_invalid_capture_width, reject_invalid_capture_width);
+    code[branch_invalid_capture_height] = EncodeCompareBranchZero(
+        false, 17, branch_invalid_capture_height, reject_invalid_capture_height);
+    code[branch_invalid_map_floor] = EncodeConditionalBranch(
+        8, branch_invalid_map_floor, reject_invalid_map_floor); // b.hi
+    code[branch_missing_map_floor] = EncodeCompareBranchZero(
+        false, 17, branch_missing_map_floor, reject_missing_map_floor);
+    code[branch_request_exit] = EncodeLocalBranch(branch_request_exit, exit);
+    code[branch_pending_no_stage] =
+        EncodeCompareBranchZero(true, 11, branch_pending_no_stage, reject_no_stage);
+    code[branch_stage_changed] =
+        EncodeConditionalBranch(1, branch_stage_changed, reject_stage_changed);
+    code[branch_pending_busy] = EncodeConditionalBranch(1, branch_pending_busy, exit);
+    code[branch_pending_no_texture] =
+        EncodeCompareBranchZero(true, 12, branch_pending_no_texture, pending_no_texture);
+    code[branch_invalid_width] =
+        EncodeCompareBranchZero(false, 13, branch_invalid_width, pending_zero_width);
+    code[branch_invalid_height] =
+        EncodeCompareBranchZero(false, 14, branch_invalid_height, pending_zero_height);
+    code[branch_invalid_data] =
+        EncodeCompareBranchZero(true, 15, branch_invalid_data, pending_missing_data);
+    code[branch_ready_exit] = EncodeLocalBranch(branch_ready_exit, exit);
+    code[branch_pending_no_texture_wait] =
+        EncodeLocalBranch(branch_pending_no_texture_wait, pending_not_ready);
+    code[branch_pending_zero_width_wait] =
+        EncodeLocalBranch(branch_pending_zero_width_wait, pending_not_ready);
+    code[branch_pending_zero_height_wait] =
+        EncodeLocalBranch(branch_pending_zero_height_wait, pending_not_ready);
+    code[branch_pending_retry] =
+        EncodeConditionalBranch(3, branch_pending_retry, exit); // b.lo
+    code[branch_pending_retry_reject] =
+        EncodeLocalBranch(branch_pending_retry_reject, reject);
+    code[branch_ack_pending] = EncodeConditionalBranch(1, branch_ack_pending, exit);
+    code[branch_ack_exit] = EncodeLocalBranch(branch_ack_exit, exit);
+    code[branch_no_stage_reject] = EncodeLocalBranch(branch_no_stage_reject, reject);
+    code[branch_stage_changed_reject] =
+        EncodeLocalBranch(branch_stage_changed_reject, reject);
+    code[branch_no_texture_reject] =
+        EncodeLocalBranch(branch_no_texture_reject, reject);
+    code[branch_no_map_global_reject] =
+        EncodeLocalBranch(branch_no_map_global_reject, reject);
+    code[branch_invalid_map_scale_reject] =
+        EncodeLocalBranch(branch_invalid_map_scale_reject, reject);
+    code[branch_invalid_capture_width_reject] =
+        EncodeLocalBranch(branch_invalid_capture_width_reject, reject);
+    code[branch_invalid_capture_height_reject] =
+        EncodeLocalBranch(branch_invalid_capture_height_reject, reject);
+    code[branch_invalid_map_floor_reject] =
+        EncodeLocalBranch(branch_invalid_map_floor_reject, reject);
 
     const size_t code_size = code.size() * sizeof(u32);
-    static_assert((SshdTelemetryBridgeOffset & 3U) == 0);
-    static_assert(SshdTelemetryBridgeOffset >= SshdTextFileSize);
-    if (code_size > SshdTelemetryBridgeSize || module_start > image.size() ||
-        SshdMainLoopHookOffset > image.size() - module_start ||
-        SshdTelemetryBridgeOffset > image.size() - module_start) {
+    const std::array<u32, 5> island{{
+        0xD10043FFU, // sub sp, sp, #0x10
+        0xA90047F0U, // stp x16, x17, [sp]
+        EncodeAdrp(16, SshdTelemetryBridgeOffset + 2 * sizeof(u32), bridge_main_offset),
+        EncodeAddPageOffset(16, bridge_main_offset),
+        0xD61F0200U, // br x16
+    }};
+    const size_t island_size = island.size() * sizeof(u32);
+    if ((mailbox_main_offset & 0xFFFU) != 0 || (bridge_main_offset & 0xFFFU) != 0 ||
+        bridge_size != SshdCompanionBridgePageSize ||
+        bridge_main_offset != mailbox_main_offset + SshdCompanionMailboxPageSize ||
+        code_size > bridge_size || island_size > SshdTelemetryBridgeSize ||
+        module_start > image.size()) {
+        LOG_ERROR(Loader, "[SSHD-MAP] bridge install rejected: invalid RW/RX layout");
         return false;
     }
-    const size_t hook = module_start + SshdMainLoopHookOffset;
-    const size_t cave = module_start + SshdTelemetryBridgeOffset;
-    if (sizeof(u32) > image.size() - hook || code_size > image.size() - cave ||
-        ReadCodeWord(image, hook) != SshdMainLoopHookInstruction ||
-        !std::all_of(image.begin() + static_cast<ptrdiff_t>(cave),
-                     image.begin() + static_cast<ptrdiff_t>(cave + code_size),
+    const size_t hook = module_start + SshdMapCaptureHookOffset;
+    const size_t island_cave = module_start + SshdTelemetryBridgeOffset;
+    const size_t bridge_cave = module_start + bridge_main_offset;
+    if (hook + sizeof(u32) > image.size() || island_cave + island_size > image.size() ||
+        bridge_cave + code_size > image.size() ||
+        ReadCodeWord(image, hook) != SshdMapCaptureHookInstruction ||
+        !std::all_of(image.begin() + static_cast<ptrdiff_t>(island_cave),
+                     image.begin() + static_cast<ptrdiff_t>(island_cave + island_size),
+                     [](u8 value) { return value == 0; }) ||
+        !std::all_of(image.begin() + static_cast<ptrdiff_t>(bridge_cave),
+                     image.begin() + static_cast<ptrdiff_t>(bridge_cave + code_size),
                      [](u8 value) { return value == 0; })) {
+        LOG_ERROR(Loader,
+                  "[SSHD-MAP] bridge install rejected: signature or empty-page mismatch");
         return false;
     }
     const s64 branch_delta = static_cast<s64>(SshdTelemetryBridgeOffset) -
-                             static_cast<s64>(SshdMainLoopHookOffset);
+                             static_cast<s64>(SshdMapCaptureHookOffset);
     if ((branch_delta & 3) != 0 || branch_delta < -(1LL << 27) ||
         branch_delta >= (1LL << 27)) {
         return false;
     }
 
     const u32 hook_call =
-        EncodeRelativeCall(SshdMainLoopHookOffset, SshdTelemetryBridgeOffset);
-    std::memcpy(image.data() + cave, code.data(), code_size);
+        EncodeRelativeCall(SshdMapCaptureHookOffset, SshdTelemetryBridgeOffset);
+    std::memcpy(image.data() + island_cave, island.data(), island_size);
+    std::memcpy(image.data() + bridge_cave, code.data(), code_size);
     std::memcpy(image.data() + hook, &hook_call, sizeof(hook_call));
     LOG_INFO(Loader,
-             "[SSHD-PAYLOAD] installed game-thread telemetry payload: version={} bytes={} "
-             "mailbox=main+{:#x} bridge=main+{:#x} hook=main+{:#x}",
+             "[SSHD-MAP] installed NCE-safe game-thread capture bridge: version={} bytes={} "
+             "mailbox=main+{:#x} island=main+{:#x} bridge=main+{:#x} hook=main+{:#x}",
              SshdCompanionPayload::Version, code_size, mailbox_main_offset,
-             SshdTelemetryBridgeOffset, SshdMainLoopHookOffset);
+             SshdTelemetryBridgeOffset, bridge_main_offset, SshdMapCaptureHookOffset);
     return true;
 }
 
@@ -733,39 +1139,83 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const auto branch_hold_empty = emit(0);
     emit_stage(0x30);
     emit_unlock();
+    emit_load_address(0, BotwPlayerInfoStorageOffset);
+    const auto branch_hold_no_player_info = emit(0);
+    emit(EncodeLoadUnsigned64(8, 0, 0x68));
+    const auto branch_hold_player_link_unavailable = emit(0);
+    emit(0xF94013E0U);
+    emit_call(BotwCanGrabAnotherItemOffset);
+    const auto branch_hold_capacity_race = emit(0);
+    emit(0xF94013E0U);
+    emit(0xF94023E1U);
+    emit_call(BotwHoldItemOffset);
+    emit_page_address(14, mailbox_main_offset);
+    emit(0xF94023EBU);
+    emit(0xB9402168U);
+    emit(EncodeStoreUnsigned32(8, 14,
+                               BotwActionDiagnosticGuestQuantityAfterOffset));
+    emit(0x39409569U);
+    emit(EncodeStoreUnsigned32(9, 14,
+                               BotwActionDiagnosticGuestInInventoryAfterOffset));
+    emit(EncodeLoadUnsigned32(9, 14, 0xE0));
+    emit(0x51000529U);
+    emit(0x6B09011FU);
+    const auto branch_hold_quantity_mismatch = emit(0);
+    emit(EncodeAddImmediate64(0, 14, BotwHoldCaptureScratchOffset));
+    emit(EncodeStoreUnsigned8(31, 0, 0));
+    emit(EncodeStoreUnsigned64(31, 0, 8));
+    emit(EncodeStoreUnsigned8(31, 0, 0x10));
+    emit_call(BotwCaptureSpawnedActorOffset);
+    emit_page_address(14, mailbox_main_offset);
+    emit(EncodeAddImmediate64(5, 14, BotwHoldCaptureScratchOffset));
+    emit(EncodeLoadUnsigned64(8, 5, 8));
+    const auto branch_hold_no_captured_actor = emit(0);
+    emit(0xAA0503E0U);
+    emit_call(BotwGetActorMessageIdOffset);
+    emit(0xAA0003E1U);
+    emit_load_address(0, BotwPlayerInfoStorageOffset);
+    const auto branch_hold_no_sender_after_mutation = emit(0);
+    emit(EncodeAddImmediate64(0, 0, 0x68));
+    emit_page_address(14, mailbox_main_offset);
+    emit(EncodeAddImmediate64(2, 14, BotwHoldMessageScratchOffset));
+    emit(0x52800068U);
+    emit(0x72A10008U);
+    emit(EncodeStoreUnsigned32(8, 2, 0));
+    emit(0xAA1F03E3U);
+    emit(0x52800024U);
+    emit_call(BotwActorMessageSendOffset);
     emit_page_address(0, mailbox_main_offset);
-    emit(0xF9406400U);
-    const auto branch_hold_no_controller = emit(0);
-    emit(0xF94023E2U);
-    emit_page_address(1, mailbox_main_offset);
-    emit(EncodeStoreUnsigned8(31, 1, BotwActionDiagnosticNativeResultOffset));
-    emit(0x52800148U);
-    emit(0xB9003008U);
-    emit(0xF9005402U);
-    emit(0xF940200BU);
-    const auto branch_hold_no_active_flag = emit(0);
+    emit(EncodeAddImmediate64(0, 0, BotwHoldCaptureScratchOffset));
+    emit_call(BotwReleaseCapturedActorOffset);
+    emit_page_address(14, mailbox_main_offset);
     emit(0x52800028U);
-    emit(0x39000168U);
-    emit(EncodeAddImmediate64(1, 1, BotwActionDiagnosticNativeResultOffset));
-    emit_call(BotwHoldActionOffset);
-    emit_page_address(1, mailbox_main_offset);
-    emit(EncodeLoadUnsigned8(8, 1, BotwActionDiagnosticNativeResultOffset));
-    const auto branch_hold_native_rejected = emit(0);
+    emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticNativeResultOffset));
     emit_stage(0x31);
     const auto branch_hold_success = emit(0);
 
-    const auto hold_no_active_flag = code.size();
+    const auto hold_no_captured_actor = code.size();
     emit_stage(0x32);
-    const auto branch_hold_no_active_flag_reject = emit(0);
+    emit_page_address(0, mailbox_main_offset);
+    emit(EncodeAddImmediate64(0, 0, BotwHoldCaptureScratchOffset));
+    emit_call(BotwReleaseCapturedActorOffset);
+    emit_page_address(14, mailbox_main_offset);
+    emit(0x52800028U);
+    emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticNativeResultOffset));
+    const auto branch_hold_no_captured_actor_success = emit(0);
 
     const auto hold_native_rejected = code.size();
     emit_stage(0x33);
     const auto branch_hold_native_rejected_publish = emit(0);
 
     const auto eat = code.size();
-    emit(0x51001DA8U);
-    emit(0x7100051FU);
+    emit(EncodeCompareImmediate32(13, 8));
+    const auto branch_eat_food = emit(0);
+    emit(EncodeCompareImmediate32(13, 7));
     const auto branch_eat_wrong_type = emit(0);
+    emit(EncodeLoadUnsigned32(8, 11, 0x1C));
+    emit(EncodeCompareImmediate32(8, 10));
+    const auto branch_eat_wrong_use = emit(0);
+    const auto eat_type_allowed = code.size();
     emit(0xB9402168U);
     emit(0x7100051FU);
     const auto branch_eat_empty = emit(0);
@@ -780,8 +1230,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const auto branch_eat_no_player_info = emit(0);
     emit_call(BotwGetPlayerOffset);
     const auto branch_eat_no_player = emit(0);
-    emit_load_address(8, BotwEatNotifyStorageOffset);
-    const auto branch_eat_no_notifier = emit(0);
     emit_load_address(8, BotwEatScreenRegistryOffset);
     const auto branch_eat_no_registry = emit(0);
     emit(0xF9401908U);
@@ -824,7 +1272,9 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit(0xF94023EBU);
     emit(0xF9401961U);
     emit_load_address(0, BotwEatNotifyStorageOffset);
+    const auto branch_eat_no_notifier = emit(0);
     emit_call(BotwEatNotifyOffset);
+    const auto eat_notify_done = code.size();
     emit_stage(0x41);
     const auto branch_eat_success = emit(0);
 
@@ -1121,19 +1571,29 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         EncodeConditionalBranch(1, branch_hold_wrong_type, unlock_reject);
     code[branch_hold_empty] =
         EncodeConditionalBranch(0xB, branch_hold_empty, unlock_reject);
-    code[branch_hold_no_controller] =
-        EncodeCompareBranchZero(true, 0, branch_hold_no_controller, reject_stack);
-    code[branch_hold_no_active_flag] =
-        EncodeCompareBranchZero(true, 11, branch_hold_no_active_flag, hold_no_active_flag);
-    code[branch_hold_native_rejected] = EncodeCompareBranchZero(
-        false, 8, branch_hold_native_rejected, hold_native_rejected);
+    code[branch_hold_no_player_info] = EncodeCompareBranchZero(
+        true, 0, branch_hold_no_player_info, reject_stack);
+    code[branch_hold_player_link_unavailable] = EncodeCompareBranchZero(
+        true, 8, branch_hold_player_link_unavailable, reject_stack);
+    code[branch_hold_capacity_race] = EncodeCompareBranchZero(
+        false, 0, branch_hold_capacity_race, reject_stack);
+    code[branch_hold_quantity_mismatch] = EncodeConditionalBranch(
+        1, branch_hold_quantity_mismatch, hold_native_rejected);
+    code[branch_hold_no_captured_actor] = EncodeCompareBranchZero(
+        true, 8, branch_hold_no_captured_actor, hold_no_captured_actor);
+    code[branch_hold_no_sender_after_mutation] = EncodeCompareBranchZero(
+        true, 0, branch_hold_no_sender_after_mutation, hold_no_captured_actor);
     code[branch_hold_success] = EncodeLocalBranch(branch_hold_success, success_stack);
-    code[branch_hold_no_active_flag_reject] =
-        EncodeLocalBranch(branch_hold_no_active_flag_reject, reject_stack);
+    code[branch_hold_no_captured_actor_success] = EncodeLocalBranch(
+        branch_hold_no_captured_actor_success, success_stack);
     code[branch_hold_native_rejected_publish] =
         EncodeLocalBranch(branch_hold_native_rejected_publish, reject_stack);
+    code[branch_eat_food] =
+        EncodeConditionalBranch(0, branch_eat_food, eat_type_allowed);
     code[branch_eat_wrong_type] =
-        EncodeConditionalBranch(8, branch_eat_wrong_type, unlock_reject);
+        EncodeConditionalBranch(1, branch_eat_wrong_type, unlock_reject);
+    code[branch_eat_wrong_use] =
+        EncodeConditionalBranch(1, branch_eat_wrong_use, unlock_reject);
     code[branch_eat_empty] =
         EncodeConditionalBranch(0xB, branch_eat_empty, unlock_reject);
     code[branch_eat_no_player_info] =
@@ -1141,7 +1601,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     code[branch_eat_no_player] =
         EncodeCompareBranchZero(true, 0, branch_eat_no_player, reject_stack);
     code[branch_eat_no_notifier] =
-        EncodeCompareBranchZero(true, 8, branch_eat_no_notifier, reject_stack);
+        EncodeCompareBranchZero(true, 0, branch_eat_no_notifier, eat_notify_done);
     code[branch_eat_no_registry] =
         EncodeCompareBranchZero(true, 8, branch_eat_no_registry, reject_stack);
     code[branch_eat_no_registry_array] = EncodeCompareBranchZero(
@@ -1287,7 +1747,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwUnequipOffset, 0xB5000041U, "unequip"},
         {BotwGetDefaultEquipmentOffset, 0xD0007E89U, "default equipment"},
         {BotwHoldItemOffset, 0xD10203FFU, "hold item"},
-        {BotwHoldActionOffset, 0xD10143FFU, "hold action"},
+        {BotwCanGrabAnotherItemOffset, 0x91411008U, "hold capacity"},
         {BotwEatGameplayEntryOffset, 0x90007968U, "eat gameplay entry"},
         {BotwEatGameplayEpilogueOffset, 0xA9474FF4U, "eat gameplay epilogue"},
         {BotwEatNotifyOffset, 0xD10243FFU, "eat animation event"},
@@ -1375,6 +1835,329 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
              "eat-entry=main+{:#x}",
              code_size, mailbox_main_offset, bridge_main_offset, bridge_size,
              BotwEatGameplayEntryOffset);
+    return true;
+}
+
+bool InstallXcxCompanionActionHook(std::vector<u8>& image, size_t module_start,
+                                   u32 mailbox_main_offset, u32 bridge_main_offset,
+                                   u32 bridge_size) {
+    using Payload = XcxCompanionPayload::Mailbox;
+    constexpr u32 SavedStackSize = 0x530;
+    constexpr u32 BattleBufferOffset = 0x120;
+    constexpr u32 BattleCountOffset = BattleBufferOffset + 0x400;
+
+    std::vector<u32> code;
+    code.reserve(192);
+    const auto emit = [&](u32 instruction) {
+        const size_t index = code.size();
+        code.push_back(instruction);
+        return index;
+    };
+    const auto emit_address = [&](u32 target_register, u32 target_offset) {
+        const auto instruction_offset =
+            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
+        emit(EncodeAdrp(target_register, instruction_offset, target_offset));
+        emit(EncodeAddPageOffset(target_register, target_offset));
+    };
+    const auto emit_load_address = [&](u32 target_register, u32 target_offset) {
+        const auto instruction_offset =
+            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
+        emit(EncodeAdrp(target_register, instruction_offset, target_offset));
+        emit(EncodeLoadUnsigned64(target_register, target_register, target_offset & 0xFFFU));
+    };
+    const auto emit_call = [&](u32 target_offset) {
+        const auto instruction_offset =
+            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
+        emit(EncodeRelativeCall(instruction_offset, target_offset));
+    };
+    const auto emit_store_pair64 = [&](u32 first, u32 second, u32 offset) {
+        emit(0xA9000000U | (((offset / 8U) & 0x7FU) << 15) |
+             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
+    };
+    const auto emit_load_pair64 = [&](u32 first, u32 second, u32 offset) {
+        emit(0xA9400000U | (((offset / 8U) & 0x7FU) << 15) |
+             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
+    };
+    const auto emit_store_pair128 = [&](u32 first, u32 second, u32 offset) {
+        emit(0xAD000000U | (((offset / 16U) & 0x7FU) << 15) |
+             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
+    };
+    const auto emit_load_pair128 = [&](u32 first, u32 second, u32 offset) {
+        emit(0xAD400000U | (((offset / 16U) & 0x7FU) << 15) |
+             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
+    };
+    const auto emit_move_wide = [&](u32 target_register, u16 value, bool high, bool keep) {
+        const u32 base = keep ? 0x72800000U : 0x52800000U;
+        emit(base | (high ? 0x00200000U : 0U) | (static_cast<u32>(value) << 5) |
+             (target_register & 0x1FU));
+    };
+
+    // Replay the exact displaced party-manager prologue before doing any work.
+    emit(XcxPartyManagerUpdateHookInstruction);
+    emit_address(15, mailbox_main_offset);
+    emit_move_wide(10, static_cast<u16>(XcxCompanionPayload::Magic & 0xFFFFU), false, false);
+    emit_move_wide(10, static_cast<u16>(XcxCompanionPayload::Magic >> 16), true, true);
+    emit(EncodeStoreUnsigned32(10, 15, offsetof(Payload, magic)));
+    emit_move_wide(10, XcxCompanionPayload::Version, false, false);
+    emit(EncodeStoreUnsigned16(10, 15, offsetof(Payload, version)));
+    emit_move_wide(10, static_cast<u16>(sizeof(Payload)), false, false);
+    emit(EncodeStoreUnsigned16(10, 15, offsetof(Payload, size)));
+    emit(EncodeAddImmediate64(9, 15, offsetof(Payload, state)));
+    emit(0x88DFFC00U | (9U << 5) | 10U); // ldar w10, [x9]
+    emit(EncodeCompareImmediate32(10, static_cast<u32>(XcxCompanionPayload::State::Queued)));
+    const auto branch_not_queued = emit(0);
+
+    emit(0xD1000000U | (SavedStackSize << 10) | (31U << 5) | 31U);
+    emit_store_pair64(0, 1, 0x00);
+    emit_store_pair64(2, 3, 0x10);
+    emit_store_pair64(4, 5, 0x20);
+    emit_store_pair64(6, 7, 0x30);
+    emit_store_pair64(8, 9, 0x40);
+    emit_store_pair64(10, 11, 0x50);
+    emit_store_pair64(12, 13, 0x60);
+    emit_store_pair64(14, 15, 0x70);
+    emit_store_pair64(16, 17, 0x80);
+    emit_store_pair64(18, 30, 0x90);
+    emit_store_pair128(0, 1, 0xA0);
+    emit_store_pair128(2, 3, 0xC0);
+    emit_store_pair128(4, 5, 0xE0);
+    emit_store_pair128(6, 7, 0x100);
+
+    emit_move_wide(10, static_cast<u16>(XcxCompanionPayload::State::Running), false, false);
+    emit(0x889FFC00U | (9U << 5) | 10U); // stlr w10, [x9]
+
+    // These checks run on the game thread immediately before dispatch. They close the race
+    // between the host snapshot and native execution during battles, cutscenes, and menus.
+    emit_call(XcxIsEventSceneOffset);
+    const auto branch_event_scene = emit(0);
+    emit_load_address(8, XcxPauseManagerGotOffset);
+    const auto branch_no_pause_root = emit(0);
+    emit(EncodeLoadUnsigned64(8, 8, 0));
+    const auto branch_no_pause_manager = emit(0);
+    emit(EncodeLoadUnsigned8(9, 8, 0xB0));
+    const auto branch_paused = emit(0);
+
+    emit_load_address(0, XcxBattleRegistryOffset);
+    const auto branch_no_battle_registry = emit(0);
+    emit(EncodeAddImmediate64(1, 31, BattleBufferOffset));
+    emit_move_wide(2, 0x20, false, false);
+    emit_call(XcxCollectBattleActorsOffset);
+    emit(EncodeLoadUnsigned64(9, 31, BattleCountOffset));
+    const auto branch_in_combat = emit(0);
+
+    emit_address(15, mailbox_main_offset);
+    emit(EncodeLoadUnsigned32(10, 15, offsetof(Payload, action)));
+    emit(EncodeCompareImmediate32(
+        10, static_cast<u32>(XcxCompanionPayload::Action::SwitchCharacter)));
+    const auto branch_switch = emit(0);
+    emit(EncodeCompareImmediate32(10,
+                                  static_cast<u32>(XcxCompanionPayload::Action::FastTravel)));
+    const auto branch_fast_travel = emit(0);
+    const auto reject_invalid_action = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::InvalidAction), false,
+                   false);
+    const auto branch_invalid_action = emit(0);
+
+    const auto switch_character = code.size();
+    emit(EncodeLoadUnsigned32(1, 15, offsetof(Payload, argument)));
+    emit(EncodeCompareImmediate32(1, 1));
+    const auto branch_character_below_range = emit(0);
+    emit(EncodeCompareImmediate32(1, 23));
+    const auto branch_character_above_range = emit(0);
+    emit_address(8, XcxSelectedActorRootOffset);
+    emit(EncodeLoadUnsigned64(8, 8, 0));
+    const auto branch_no_selected_actor_owner = emit(0);
+    emit(EncodeLoadUnsigned64(8, 8, 0x630));
+    const auto branch_no_selected_actor = emit(0);
+    emit(EncodeLoadUnsigned8(9, 8, 0xB4));
+    emit(EncodeCompareImmediate32(9, 2));
+    const auto branch_in_skell = emit(0);
+    emit(EncodeLoadUnsigned64(0, 31, 0));
+    const auto branch_no_party_manager = emit(0);
+    emit_call(XcxQueueCharacterSwitchOffset);
+    const auto branch_switch_rejected = emit(0);
+    emit(0x2A0003ECU); // mov w12, w0
+    const auto branch_switch_success = emit(0);
+
+    const auto fast_travel = code.size();
+    emit(EncodeLoadUnsigned32(0, 15, offsetof(Payload, argument)));
+    const auto branch_zero_formation = emit(0);
+    emit(EncodeCompareImmediate32(0, 2048));
+    const auto branch_formation_above_range = emit(0);
+    emit_move_wide(1, 0, false, false);
+    emit_call(XcxMapJumpOffset);
+    emit_move_wide(12, 1, false, false);
+
+    const auto publish_success = code.size();
+    emit_address(15, mailbox_main_offset);
+    emit(EncodeStoreUnsigned32(12, 15, offsetof(Payload, native_result)));
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::Success), false, false);
+    emit(EncodeStoreUnsigned32(11, 15, offsetof(Payload, result)));
+    emit(EncodeLoadUnsigned64(11, 15, offsetof(Payload, request)));
+    emit(EncodeStoreUnsigned64(11, 15, offsetof(Payload, completed)));
+    emit(EncodeStoreUnsigned64(31, 15, offsetof(Payload, request)));
+    emit(EncodeAddImmediate64(9, 15, offsetof(Payload, state)));
+    emit_move_wide(10, static_cast<u16>(XcxCompanionPayload::State::Succeeded), false, false);
+    emit(0x889FFC00U | (9U << 5) | 10U); // stlr w10, [x9]
+    const auto branch_success_restore = emit(0);
+
+    const auto reject_invalid_argument = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::InvalidArgument), false,
+                   false);
+    const auto branch_invalid_argument = emit(0);
+    const auto reject_event_scene = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::EventScene), false, false);
+    const auto branch_event_reject = emit(0);
+    const auto reject_paused = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::PausedOrMenu), false,
+                   false);
+    const auto branch_paused_reject = emit(0);
+    const auto reject_missing_context = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::MissingNativeContext),
+                   false, false);
+    const auto branch_context_reject = emit(0);
+    const auto reject_native = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::NativeRejected), false,
+                   false);
+    const auto branch_native_reject = emit(0);
+    const auto reject_combat = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::Combat), false, false);
+    const auto branch_combat_reject = emit(0);
+    const auto reject_in_skell = code.size();
+    emit_move_wide(11, static_cast<u16>(XcxCompanionPayload::Result::InSkell), false, false);
+
+    const auto publish_rejection = code.size();
+    emit_address(15, mailbox_main_offset);
+    emit(EncodeStoreUnsigned32(31, 15, offsetof(Payload, native_result)));
+    emit(EncodeStoreUnsigned32(11, 15, offsetof(Payload, result)));
+    emit(EncodeLoadUnsigned64(12, 15, offsetof(Payload, request)));
+    emit(EncodeStoreUnsigned64(12, 15, offsetof(Payload, completed)));
+    emit(EncodeStoreUnsigned64(31, 15, offsetof(Payload, request)));
+    emit(EncodeAddImmediate64(9, 15, offsetof(Payload, state)));
+    emit_move_wide(10, static_cast<u16>(XcxCompanionPayload::State::Rejected), false, false);
+    emit(0x889FFC00U | (9U << 5) | 10U); // stlr w10, [x9]
+
+    const auto restore = code.size();
+    emit_load_pair128(6, 7, 0x100);
+    emit_load_pair128(4, 5, 0xE0);
+    emit_load_pair128(2, 3, 0xC0);
+    emit_load_pair128(0, 1, 0xA0);
+    emit_load_pair64(18, 30, 0x90);
+    emit_load_pair64(16, 17, 0x80);
+    emit_load_pair64(14, 15, 0x70);
+    emit_load_pair64(12, 13, 0x60);
+    emit_load_pair64(10, 11, 0x50);
+    emit_load_pair64(8, 9, 0x40);
+    emit_load_pair64(6, 7, 0x30);
+    emit_load_pair64(4, 5, 0x20);
+    emit_load_pair64(2, 3, 0x10);
+    emit_load_pair64(0, 1, 0x00);
+    emit(0x91000000U | (SavedStackSize << 10) | (31U << 5) | 31U);
+
+    const auto passthrough = code.size();
+    const auto return_offset =
+        bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
+    emit(EncodeRelativeBranch(return_offset,
+                              XcxPartyManagerUpdateHookOffset + sizeof(u32)));
+
+    code[branch_not_queued] = EncodeConditionalBranch(1, branch_not_queued, passthrough);
+    code[branch_event_scene] =
+        EncodeCompareBranchZero(false, 0, branch_event_scene, reject_event_scene) |
+        0x01000000U;
+    code[branch_no_pause_root] =
+        EncodeCompareBranchZero(true, 8, branch_no_pause_root, reject_missing_context);
+    code[branch_no_pause_manager] =
+        EncodeCompareBranchZero(true, 8, branch_no_pause_manager, reject_missing_context);
+    code[branch_paused] = EncodeCompareBranchZero(false, 9, branch_paused, reject_paused) |
+                          0x01000000U;
+    code[branch_no_battle_registry] = EncodeCompareBranchZero(
+        true, 0, branch_no_battle_registry, reject_missing_context);
+    code[branch_in_combat] =
+        EncodeCompareBranchZero(true, 9, branch_in_combat, reject_combat) | 0x01000000U;
+    code[branch_switch] = EncodeConditionalBranch(0, branch_switch, switch_character);
+    code[branch_fast_travel] = EncodeConditionalBranch(0, branch_fast_travel, fast_travel);
+    code[branch_invalid_action] =
+        EncodeLocalBranch(branch_invalid_action, publish_rejection);
+    code[branch_character_below_range] =
+        EncodeConditionalBranch(3, branch_character_below_range, reject_invalid_argument);
+    code[branch_character_above_range] =
+        EncodeConditionalBranch(8, branch_character_above_range, reject_invalid_argument);
+    code[branch_no_selected_actor_owner] = EncodeCompareBranchZero(
+        true, 8, branch_no_selected_actor_owner, reject_missing_context);
+    code[branch_no_selected_actor] = EncodeCompareBranchZero(
+        true, 8, branch_no_selected_actor, reject_missing_context);
+    code[branch_in_skell] = EncodeConditionalBranch(0, branch_in_skell, reject_in_skell);
+    code[branch_no_party_manager] = EncodeCompareBranchZero(
+        true, 0, branch_no_party_manager, reject_missing_context);
+    code[branch_switch_rejected] = EncodeCompareBranchZero(
+        false, 0, branch_switch_rejected, reject_native);
+    code[branch_switch_success] =
+        EncodeLocalBranch(branch_switch_success, publish_success);
+    code[branch_zero_formation] = EncodeCompareBranchZero(
+        false, 0, branch_zero_formation, reject_invalid_argument);
+    code[branch_formation_above_range] =
+        EncodeConditionalBranch(2, branch_formation_above_range, reject_invalid_argument);
+    code[branch_success_restore] = EncodeLocalBranch(branch_success_restore, restore);
+    code[branch_invalid_argument] =
+        EncodeLocalBranch(branch_invalid_argument, publish_rejection);
+    code[branch_event_reject] = EncodeLocalBranch(branch_event_reject, publish_rejection);
+    code[branch_paused_reject] = EncodeLocalBranch(branch_paused_reject, publish_rejection);
+    code[branch_context_reject] = EncodeLocalBranch(branch_context_reject, publish_rejection);
+    code[branch_native_reject] = EncodeLocalBranch(branch_native_reject, publish_rejection);
+    code[branch_combat_reject] = EncodeLocalBranch(branch_combat_reject, publish_rejection);
+
+    if ((mailbox_main_offset & 0xFFFU) != 0 || (bridge_main_offset & 0xFFFU) != 0 ||
+        bridge_size != XcxCompanionBridgePageSize ||
+        bridge_main_offset != mailbox_main_offset + XcxCompanionMailboxPageSize) {
+        LOG_ERROR(Loader, "[XCX-ACTION] bridge install rejected: invalid RW/RX layout");
+        return false;
+    }
+    const size_t code_size = code.size() * sizeof(u32);
+    const size_t hook = module_start + XcxPartyManagerUpdateHookOffset;
+    const size_t switch_dispatch = module_start + XcxQueueCharacterSwitchOffset;
+    const size_t map_jump = module_start + XcxMapJumpOffset;
+    const size_t event_check = module_start + XcxIsEventSceneOffset;
+    const size_t battle_collect = module_start + XcxCollectBattleActorsOffset;
+    const size_t cave = module_start + bridge_main_offset;
+    if (hook + sizeof(u32) > image.size() || switch_dispatch + sizeof(u32) > image.size() ||
+        map_jump + sizeof(u32) > image.size() || event_check + sizeof(u32) > image.size() ||
+        battle_collect + sizeof(u32) > image.size() || cave > image.size() ||
+        code_size > image.size() - cave || code_size > bridge_size) {
+        LOG_ERROR(Loader, "[XCX-ACTION] bridge install rejected: code range is outside the image");
+        return false;
+    }
+    if (ReadCodeWord(image, hook) != XcxPartyManagerUpdateHookInstruction ||
+        ReadCodeWord(image, switch_dispatch) != 0xB9401008U ||
+        ReadCodeWord(image, map_jump) != 0xD101C3FFU ||
+        ReadCodeWord(image, event_check) != 0xA9BF7BFDU ||
+        ReadCodeWord(image, battle_collect) != 0xAA0003E8U) {
+        LOG_ERROR(Loader,
+                  "[XCX-ACTION] bridge install rejected: exact native signature mismatch");
+        return false;
+    }
+    const auto cave_mismatch = std::find_if(
+        image.begin() + static_cast<ptrdiff_t>(cave),
+        image.begin() + static_cast<ptrdiff_t>(cave + code_size),
+        [](u8 value) { return value != 0; });
+    if (cave_mismatch != image.begin() + static_cast<ptrdiff_t>(cave + code_size)) {
+        LOG_ERROR(Loader, "[XCX-ACTION] bridge install rejected: executable page is not empty");
+        return false;
+    }
+    const s64 hook_delta = static_cast<s64>(bridge_main_offset) -
+                           static_cast<s64>(XcxPartyManagerUpdateHookOffset);
+    if ((hook_delta & 3) != 0 || hook_delta < -(1LL << 27) || hook_delta >= (1LL << 27)) {
+        LOG_ERROR(Loader, "[XCX-ACTION] bridge install rejected: branch target is out of range");
+        return false;
+    }
+    const u32 hook_branch =
+        EncodeRelativeBranch(XcxPartyManagerUpdateHookOffset, bridge_main_offset);
+    std::memcpy(image.data() + cave, code.data(), code_size);
+    std::memcpy(image.data() + hook, &hook_branch, sizeof(hook_branch));
+    LOG_INFO(Loader,
+             "[XCX-ACTION] installed native party/map action bridge: {} bytes, "
+             "mailbox=main+{:#x}, bridge=main+{:#x}, hook=main+{:#x}",
+             code_size, mailbox_main_offset, bridge_main_offset,
+             XcxPartyManagerUpdateHookOffset);
     return true;
 }
 
@@ -1811,9 +2594,24 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
             if (IsExactMk8dCompanionMain(nso_header, name)) {
                 companion_hook_installed = InstallMk8dCompanionItemHook(
                     codeset.memory, module_start, mailbox_main_offset);
+            } else if (IsExactXcxCompanionMain(nso_header, name)) {
+                if (module_start <= companion_memory->bridge_offset &&
+                    companion_memory->bridge_offset - module_start <=
+                        std::numeric_limits<u32>::max()) {
+                    companion_hook_installed = InstallXcxCompanionActionHook(
+                        codeset.memory, module_start, mailbox_main_offset,
+                        static_cast<u32>(companion_memory->bridge_offset - module_start),
+                        companion_memory->bridge_size);
+                }
             } else if (IsExactSshdCompanionMain(nso_header, name)) {
-                companion_hook_installed = InstallSshdCompanionTelemetryPayload(
-                    codeset.memory, module_start, mailbox_main_offset);
+                if (module_start <= companion_memory->bridge_offset &&
+                    companion_memory->bridge_offset - module_start <=
+                        std::numeric_limits<u32>::max()) {
+                    companion_hook_installed = InstallSshdCompanionTelemetryPayload(
+                        codeset.memory, module_start, mailbox_main_offset,
+                        static_cast<u32>(companion_memory->bridge_offset - module_start),
+                        companion_memory->bridge_size);
+                }
             } else if (IsExactPlzaCompanionMain(nso_header, name)) {
                 if (module_start <= companion_memory->bridge_offset &&
                     companion_memory->bridge_offset - module_start <=
@@ -1837,6 +2635,7 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         if (load_into_process && companion_hook_installed && pm &&
             (pm->GetTitleID() == Mk8dCompanionTitleId ||
              pm->GetTitleID() == PlzaCompanionTitleId ||
+             pm->GetTitleID() == XcxCompanionPayload::TitleId ||
              pm->GetTitleID() == SshdCompanionPayload::TitleId ||
              (EnableBotwCompanion && pm->GetTitleID() == BotwCompanionTitleId))) {
             companion_mailbox_address = load_base + companion_memory->mailbox_offset;

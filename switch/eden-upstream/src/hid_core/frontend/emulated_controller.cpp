@@ -25,9 +25,28 @@ constexpr Common::UUID TAS_UUID =
 constexpr Common::UUID VIRTUAL_UUID =
     Common::UUID{{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x7, 0xFF, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0}};
 
-EmulatedController::EmulatedController(NpadIdType npad_id_type_) : npad_id_type(npad_id_type_) {}
+namespace {
+struct InputSourceState {
+    ButtonValues configured_buttons{};
+    ButtonValues tas_buttons{};
+    ButtonValues virtual_buttons{};
+    SticksValues configured_sticks{};
+    SticksValues tas_sticks{};
+    SticksValues virtual_sticks{};
+};
 
-EmulatedController::~EmulatedController() = default;
+// This state intentionally lives outside EmulatedController. It preserves the class ABI and
+// avoids rebuilding every translation unit that includes emulated_controller.h.
+std::array<InputSourceState, 10> input_source_states{};
+} // namespace
+
+EmulatedController::EmulatedController(NpadIdType npad_id_type_) : npad_id_type(npad_id_type_) {
+    input_source_states[Service::HID::NpadIdTypeToIndex(npad_id_type)] = {};
+}
+
+EmulatedController::~EmulatedController() {
+    input_source_states[Service::HID::NpadIdTypeToIndex(npad_id_type)] = {};
+}
 
 NpadStyleIndex EmulatedController::MapSettingsTypeToNPad(Settings::ControllerType type) {
     switch (type) {
@@ -760,49 +779,60 @@ void EmulatedController::StartMotionCalibration() {
     }
 }
 
-void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback, std::size_t index, Common::UUID uuid) {
+void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback, std::size_t index,
+                                   Common::UUID uuid) {
     const auto player_index = Service::HID::NpadIdTypeToIndex(npad_id_type);
     const auto& player = Settings::values.players.GetValue()[player_index];
+    auto& sources = input_source_states[player_index];
 
     if (index >= controller.button_values.size()) {
         return;
     }
 
-    bool value_changed = false;
     const auto new_status = TransformToButton(callback);
+    auto& source_status = uuid == TAS_UUID       ? sources.tas_buttons[index]
+                          : uuid == VIRTUAL_UUID ? sources.virtual_buttons[index]
+                                                 : sources.configured_buttons[index];
     auto& current_status = controller.button_values[index];
 
-    // Only read button values that have the same uuid or are pressed once
-    if (current_status.uuid != uuid) {
-        if (!new_status.value) {
-            return;
-        }
-    }
+    source_status.toggle = new_status.toggle;
+    source_status.turbo = new_status.turbo;
+    source_status.uuid = uuid;
 
-    current_status.toggle = new_status.toggle;
-    current_status.turbo = new_status.turbo;
-    current_status.uuid = uuid;
-
-    // Update button status with current
-    if (!current_status.toggle) {
-        current_status.locked = false;
-        if (current_status.value != new_status.value) {
-            current_status.value = new_status.value;
-            value_changed = true;
-        }
+    // Apply toggle state independently for each input source before aggregating them.
+    if (!source_status.toggle) {
+        source_status.locked = false;
+        source_status.value = new_status.value;
     } else {
         // Toggle button and lock status
-        if (new_status.value && !current_status.locked) {
-            current_status.locked = true;
-            current_status.value = !current_status.value;
-            value_changed = true;
+        if (new_status.value && !source_status.locked) {
+            source_status.locked = true;
+            source_status.value = !source_status.value;
         }
 
         // Unlock button ready for next press
-        if (!new_status.value && current_status.locked) {
-            current_status.locked = false;
+        if (!new_status.value && source_status.locked) {
+            source_status.locked = false;
         }
     }
+
+    const bool aggregate_value = sources.configured_buttons[index].value ||
+                                 sources.tas_buttons[index].value ||
+                                 sources.virtual_buttons[index].value;
+    const bool value_changed = current_status.value != aggregate_value;
+    current_status.value = aggregate_value;
+    current_status.toggle = sources.configured_buttons[index].toggle ||
+                            sources.tas_buttons[index].toggle ||
+                            sources.virtual_buttons[index].toggle;
+    current_status.turbo =
+        (sources.configured_buttons[index].value && sources.configured_buttons[index].turbo) ||
+        (sources.tas_buttons[index].value && sources.tas_buttons[index].turbo) ||
+        (sources.virtual_buttons[index].value && sources.virtual_buttons[index].turbo);
+    current_status.locked = false;
+    current_status.uuid = sources.tas_buttons[index].value ? TAS_UUID
+                          : sources.virtual_buttons[index].value
+                              ? VIRTUAL_UUID
+                              : sources.configured_buttons[index].uuid;
 
     if (!value_changed) {
         return;
@@ -941,27 +971,26 @@ void EmulatedController::SetStick(const Common::Input::CallbackStatus& callback,
     if (index >= controller.stick_values.size()) {
         return;
     }
+    const auto player_index = Service::HID::NpadIdTypeToIndex(npad_id_type);
+    auto& sources = input_source_states[player_index];
     auto trigger_guard = SCOPE_GUARD {
         TriggerOnChange(ControllerTriggerType::Stick, !is_configuring);
     };
-    const auto stick_value = TransformToStick(callback);
+    auto stick_value = TransformToStick(callback);
+    stick_value.uuid = uuid;
+    auto& source_status = uuid == TAS_UUID       ? sources.tas_sticks[index]
+                          : uuid == VIRTUAL_UUID ? sources.virtual_sticks[index]
+                                                 : sources.configured_sticks[index];
+    source_status = stick_value;
 
-    // Only read stick values that have the same uuid or are over the threshold to avoid flapping
-    if (controller.stick_values[index].uuid != uuid) {
-        const bool is_tas = uuid == TAS_UUID;
-        if (is_tas && stick_value.x.value == 0 && stick_value.y.value == 0) {
-            trigger_guard.Cancel();
-            return;
-        }
-        if (!is_tas && !stick_value.down && !stick_value.up && !stick_value.left &&
-            !stick_value.right) {
-            trigger_guard.Cancel();
-            return;
-        }
-    }
-
-    controller.stick_values[index] = stick_value;
-    controller.stick_values[index].uuid = uuid;
+    const auto is_active = [](const Common::Input::StickStatus& status) {
+        return status.x.value != 0.0f || status.y.value != 0.0f;
+    };
+    const auto& aggregate_status = is_active(sources.tas_sticks[index]) ? sources.tas_sticks[index]
+                                   : is_active(sources.virtual_sticks[index])
+                                       ? sources.virtual_sticks[index]
+                                       : sources.configured_sticks[index];
+    controller.stick_values[index] = aggregate_status;
 
     if (is_configuring) {
         controller.analog_stick_state.left = {};

@@ -209,6 +209,11 @@ public final class SecondScreenOutput {
         return NativePanelIdentity.isStardewValley(className, title);
     }
 
+    /** Recognizes War for Cybertron's private no-activate lower panel. */
+    public static boolean isTransformersWfcPanelWindow(String className, String title) {
+        return NativePanelIdentity.isTransformersWfc(className, title);
+    }
+
     /** Native panels which are lower-only even at transient primary coordinates. */
     public static boolean isEarlyClaimPanelWindow(String className, String title) {
         return NativePanelIdentity.isEarlyClaimPanel(className, title);
@@ -247,6 +252,7 @@ public final class SecondScreenOutput {
     public static boolean isNativePanelControllerActive() {
         return showing && (isFalloutPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isGrimDawnPanelWindow(guestWindowClassName, guestWindowTitle)
+                || isTransformersWfcPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle));
     }
 
@@ -335,6 +341,7 @@ public final class SecondScreenOutput {
          * player's current bindings, so this panel uses that channel alone.
          */
         if (isDeusExPanel() || isSkyrimPanel() || isGrimDawnPanel()
+                || isTransformersWfcPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle)) return true;
 
         float nx = Math.max(0.0f, Math.min(1.0f, x));

@@ -1,29 +1,6 @@
 {
   "actors": {
-    "Link": "Link_Body.glb",
-    "Link_Head": {
-      "file": "Link_Head.glb",
-      "attachment": {
-        "bone": "head",
-        "translation": [0.0, 0.0, 0.0],
-        "rotationDegrees": [0.0, 0.0, 0.0]
-      }
-    },
-    "Link_Hand_Left": {
-      "file": "Link_Hand_Left.glb",
-      "attachment": {
-        "bone": "handL",
-        "translation": [0.0, 0.0, 0.0],
-        "rotationDegrees": [0.0, 0.0, 0.0]
-      }
-    },
-    "Link_Hand_Right": {
-      "file": "Link_Hand_Right.glb",
-      "attachment": {
-        "bone": "handR",
-        "translation": [0.0, 0.0, 0.0],
-        "rotationDegrees": [0.0, 0.0, 0.0]
-      }
-    }
+    "LinkOpening": "Link_pl.glb",
+    "LinkHero": "Link_al.glb"
   }
 }

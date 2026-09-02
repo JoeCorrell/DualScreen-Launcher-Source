@@ -4,9 +4,11 @@ import com.google.common.truth.Truth.assertThat
 import org.json.JSONObject
 import org.junit.Test
 import java.io.File
+import java.security.MessageDigest
 
 class AssetIntegrityTest {
     private val assets = File("src/main/assets").canonicalFile
+    private val engineAssets = File("../engine/src/main/assets").canonicalFile
     private val main = File("src/main").canonicalFile
 
     @Test
@@ -33,6 +35,45 @@ class AssetIntegrityTest {
         assertThat(preset.getJSONObject("extraData").getString("affinityCores")).isEqualTo("3,4,5,6,7")
         assertThat(preset.getJSONObject("extraData").getString("fallout3Compatibility"))
             .isEqualTo("4")
+    }
+
+    @Test
+    fun transformersPresetPinsTheExactWemuBox64BuildAndStableDynarecProfile() {
+        val games = JSONObject(File(assets, "presets/games.json").readText())
+        val transformers = JSONObject(File(assets, "presets/transformers-wfc.json").readText())
+
+        assertThat(transformers.getString("name")).isEqualTo("Transformers WFC")
+        assertThat(transformers.getString("emulator")).isEqualTo("box64")
+        assertThat(transformers.getString("box64Version")).isEqualTo("0.4.2")
+        assertThat(transformers.getString("box64Preset")).isEqualTo("COMPATIBILITY")
+        assertThat(transformers.getJSONObject("extraData").getString("box64Version"))
+            .isEqualTo("0.4.2")
+        assertThat(transformers.getJSONObject("extraData").getString("wemuPinnedBox64Runtime"))
+            .isEqualTo("transformers-wfc-0.4.2")
+        assertThat(transformers.getString("wincomponents")).contains("xaudio=1")
+
+        games.remove("name")
+        transformers.remove("name")
+        transformers.put("emulator", games.getString("emulator"))
+        // WFC raised R6025 and intermittently froze with the aggressive
+        // BIGBLOCK/CALLRET profile. It intentionally uses WEMU's proven
+        // compatibility settings; all unrelated game defaults still match.
+        transformers.put("box64Preset", games.getString("box64Preset"))
+        transformers.put("wincomponents", games.getString("wincomponents"))
+        transformers.getJSONObject("extraData").remove("wemuPinnedBox64Runtime")
+        assertThat(transformers.toString()).isEqualTo(games.toString())
+
+        val archive = File(engineAssets, "box64/box64-0.4.2.tzst")
+        assertThat(archive.length()).isEqualTo(3_970_492L)
+        assertThat(sha256(archive)).isEqualTo(
+            "a1dbfd7e3adeb7ad1d1aa17abbadcb77906049e96c501eff3ed890c1f979ed9f",
+        )
+
+        val wowArchive = File(engineAssets, "wowbox64/wowbox64-0.4.2.tzst")
+        assertThat(wowArchive.length()).isEqualTo(1_015_193L)
+        assertThat(sha256(wowArchive)).isEqualTo(
+            "dc350a3aedc9ecd42fa95dc0fd64b8cfe299c313185aef8ca8e9cee793ac5960",
+        )
     }
 
     @Test
@@ -114,6 +155,31 @@ class AssetIntegrityTest {
     }
 
     @Test
+    fun transformersManifestMatchesEveryBundledPayloadFile() {
+        val root = File(assets, "mods/transformers-wfc")
+        val payload = File(root, "payload").canonicalFile
+        val manifest = JSONObject(File(root, "manifest.json").readText())
+        val files = manifest.getJSONArray("files")
+        val declared = linkedSetOf<String>()
+
+        for (index in 0 until files.length()) {
+            val entry = files.getJSONObject(index)
+            val sourceName = entry.getString("source").replace('\\', '/')
+            assertThat(declared.add(sourceName.lowercase())).isTrue()
+            val source = File(payload, sourceName).canonicalFile
+            assertThat(source.path.startsWith(payload.path + File.separator)).isTrue()
+            assertThat(source.isFile).isTrue()
+            assertThat(sha256(source)).isEqualTo(entry.getString("sha256"))
+        }
+
+        val bundled = payload.walkTopDown()
+            .filter(File::isFile)
+            .map { it.relativeTo(payload).invariantSeparatorsPath.lowercase() }
+            .toSet()
+        assertThat(bundled).containsExactlyElementsIn(declared)
+    }
+
+    @Test
     fun stardewShipsOnlyVersionedNativeDeltas() {
         val root = File(assets, "mods/stardew-valley")
         val manifest = JSONObject(File(root, "manifest.json").readText())
@@ -167,5 +233,17 @@ class AssetIntegrityTest {
             assertThat(pack.getString("url"))
                 .startsWith("https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/")
         }
+    }
+
+    private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").let { digest ->
+        file.inputStream().use { input ->
+            val buffer = ByteArray(128 * 1024)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
     }
 }

@@ -138,6 +138,35 @@ Add-PayloadFile $entries $payload (Join-Path $modRoot "ValheimSecondScreen\bin\R
 Write-Manifest $directory $version $entries
 $importedEntries += $entries.Count
 
+# War for Cybertron uses a game-local dinput8 proxy beside Binaries/TWFC.exe.
+# Keep the generated panel assets in the same reproducible payload as the DLL
+# and INI so a clean import cannot publish a partially updated interface.
+$directory = Reset-Payload "transformers-wfc"
+$payload = Join-Path $directory "payload"
+$entries = [System.Collections.Generic.List[object]]::new()
+$sourceRoot = Join-Path $modRoot "TransformersWfcSecondScreen\package"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "dinput8.dll") "dinput8.dll" "Binaries/dinput8.dll"
+Add-PayloadFile $entries $payload (Join-Path $sourceRoot "TransformersWfcSecondScreen.ini") "TransformersWfcSecondScreen.ini" "Binaries/TransformersWfcSecondScreen.ini"
+$assetSourceRoot = Join-Path $sourceRoot "assets"
+Get-ChildItem -LiteralPath $assetSourceRoot -Recurse -File | ForEach-Object {
+    $relative = $_.FullName.Substring($assetSourceRoot.Length + 1).Replace('\', '/')
+    Add-PayloadFile $entries $payload $_.FullName "assets/$relative" "Binaries/assets/$relative"
+}
+$prerequisiteSourceRoot = Join-Path $sourceRoot "prerequisites"
+Add-PayloadFile $entries $payload `
+    (Join-Path $prerequisiteSourceRoot "WfcPrerequisiteBootstrap.cmd") `
+    "prerequisites/WfcPrerequisiteBootstrap.cmd" `
+    "Binaries/SecondScreenPrerequisites/WfcPrerequisiteBootstrap.cmd"
+$redistSourceRoot = Join-Path $prerequisiteSourceRoot "redist"
+Get-ChildItem -LiteralPath $redistSourceRoot -Recurse -File | ForEach-Object {
+    $relative = $_.FullName.Substring($redistSourceRoot.Length + 1).Replace('\', '/')
+    Add-PayloadFile $entries $payload $_.FullName `
+        "prerequisites/redist/$relative" `
+        "Binaries/SecondScreenPrerequisites/redist/$relative"
+}
+Write-Manifest $directory $version $entries
+$importedEntries += $entries.Count
+
 $stardewManifestPath = Join-Path $assetRoot "stardew-valley\manifest.json"
 if (-not [string]::IsNullOrWhiteSpace($StardewBuildInputRoot)) {
     & (Join-Path $PSScriptRoot "import-stardew-native-payload.ps1") `

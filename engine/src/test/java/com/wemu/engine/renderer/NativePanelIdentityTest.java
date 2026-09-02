@@ -66,4 +66,18 @@ public class NativePanelIdentityTest {
         assertFalse(NativePanelIdentity.isStardewValley(
                 "Stardew Valley", "Stardew Valley"));
     }
+
+    @Test
+    public void transformersPanelUsesExactPrivateIdentityAndEarlyClaim() {
+        assertTrue(NativePanelIdentity.isTransformersWfc(
+                "TransformersWfcSecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isTransformersWfc(
+                "", "Transformers: War for Cybertron Dual-Screen"));
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel(
+                "TransformersWfcSecondScreenPanel", ""));
+        assertFalse(NativePanelIdentity.isTransformersWfc(
+                "TransformersWfcSecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isTransformersWfc(
+                "TWFC", "Transformers: War for Cybertron"));
+    }
 }

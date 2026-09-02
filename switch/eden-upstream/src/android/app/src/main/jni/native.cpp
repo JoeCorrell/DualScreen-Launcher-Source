@@ -97,6 +97,7 @@ extern "C" {
 #include "jni/mk8d_companion.h"
 #include "jni/plza_companion.h"
 #include "jni/sshd_companion.h"
+#include "jni/xcx_companion.h"
 #include "jni/native.h"
 #include "video_core/frame_gen/lossless_dll.h"
 #include "video_core/renderer_base.h"
@@ -833,6 +834,103 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSshdCompanionSnapshot(
     }
     return SshdCompanion::FillSnapshot(EmulationSession::GetInstance(), address,
                                        static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSshdCompanionSnapshotV4(
+    JNIEnv* env, jobject instance, jobject output) {
+    return Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSshdCompanionSnapshot(env, instance,
+                                                                           output);
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImage(
+    JNIEnv* env, jobject instance, jobject output) {
+    if (!output) {
+        return -1;
+    }
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity <= 0) {
+        return -1;
+    }
+    return SshdCompanion::CopyMapImage(EmulationSession::GetInstance(), address,
+                                       static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImageV1(
+    JNIEnv* env, jobject instance, jobject output) {
+    return Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImage(
+        env, instance, output);
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performSshdCompanionAction(
+    JNIEnv* env, jobject instance, jint action, jint argument) {
+    return SshdCompanion::PerformAction(EmulationSession::GetInstance(), action, argument)
+               ? JNI_TRUE
+               : JNI_FALSE;
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performSshdCompanionActionV4(
+    JNIEnv* env, jobject instance, jint action, jint argument) {
+    return Java_org_yuzu_yuzu_1emu_NativeLibrary_performSshdCompanionAction(
+        env, instance, action, argument);
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillXcxCompanionSnapshot(
+    JNIEnv* env, jobject instance, jobject output) {
+    if (!output) {
+        return -1;
+    }
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity <= 0) {
+        return -1;
+    }
+    return XcxCompanion::FillSnapshot(EmulationSession::GetInstance(), address,
+                                      static_cast<std::size_t>(capacity));
+}
+
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxGameFlags(
+    JNIEnv* env, jobject instance, jint bit_width, jintArray flag_ids) {
+    if (!flag_ids) {
+        return nullptr;
+    }
+    const jsize count = env->GetArrayLength(flag_ids);
+    if (count <= 0 || count > 4096) {
+        return nullptr;
+    }
+    std::vector<jint> signed_ids(static_cast<std::size_t>(count));
+    env->GetIntArrayRegion(flag_ids, 0, count, signed_ids.data());
+    if (env->ExceptionCheck()) {
+        return nullptr;
+    }
+    std::vector<unsigned int> ids(static_cast<std::size_t>(count));
+    for (jsize index = 0; index < count; ++index) {
+        if (signed_ids[index] < 0) {
+            return nullptr;
+        }
+        ids[static_cast<std::size_t>(index)] = static_cast<unsigned int>(signed_ids[index]);
+    }
+    std::vector<unsigned char> values(static_cast<std::size_t>(count));
+    const int read = XcxCompanion::ReadGameFlags(
+        EmulationSession::GetInstance(), static_cast<unsigned int>(bit_width), ids.data(),
+        ids.size(), values.data(), values.size());
+    if (read != count) {
+        return nullptr;
+    }
+    jbyteArray result = env->NewByteArray(count);
+    if (!result) {
+        return nullptr;
+    }
+    env->SetByteArrayRegion(result, 0, count,
+                            reinterpret_cast<const jbyte*>(values.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performXcxCompanionAction(
+    JNIEnv* env, jobject instance, jint action, jint argument) {
+    return XcxCompanion::PerformAction(EmulationSession::GetInstance(), action, argument)
+               ? JNI_TRUE
+               : JNI_FALSE;
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performPlzaCompanionAction(

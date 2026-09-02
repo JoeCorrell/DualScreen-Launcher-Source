@@ -41,6 +41,8 @@ data class SupportedGame(
     val prerequisites: List<PrerequisitePackage> = emptyList(),
     val launchArguments: String = "",
     val panelMode: LowerPanelMode = LowerPanelMode.NATIVE_WINDOW,
+    /** Executable-scoped Wine DLL policy; never promoted to prefix-wide env vars. */
+    val nativeDllOverrides: Map<String, String> = emptyMap(),
     val windowHints: List<String> = executableCandidates,
 )
 
@@ -147,6 +149,30 @@ object GameCatalog {
                 ),
             ),
             windowHints = listOf("grim dawn", "grimdawn"),
+        ),
+        SupportedGame(
+            id = "transformers-wfc",
+            title = "Transformers: War for Cybertron",
+            storageName = "Transformers War for Cybertron",
+            summary = "Live combat, squad possession, and mission objectives.",
+            requiredBuild = "PC 1.0 / Steam 42650 (32-bit TWFC.exe)",
+            executableCandidates = listOf("Binaries/TWFC.exe"),
+            saveDirectory = "Saved Games/Transformers(TM) - War For Cybertron (TM)",
+            stripSingleSaveArchiveRoot = true,
+            requiredFiles = listOf(
+                "Binaries/TWFC.exe",
+                "TransGame/CookedPC/TransGame.xxx",
+                "TransGame/PCTOC.txt",
+            ),
+            fileRules = listOf(
+                FileRule(
+                    path = "Binaries/TWFC.exe",
+                    bytes = 37_667_328L,
+                    sha256 = "1db04b09b36094571fab861cd01ca175d44d610b5417f950f37523cd97eeb016",
+                ),
+            ),
+            nativeDllOverrides = mapOf("dinput8" to "native,builtin"),
+            windowHints = listOf("twfc", "transformers", "war for cybertron"),
         ),
         SupportedGame(
             id = "deus-ex-hrdc",

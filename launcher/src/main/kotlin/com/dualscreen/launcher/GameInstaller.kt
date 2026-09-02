@@ -208,10 +208,11 @@ class GameInstaller(
                 val root = File(installed.hostDirectory).canonicalFile
                 check(root.isDirectory) { "The installed game directory is missing" }
                 val bundled = readPayloadManifest(game)
-                val currentFilesMatch = withContext(Dispatchers.IO) {
+                val payloadVersionMatches = installed.payloadVersion == bundled.version
+                val currentFilesMatch = payloadVersionMatches && withContext(Dispatchers.IO) {
                     payloadIsCurrent(root, bundled, installed.skippedPayloadTargets)
                 }
-                if (installed.payloadVersion == bundled.version && currentFilesMatch) {
+                if (currentFilesMatch) {
                     Log.i(LOG_TAG, "Verified ${game.id} payload ${bundled.version}")
                     publish(
                         game.id,
@@ -1242,6 +1243,10 @@ class GameInstaller(
             check(target.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
                 "Could not create the mod directory"
             }
+            if (payloadTargetIsCurrent(target, entry.sha256, ::sha256)) {
+                report("Verified ${entry.target}")
+                return@forEach
+            }
             writeAssetAtomically(game, entry, target)
             report("Applied ${entry.target}")
         }
@@ -1299,7 +1304,7 @@ class GameInstaller(
         val filesCurrent = manifest.files.all { entry ->
             val target = File(canonicalRoot, entry.target).canonicalFile
             runCatching { checkPayloadTarget(canonicalRoot, target) }.isSuccess &&
-                target.isFile && sha256(target) == entry.sha256
+                payloadTargetIsCurrent(target, entry.sha256, ::sha256)
         }
         if (!filesCurrent) return false
         if (manifest.removals.any { relativeTarget ->
@@ -1732,6 +1737,18 @@ class GameInstaller(
         private const val LOG_TAG = "DualscreenInstaller"
     }
 }
+
+/**
+ * Lets payload updates preserve already-current files instead of replacing the
+ * entire payload tree whenever one entry changes. This is especially important
+ * for large redistributable sets on Android emulated storage, where an atomic
+ * rename can temporarily expose stale file metadata through FUSE.
+ */
+internal fun payloadTargetIsCurrent(
+    target: File,
+    expectedSha256: String,
+    calculateSha256: (File) -> String,
+): Boolean = target.isFile && calculateSha256(target) == expectedSha256
 
 /**
  * A deliberately skipped patch stays current while the executable remains an

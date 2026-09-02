@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-internal const val DEFAULT_CAPTURED_GPU_DRIVER = "turnip26.2.0"
+const val DEFAULT_CAPTURED_GPU_DRIVER = "turnip26.2.0"
 
 data class LauncherSettings(
     val keepScreenAwake: Boolean = true,

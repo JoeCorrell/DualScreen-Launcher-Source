@@ -52,6 +52,7 @@ internal fun gameArtwork(gameId: String): Int = when (gameId) {
     "fallout3" -> R.drawable.art_fallout3
     "fallout4" -> R.drawable.art_fallout4
     "grim-dawn" -> R.drawable.art_grim_dawn
+    "transformers-wfc" -> R.drawable.art_transformers_wfc
     "deus-ex-hrdc" -> R.drawable.art_deus_ex
     "dead-island-de" -> R.drawable.art_dead_island
     "valheim" -> R.drawable.art_valheim
@@ -73,6 +74,7 @@ internal fun gameShortTitle(gameId: String): String = when (gameId) {
     "fallout3" -> "Fallout 3"
     "fallout4" -> "Fallout 4"
     "grim-dawn" -> "Grim Dawn"
+    "transformers-wfc" -> "Transformers: War for Cybertron"
     "deus-ex-hrdc" -> "Deus Ex: Human Revolution"
     "dead-island-de" -> "Dead Island Definitive"
     "valheim" -> "Valheim"

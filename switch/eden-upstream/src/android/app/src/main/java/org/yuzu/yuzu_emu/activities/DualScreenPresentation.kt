@@ -66,6 +66,7 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
         private const val ARKHAM_ASYLUM_TITLE_ID = 0x0100E870163CA000L
         private const val PLZA_TITLE_ID = 0x0100F43008C44000L
         private const val SSHD_TITLE_ID = 0x01002DA013484000L
+        private const val XCX_TITLE_ID = 0x0100453019AA8000L
         private const val ROUTE_INTERVAL_MS = 500L
         private const val TRANSIENT_TITLE_MISS_SAMPLES = 6
         private const val WAITING_ROUTE_ID = 0L
@@ -133,14 +134,14 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
 
     private fun normalizeRoute(titleId: Long): Long = when (titleId) {
         BOTW_TITLE_ID, MK8D_TITLE_ID, ARKHAM_ASYLUM_TITLE_ID, PLZA_TITLE_ID,
-        SSHD_TITLE_ID -> titleId
+        SSHD_TITLE_ID, XCX_TITLE_ID -> titleId
         else -> WAITING_ROUTE_ID
     }
 
     private fun isGameRoute(titleId: Long): Boolean =
         titleId == BOTW_TITLE_ID || titleId == MK8D_TITLE_ID ||
             titleId == ARKHAM_ASYLUM_TITLE_ID || titleId == PLZA_TITLE_ID ||
-            titleId == SSHD_TITLE_ID
+            titleId == SSHD_TITLE_ID || titleId == XCX_TITLE_ID
 
     private fun route(titleId: Long) {
         if (titleId == routedTitleId) return
@@ -159,6 +160,7 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
             ARKHAM_ASYLUM_TITLE_ID -> ArkhamCompanionView(context)
             PLZA_TITLE_ID -> PlzaCompanionView(context)
             SSHD_TITLE_ID -> SshdDualScreenCompanionLayout(context)
+            XCX_TITLE_ID -> XcxCompanionView(context)
             else -> WaitingForGameView(context)
         }
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -243,16 +245,17 @@ private class SshdDualScreenCompanionLayout(context: android.content.Context) : 
     private companion object {
         private const val DESIGN_WIDTH = 1240f
         private const val DESIGN_HEIGHT = 1080f
-        private const val PLAYER_LEFT = 824f
-        private const val PLAYER_TOP = 378f
-        private const val PLAYER_RIGHT = 1090f
-        private const val PLAYER_BOTTOM = 850f
+        private const val PLAYER_LEFT = 752f
+        private const val PLAYER_TOP = 370f
+        private const val PLAYER_RIGHT = 1036f
+        private const val PLAYER_BOTTOM = 990f
     }
 
     private val playerView = BotwPlayerRenderView(context, PlayerRenderProfile.Sshd)
     private val companionView = SshdCompanionView(
         context,
-        onPlayerVisibilityChanged = playerView::setVisible
+        onPlayerVisibilityChanged = playerView::setVisible,
+        onPlayerModelChanged = playerView::setSshdOutfit
     )
 
     init {

@@ -46,6 +46,32 @@ public class SharedBox64RuntimeStateTest {
         assertEquals(request.version, request.markerId);
         assertNull(request.requiredSha256);
         assertTrue(request.allowInstalledProfile);
+        assertFalse(request.managedSteamRuntime);
+        assertFalse(request.forceBox64Translator);
+    }
+
+    @Test
+    public void transformersRequestPinsExactWemuBox64AndForcesTranslator() {
+        SharedBox64RuntimeState.RuntimeRequest request =
+                SharedBox64RuntimeState.runtimeRequest(
+                        "", "", "", "Proton-11.0-5-arm64ec-6", "0.4.2",
+                        SharedBox64RuntimeState.TRANSFORMERS_WFC_RUNTIME);
+
+        assertEquals("0.4.2", request.version);
+        assertEquals(SharedBox64RuntimeState.BOX64_0_4_2_SHA256,
+                request.requiredSha256);
+        assertEquals(SharedBox64RuntimeState.WOWBOX64_0_4_2_SHA256,
+                request.requiredWowBox64Sha256);
+        assertFalse(request.allowInstalledProfile);
+        assertFalse(request.managedSteamRuntime);
+        assertTrue(request.forceBox64Translator);
+        assertEquals("box64", SharedBox64RuntimeState.resolveEmulator(
+                request, "box64", null, true));
+        assertPinnedGameRequestRejected("0.4.4",
+                SharedBox64RuntimeState.TRANSFORMERS_WFC_RUNTIME);
+        assertPinnedGameRequestRejected("0.4.2", "unknown-game-runtime");
+        assertPinnedEmulatorRejected(request, "FEXCore", null);
+        assertPinnedEmulatorRejected(request, "box64", "FEXCore");
     }
 
     @Test
@@ -70,6 +96,9 @@ public class SharedBox64RuntimeStateTest {
         assertFalse(proton10.markerId.equals(proton11.markerId));
         assertFalse(proton10.allowInstalledProfile);
         assertFalse(proton11.allowInstalledProfile);
+        assertTrue(proton10.managedSteamRuntime);
+        assertTrue(proton11.managedSteamRuntime);
+        assertFalse(proton10.forceBox64Translator);
     }
 
     @Test
@@ -538,6 +567,34 @@ public class SharedBox64RuntimeStateTest {
         try {
             SharedBox64RuntimeState.runtimeRequest(
                     "1", specMarker, revision, wineVersion, box64Version);
+        } catch (IllegalStateException expected) {
+            rejected = true;
+        }
+        assertTrue(rejected);
+    }
+
+    private static void assertPinnedGameRequestRejected(
+            String box64Version,
+            String pinnedRuntime) {
+        boolean rejected = false;
+        try {
+            SharedBox64RuntimeState.runtimeRequest(
+                    "", "", "", "Proton-11.0-5-arm64ec-6",
+                    box64Version, pinnedRuntime);
+        } catch (IllegalStateException expected) {
+            rejected = true;
+        }
+        assertTrue(rejected);
+    }
+
+    private static void assertPinnedEmulatorRejected(
+            SharedBox64RuntimeState.RuntimeRequest request,
+            String containerEmulator,
+            String shortcutEmulator) {
+        boolean rejected = false;
+        try {
+            SharedBox64RuntimeState.resolveEmulator(
+                    request, containerEmulator, shortcutEmulator, true);
         } catch (IllegalStateException expected) {
             rejected = true;
         }

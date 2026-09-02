@@ -109,7 +109,10 @@ def parse_pfs0(data: bytes) -> tuple[int, list[PfsFile]]:
     metadata_size = strings_offset + string_size
     if metadata_size > len(data):
         raise RuntimeError("The downloaded NSP header is truncated")
-    data_offset = (metadata_size + 0xF) & ~0xF
+    # PFS0 file data begins immediately after the string table. Individual
+    # packages may choose aligned string-table sizes, but the format does not
+    # add implicit padding here.
+    data_offset = metadata_size
     files: list[PfsFile] = []
     for index in range(file_count):
         offset, size, name_offset = struct.unpack_from(
@@ -216,6 +219,7 @@ def main() -> int:
     parser.add_argument("--match", action="append", default=[], help="Case-insensitive glob")
     parser.add_argument("--extract", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--manifest", type=Path, help="Write matched paths, offsets, and sizes")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -314,6 +318,15 @@ def main() -> int:
         entry for entry in files
         if any(fnmatch.fnmatch(entry.path.lower(), pattern) for pattern in patterns)
     ]
+    if args.manifest is not None:
+        args.manifest.parent.mkdir(parents=True, exist_ok=True)
+        args.manifest.write_text(
+            "".join(
+                f"{entry.path}\toffset=0x{entry.offset:x}\tsize=0x{entry.size:x}\n"
+                for entry in selected
+            ),
+            encoding="utf-8",
+        )
     if not args.quiet:
         for entry in selected:
             print(f"{entry.path} | offset=0x{entry.offset:x} size=0x{entry.size:x}")

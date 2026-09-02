@@ -30,10 +30,17 @@ final class NativePanelIdentity {
                 || normalizedTitle(title).equals("stardew valley dual screen");
     }
 
+    static boolean isTransformersWfc(String className, String title) {
+        return normalizedClass(className).equals("transformerswfcsecondscreenpanel")
+                || normalizedTitle(title).equals(
+                        "transformers: war for cybertron dual-screen");
+    }
+
     static boolean isEarlyClaimPanel(String className, String title) {
         return isSkyrim(className, title)
                 || isFallout(className, title)
                 || isGrimDawn(className, title)
+                || isTransformersWfc(className, title)
                 || isStardewValley(className, title);
     }
 

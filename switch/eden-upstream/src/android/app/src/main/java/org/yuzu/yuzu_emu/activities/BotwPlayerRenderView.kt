@@ -145,6 +145,10 @@ internal class BotwPlayerRenderView(
         private const val SLOT_WEAPON = "Weapon"
         private const val SLOT_BOW = "Bow"
         private const val SLOT_SHIELD = "Shield"
+        private const val SSHD_OUTFIT_OPENING = 0
+        private const val SSHD_OUTFIT_HERO = 1
+        private const val SSHD_ACTOR_OPENING = "LinkOpening"
+        private const val SSHD_ACTOR_HERO = "LinkHero"
         private const val PORTRAIT_FIT_MARGIN = 1.015f
 
 
@@ -193,7 +197,7 @@ internal class BotwPlayerRenderView(
         BuildConfig.BOTW_PLAYER_PIPELINE_MODE
     }
     private val requiredBodySlots = if (profile == PlayerRenderProfile.Sshd) {
-        setOf(SLOT_BASE, SLOT_HEAD, SLOT_HAND_LEFT, SLOT_HAND_RIGHT)
+        setOf(SLOT_BASE)
     } else {
         bodySlots
     }
@@ -247,7 +251,7 @@ internal class BotwPlayerRenderView(
                 }
             }
             val required = if (profile == PlayerRenderProfile.Sshd) {
-                setOf("Link", "Link_Head", "Link_Hand_Left", "Link_Hand_Right")
+                setOf(SSHD_ACTOR_OPENING, SSHD_ACTOR_HERO)
             } else {
                 setOf("Link", "Armor_Default_Head", "Armor_Default_Upper", "Armor_Default_Lower")
             }
@@ -318,6 +322,7 @@ internal class BotwPlayerRenderView(
     private val loadedSlots = mutableMapOf<String, LoadedSlot>()
     private var appearance: BotwPlayerAppearance? = null
     private var cachedAppearance: BotwPlayerAppearance? = null
+    private var sshdOutfitActor: String? = null
     private var shouldBeVisible = false
     private val previewBoneEntities = mutableMapOf<String, MutableMap<String, Int>>()
     private val restBoneTransforms = mutableMapOf<Int, FloatArray>()
@@ -446,6 +451,33 @@ internal class BotwPlayerRenderView(
             ),
             visible
         )
+    }
+
+    fun setSshdOutfit(outfit: Int) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        if (profile != PlayerRenderProfile.Sshd) return
+        // The companion ABI deliberately normalizes these values for the UI:
+        // 0 is the opening pl_* set and 1 is the green al* set. Unknown values
+        // have no visual fallback; showing the wrong outfit is worse than
+        // withholding the preview until a valid live selector arrives.
+        val actor = when (outfit) {
+            SSHD_OUTFIT_OPENING -> SSHD_ACTOR_OPENING
+            SSHD_OUTFIT_HERO -> SSHD_ACTOR_HERO
+            else -> null
+        }
+        if (sshdOutfitActor == actor) return
+        sshdOutfitActor = actor
+        cachedAppearance = null
+        cancelPreviewAction(clearHeldItem = true)
+        alpha = 0f
+        visibility = INVISIBLE
+        bodyReady = false
+        val current = appearance
+        if (actor == null) {
+            if (engine != null) releaseRenderer(keepBitmap = false, terminal = false)
+        } else if (shouldBeVisible && current != null) {
+            beginAppearanceRender(current)
+        }
     }
 
     fun playItemAction(actorName: String, itemIcon: Bitmap?, eating: Boolean) {
@@ -619,21 +651,23 @@ internal class BotwPlayerRenderView(
     }
 
     private fun beginAppearanceRender(next: BotwPlayerAppearance) {
+        val baseActor = if (profile == PlayerRenderProfile.Sshd) {
+            sshdOutfitActor ?: run {
+                alpha = 0f
+                visibility = INVISIBLE
+                bodyReady = false
+                return
+            }
+        } else {
+            "Link"
+        }
         if (!ensureRenderer()) return
 
-        desiredActors[SLOT_BASE] = "Link"
-        desiredActors[SLOT_HEAD] = if (profile == PlayerRenderProfile.Sshd) "Link_Head"
+        desiredActors[SLOT_BASE] = baseActor
+        desiredActors[SLOT_HEAD] = if (profile == PlayerRenderProfile.Sshd) null
             else next.head ?: defaultActors.getValue(SLOT_HEAD)
-        desiredActors[SLOT_HAND_LEFT] = if (profile == PlayerRenderProfile.Sshd) {
-            "Link_Hand_Left"
-        } else {
-            null
-        }
-        desiredActors[SLOT_HAND_RIGHT] = if (profile == PlayerRenderProfile.Sshd) {
-            "Link_Hand_Right"
-        } else {
-            null
-        }
+        desiredActors[SLOT_HAND_LEFT] = null
+        desiredActors[SLOT_HAND_RIGHT] = null
         desiredActors[SLOT_CHEST] = if (profile == PlayerRenderProfile.Sshd) null
             else next.chest ?: defaultActors.getValue(SLOT_CHEST)
         desiredActors[SLOT_LEGS] = if (profile == PlayerRenderProfile.Sshd) null
@@ -669,19 +703,19 @@ internal class BotwPlayerRenderView(
 
             nextView.scene = nextScene
             nextView.camera = nextCamera
-            nextView.isPostProcessingEnabled = false
-            nextView.setShadowingEnabled(false)
-            nextView.antiAliasing = View.AntiAliasing.NONE
-            nextView.ambientOcclusion = View.AmbientOcclusion.NONE
-            nextView.dithering = View.Dithering.NONE
-            nextView.sampleCount = 1
+            nextView.isPostProcessingEnabled = true
+            nextView.setShadowingEnabled(true)
+            nextView.antiAliasing = View.AntiAliasing.FXAA
+            nextView.ambientOcclusion = View.AmbientOcclusion.SSAO
+            nextView.dithering = View.Dithering.TEMPORAL
+            nextView.sampleCount = 4
 
 
             nextView.blendMode = View.BlendMode.TRANSLUCENT
 
 
 
-            nextCamera.setExposure(9.8f, 1f / 125f, 100f)
+            nextCamera.setExposure(8.0f, 1f / 125f, 100f)
 
 
             nextCamera.lookAt(0.0, 0.92, 4.0, 0.0, 0.92, 0.0, 0.0, 1.0, 0.0)
@@ -693,22 +727,38 @@ internal class BotwPlayerRenderView(
 
             val key = entities.create()
             LightManager.Builder(LightManager.Type.DIRECTIONAL)
-                .color(1.0f, 0.98f, 0.94f)
-                .intensity(62_000f)
-                .direction(-0.32f, -0.48f, -0.82f)
-                .castShadows(false)
+                .color(1.0f, 0.96f, 0.88f)
+                .intensity(68_000f)
+                .direction(-0.38f, -0.62f, -0.68f)
+                .castShadows(true)
                 .build(nextEngine, key)
             nextScene.addEntity(key)
             lightEntities = intArrayOf(key)
             val fill = entities.create()
             LightManager.Builder(LightManager.Type.DIRECTIONAL)
-                .color(0.74f, 0.85f, 1.0f)
-                .intensity(34_000f)
-                .direction(0.58f, -0.12f, -0.81f)
+                .color(
+                    if (profile == PlayerRenderProfile.Sshd) 1.0f else 0.74f,
+                    if (profile == PlayerRenderProfile.Sshd) 0.86f else 0.85f,
+                    if (profile == PlayerRenderProfile.Sshd) 0.66f else 1.0f
+                )
+                .intensity(if (profile == PlayerRenderProfile.Sshd) 15_000f else 13_000f)
+                .direction(0.62f, -0.20f, -0.76f)
                 .castShadows(false)
                 .build(nextEngine, fill)
             nextScene.addEntity(fill)
-            lightEntities = intArrayOf(key, fill)
+            val rim = entities.create()
+            LightManager.Builder(LightManager.Type.DIRECTIONAL)
+                .color(
+                    if (profile == PlayerRenderProfile.Sshd) 1.0f else 0.46f,
+                    if (profile == PlayerRenderProfile.Sshd) 0.72f else 0.68f,
+                    if (profile == PlayerRenderProfile.Sshd) 0.42f else 1.0f
+                )
+                .intensity(if (profile == PlayerRenderProfile.Sshd) 8_000f else 9_000f)
+                .direction(-0.25f, -0.18f, 0.95f)
+                .castShadows(false)
+                .build(nextEngine, rim)
+            nextScene.addEntity(rim)
+            lightEntities = intArrayOf(key, fill, rim)
 
 
 
@@ -716,9 +766,13 @@ internal class BotwPlayerRenderView(
             val ambient = IndirectLight.Builder()
                 .irradiance(
                     1,
-                    floatArrayOf(0.80f, 0.85f, 0.92f)
+                    if (profile == PlayerRenderProfile.Sshd) {
+                        floatArrayOf(0.82f, 0.74f, 0.62f)
+                    } else {
+                        floatArrayOf(0.70f, 0.76f, 0.86f)
+                    }
                 )
-                .intensity(29_000f)
+                .intensity(if (profile == PlayerRenderProfile.Sshd) 14_000f else 12_000f)
                 .build(nextEngine)
             nextScene.indirectLight = ambient
             indirectLight = ambient
@@ -920,7 +974,9 @@ internal class BotwPlayerRenderView(
     }
 
     private fun requestSlot(slot: String, requestedActor: String?) {
-        if (requestedActors[slot] == requestedActor) return
+        val matchingRequestIsActive = requestedActors[slot] == requestedActor &&
+            (pendingSlots.contains(slot) || loadedSlots[slot]?.actor == requestedActor)
+        if (matchingRequestIsActive) return
         requestedActors[slot] = requestedActor
         val generation = (requestGenerations[slot] ?: 0) + 1
         requestGenerations[slot] = generation
@@ -950,7 +1006,7 @@ internal class BotwPlayerRenderView(
                         candidate.isFile && candidate.length() in 1..MAX_PLAYER_ASSET_BYTES
                     }
             }
-            val loaded = if (
+            val loadedFromFile = if (
                 source != null && source.isFile && source.length() in 1..MAX_PLAYER_ASSET_BYTES
             ) {
                 try {
@@ -964,6 +1020,31 @@ internal class BotwPlayerRenderView(
                 }
             } else {
                 null
+            }
+            val loadedFromPackage = file?.let { name ->
+                try {
+                    val assetDirectory = assetIndex.substringBeforeLast('/')
+                    val bytes = context.assets.open("$assetDirectory/$name").use { stream ->
+                        stream.readBytes()
+                    }
+                    if (bytes.size.toLong() in 1..MAX_PLAYER_ASSET_BYTES) {
+                        AssetBytes(requestedActor, bytes)
+                    } else {
+                        null
+                    }
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            // SSHD's preview assets are versioned with the app. An older
+            // externally generated GLB can still exist in Eden's user folder;
+            // preferring it silently restores the raw bind pose and drops the
+            // packaged waitS animation. Keep external overrides for BOTW, but
+            // make the corrected, verified APK model authoritative for SSHD.
+            val loaded = if (profile == PlayerRenderProfile.Sshd) {
+                loadedFromPackage ?: loadedFromFile
+            } else {
+                loadedFromFile ?: loadedFromPackage
             }
             post {
                 if (released || releasing || requestGenerations[slot] != generation) return@post
@@ -1006,12 +1087,28 @@ internal class BotwPlayerRenderView(
             resources.loadResources(asset)
             asset.releaseSourceData()
             val animator = asset.instance.animator
+            Log.info(
+                "[$logName Companion] ${model.actor} animation count=${animator.animationCount}"
+            )
             if (animator.animationCount > 0) {
                 val idle = (0 until animator.animationCount).firstOrNull { index ->
-                    animator.getAnimationName(index).contains("Nml_Wait", ignoreCase = true)
+                    val name = animator.getAnimationName(index)
+                    if (profile == PlayerRenderProfile.Sshd) {
+                        name.equals("waitS", ignoreCase = true) ||
+                            name.contains("waitS", ignoreCase = true)
+                    } else {
+                        name.contains("Nml_Wait", ignoreCase = true)
+                    }
                 } ?: 0
-                val poseTime = animator.getAnimationDuration(idle) * 0.20f
+                // Use a sampled frame from the game's actual idle clip. This is
+                // intentionally not the bind frame: a skinned SSHD asset must
+                // never be presented in its raw T-pose while the preview is idle.
+                val poseTime = animator.getAnimationDuration(idle) * 0.37f
                 animator.applyAnimation(idle, poseTime)
+                Log.info(
+                    "[$logName Companion] Applied ${animator.getAnimationName(idle)} " +
+                        "idle pose at ${"%.3f".format(poseTime)}s to ${model.actor}"
+                )
             }
 
 
@@ -1029,6 +1126,7 @@ internal class BotwPlayerRenderView(
             addedToScene = true
             removeSlot(slot)
             loadedSlots[slot] = LoadedSlot(model.actor, asset)
+            missingActors.remove(model.actor)
             createdAsset = null
             updateReadiness()
         } catch (exception: Exception) {

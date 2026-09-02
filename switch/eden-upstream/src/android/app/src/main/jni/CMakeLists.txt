@@ -17,6 +17,8 @@ add_library(yuzu-android SHARED
     plza_companion.h
     sshd_companion.cpp
     sshd_companion.h
+    xcx_companion.cpp
+    xcx_companion.h
     emu_window/emu_window.cpp
     emu_window/emu_window.h
     native.cpp

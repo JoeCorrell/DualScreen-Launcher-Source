@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -15,9 +17,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include <zlib.h>
+
 #include <bc_decoder.h>
 
 #include "common/stb.h"
+#include "common/zstd_compression.h"
 #include "core/core.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/nca_metadata.h"
@@ -39,6 +44,7 @@ constexpr u64 BotwTitleId = 0x01007EF00011E000ULL;
 constexpr u64 Mk8dTitleId = 0x0100152000022000ULL;
 constexpr u64 PlzaTitleId = 0x0100F43008C44000ULL;
 constexpr u64 SshdTitleId = 0x01002DA013484000ULL;
+constexpr u64 XcxTitleId = 0x0100453019AA8000ULL;
 constexpr std::size_t MaxSourceSize = 4 * 1024 * 1024;
 constexpr std::size_t MaxArchiveSize = 64 * 1024 * 1024;
 constexpr std::size_t MaxDecodedSourceSize = 64 * 1024 * 1024;
@@ -59,6 +65,9 @@ std::unordered_map<std::string, std::vector<u8>> mk8d_common_cache;
 std::unordered_map<std::string, std::vector<u8>> plza_texture_cache;
 std::unordered_map<std::string, std::vector<u8>> sshd_asset_cache;
 std::unordered_map<std::string, std::shared_ptr<std::vector<u8>>> sshd_archive_cache;
+std::unordered_map<std::string, std::vector<u8>> xcx_asset_cache;
+std::shared_ptr<std::vector<u8>> xcx_common_bdat;
+std::shared_ptr<std::vector<u8>> xcx_message_bdat;
 std::shared_ptr<std::vector<u8>> mk8d_character_archive;
 std::shared_ptr<std::vector<u8>> mk8d_item_archive;
 std::shared_ptr<std::vector<u8>> botw_common_archive;
@@ -68,6 +77,17 @@ std::chrono::steady_clock::time_point botw_map_retry_after{};
 bool mk8d_character_failed{};
 bool mk8d_item_failed{};
 bool mk8d_common_loaded{};
+
+struct XcxArchiveRange {
+    u64 offset{};
+    u32 disk_size{};
+    u32 expanded_size{};
+};
+
+std::unordered_map<u64, XcxArchiveRange> xcx_archive_index;
+FileSys::VirtualFile xcx_archive_store;
+bool xcx_archive_loaded{};
+std::chrono::steady_clock::time_point xcx_archive_retry_after{};
 
 struct TrinityPackRange {
     u64 offset;
@@ -1019,7 +1039,7 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
         std::string_view member;
         bool texture;
     };
-    static constexpr std::array<Mapping, 41> Assets{{
+    static constexpr std::array<Mapping, 179> Assets{{
         {"sshd/raw/navi_table.dat", "/Object/NX/System.arc", "dat/navi_table.dat", false},
         {"sshd/raw/items.msbt", "/US/Object/en_US/0-Common.arc",
          "0-Common/003-ItemGet.msbt", false},
@@ -1027,6 +1047,8 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
          "0-Common/002-System.msbt", false},
         {"sshd/raw/fi.msbt", "/US/Object/en_US/0-Common.arc",
          "0-Common/006-KenseiNormal.msbt", false},
+        {"sshd/raw/fi_objectives.msbt", "/US/Object/en_US/0-Common.arc",
+         "0-Common/006-2KenseiNormal.msbt", false},
         {"sshd/raw/map_text.msbt", "/US/Object/en_US/0-Common.arc",
          "0-Common/007-MapText.msbt", false},
         {"sshd/ui/parchment.png", "/Layout/MenuPause.arc", "timg/tr_kami_05.tpl", true},
@@ -1040,6 +1062,12 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
         {"sshd/ui/link_portrait.png", "/Layout/MenuPause.arc",
          "timg/tr_sabLinkCollect_04.tpl", true},
         {"sshd/item/practice_sword.png", "/Layout/MenuPause.arc", "timg/hm_swordA_00.tpl", true},
+        {"sshd/item/goddess_white_sword.png", "/Layout/MenuPause.arc",
+         "timg/hm_swordD_00.tpl", true},
+        {"sshd/item/goddess_sword.png", "/Layout/MenuPause.arc", "timg/hm_swordB_00.tpl", true},
+        {"sshd/item/goddess_longsword.png", "/Layout/MenuPause.arc",
+         "timg/hm_swordC_00.tpl", true},
+        {"sshd/item/master_sword.png", "/Layout/MenuPause.arc", "timg/hm_swordE_00.tpl", true},
         {"sshd/item/true_master_sword.png", "/Layout/MenuPause.arc",
          "timg/hm_swordMaster_00.tpl", true},
         {"sshd/item/sailcloth.png", "/Layout/MenuPause.arc", "timg/tr_stoleIcon_01.tpl", true},
@@ -1050,6 +1078,8 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
          "timg/tr_urokoIcon_00.tpl", true},
         {"sshd/item/heart_piece.png", "/Layout/MenuPause.arc",
          "timg/tr_heartKake_02.tpl", true},
+        {"sshd/item/heart_container.png", "/Layout/MenuPause.arc",
+         "timg/tr_heartUtsuwa_01.tpl", true},
         {"sshd/item/triforce.png", "/Layout/MenuPause.arc", "timg/tr_tryForce_01.tpl", true},
         {"sshd/item/mogma_mitts.png", "/Layout/MenuPause.arc",
          "timg/hm_moleGloveB_00.tpl", true},
@@ -1075,6 +1105,213 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
          "timg/uk_lifeNae_00.tpl", true},
         {"sshd/item/life_tree_fruit.png", "/Layout/MenuPause.arc",
          "timg/uk_lifeMi_00.tpl", true},
+        {"sshd/item/stone_of_trials.png", "/Layout/MenuPause.arc",
+         "timg/tr_sekibanStone_00.tpl", true},
+        {"sshd/item/ballad_goddess.png", "/Layout/MenuPause.arc",
+         "timg/tr_markMegami_00.tpl", true},
+        {"sshd/item/farores_courage.png", "/Layout/MenuPause.arc",
+         "timg/tr_markFlr_00.tpl", true},
+        {"sshd/item/nayrus_wisdom.png", "/Layout/MenuPause.arc",
+         "timg/tr_markNail_00.tpl", true},
+        {"sshd/item/dins_power.png", "/Layout/MenuPause.arc", "timg/tr_markDin_00.tpl", true},
+        {"sshd/item/faron_song_hero.png", "/Layout/MenuPause.arc",
+         "timg/tr_markFlr_00.tpl", true},
+        {"sshd/item/eldin_song_hero.png", "/Layout/MenuPause.arc",
+         "timg/tr_markDin_00.tpl", true},
+        {"sshd/item/lanayru_song_hero.png", "/Layout/MenuPause.arc",
+         "timg/tr_markNail_00.tpl", true},
+        {"sshd/item/song_of_hero.png", "/Layout/MenuPause.arc",
+         "timg/tr_markMegami_00.tpl", true},
+        // The B-wheel, pouch, bug and treasure icons below use the same
+        // DoButton.arc members selected by dLytCommonIconItem.  In particular,
+        // bug textures are not stored in ITEMFLAGS order.
+        {"sshd/item/bow.png", "/Layout/DoButton.arc", "timg/uc_bowA_00.tpl", true},
+        {"sshd/item/iron_bow.png", "/Layout/DoButton.arc", "timg/uc_bowB_00.tpl", true},
+        {"sshd/item/sacred_bow.png", "/Layout/DoButton.arc", "timg/uc_bowC_00.tpl", true},
+        {"sshd/item/bomb_bag.png", "/Layout/DoButton.arc", "timg/uc_bomb_00.tpl", true},
+        {"sshd/item/beetle.png", "/Layout/DoButton.arc", "timg/uc_beetleA_00.tpl", true},
+        {"sshd/item/hook_beetle.png", "/Layout/DoButton.arc", "timg/uc_beetleB_00.tpl", true},
+        {"sshd/item/quick_beetle.png", "/Layout/DoButton.arc", "timg/uc_beetleC_00.tpl", true},
+        {"sshd/item/tough_beetle.png", "/Layout/DoButton.arc", "timg/uc_beetleD_00.tpl", true},
+        {"sshd/item/slingshot.png", "/Layout/DoButton.arc", "timg/uc_pachinkoA_00.tpl", true},
+        {"sshd/item/scattershot.png", "/Layout/DoButton.arc", "timg/uc_pachinkoB_00.tpl", true},
+        {"sshd/item/clawshots.png", "/Layout/DoButton.arc", "timg/uc_hookShot_00.tpl", true},
+        {"sshd/item/bug_net.png", "/Layout/DoButton.arc", "timg/uc_netA_00.tpl", true},
+        {"sshd/item/big_bug_net.png", "/Layout/DoButton.arc", "timg/uc_netB_00.tpl", true},
+        {"sshd/item/whip.png", "/Layout/DoButton.arc", "timg/tr_whip_00.tpl", true},
+        {"sshd/item/gust_bellows.png", "/Layout/DoButton.arc",
+         "timg/tr_vacuumIcon_00.tpl", true},
+        {"sshd/item/wooden_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldWoodA_00.tpl", true},
+        {"sshd/item/banded_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldWoodB_00.tpl", true},
+        {"sshd/item/braced_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldWoodC_00.tpl", true},
+        {"sshd/item/iron_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldIronA_00.tpl", true},
+        {"sshd/item/reinforced_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldIronB_00.tpl", true},
+        {"sshd/item/fortified_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldIronC_00.tpl", true},
+        {"sshd/item/sacred_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldHolyA_00.tpl", true},
+        {"sshd/item/divine_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldHolyB_00.tpl", true},
+        {"sshd/item/goddess_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldHolyC_00.tpl", true},
+        {"sshd/item/hylian_shield.png", "/Layout/DoButton.arc",
+         "timg/uc_shieldHylia_00.tpl", true},
+        {"sshd/item/small_seed_satchel.png", "/Layout/DoButton.arc",
+         "timg/uc_spareSeedA_00.tpl", true},
+        {"sshd/item/medium_seed_satchel.png", "/Layout/DoButton.arc",
+         "timg/uc_spareSeedB_00.tpl", true},
+        {"sshd/item/large_seed_satchel.png", "/Layout/DoButton.arc",
+         "timg/uc_spareSeedC_00.tpl", true},
+        {"sshd/item/small_quiver.png", "/Layout/DoButton.arc",
+         "timg/uc_spareQuiverA_00.tpl", true},
+        {"sshd/item/medium_quiver.png", "/Layout/DoButton.arc",
+         "timg/uc_spareQuiverB_00.tpl", true},
+        {"sshd/item/large_quiver.png", "/Layout/DoButton.arc",
+         "timg/uc_spareQuiverC_00.tpl", true},
+        {"sshd/item/small_bomb_bag.png", "/Layout/DoButton.arc",
+         "timg/uc_spareBombBagA_00.tpl", true},
+        {"sshd/item/medium_bomb_bag.png", "/Layout/DoButton.arc",
+         "timg/uc_spareBombBagB_00.tpl", true},
+        {"sshd/item/large_bomb_bag.png", "/Layout/DoButton.arc",
+         "timg/uc_spareBombBagC_00.tpl", true},
+        {"sshd/item/glittering_spores.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKinokoB_00.tpl", true},
+        {"sshd/item/water.png", "/Layout/DoButton.arc", "timg/uc_bottleWater_00.tpl", true},
+        {"sshd/item/mushroom_spores.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKinokoA_00.tpl", true},
+        {"sshd/item/guardian_potion.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleMutekiA_00.tpl", true},
+        {"sshd/item/guardian_potion_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleMutekiB_00.tpl", true},
+        {"sshd/item/sacred_water.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleHoly_00.tpl", true},
+        {"sshd/item/heart_potion.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKusuriA_00.tpl", true},
+        {"sshd/item/heart_potion_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKusuriB_00.tpl", true},
+        {"sshd/item/heart_potion_plus_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKusuriC_00.tpl", true},
+        {"sshd/item/heart_potion_plus_plus_half.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleKusuriC_01.tpl", true},
+        {"sshd/item/stamina_potion.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleGutsA_00.tpl", true},
+        {"sshd/item/stamina_potion_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleGutsB_00.tpl", true},
+        {"sshd/item/air_potion.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleAirA_00.tpl", true},
+        {"sshd/item/air_potion_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleAirB_00.tpl", true},
+        {"sshd/item/fairy_bottle.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleFairy_00.tpl", true},
+        {"sshd/item/empty_bottle.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleEmpty_00.tpl", true},
+        {"sshd/item/revitalizing_potion.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleRepairA_00.tpl", true},
+        {"sshd/item/revitalizing_potion_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleRepairB_00.tpl", true},
+        {"sshd/item/revitalizing_potion_plus_plus.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleRepairC_01.tpl", true},
+        {"sshd/item/revitalizing_potion_plus_plus_half.png", "/Layout/DoButton.arc",
+         "timg/uc_bottleRepairC_00.tpl", true},
+        {"sshd/item/hot_pumpkin_soup.png", "/Layout/DoButton.arc",
+         "timg/uc_bottlePumpkinA_00.tpl", true},
+        {"sshd/item/cold_pumpkin_soup.png", "/Layout/DoButton.arc",
+         "timg/uc_bottlePumpkinB_00.tpl", true},
+        {"sshd/item/heart_medal.png", "/Layout/DoButton.arc", "timg/uc_medalHeart_00.tpl", true},
+        {"sshd/item/rupee_medal.png", "/Layout/DoButton.arc", "timg/uc_medalLucky_00.tpl", true},
+        {"sshd/item/treasure_medal.png", "/Layout/DoButton.arc",
+         "timg/uc_medalReturn_00.tpl", true},
+        {"sshd/item/potion_medal.png", "/Layout/DoButton.arc",
+         "timg/uc_medalDurable_00.tpl", true},
+        {"sshd/item/cursed_medal.png", "/Layout/DoButton.arc", "timg/uc_medalDemon_00.tpl", true},
+        {"sshd/item/life_medal.png", "/Layout/DoButton.arc", "timg/uc_medalLife_00.tpl", true},
+        {"sshd/item/bug_medal.png", "/Layout/DoButton.arc", "timg/uc_medalHunter_00.tpl", true},
+        {"sshd/item/faron_grasshopper.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_08.tpl", true},
+        {"sshd/item/woodland_rhino_beetle.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_04.tpl", true},
+        {"sshd/item/deku_hornet.png", "/Layout/DoButton.arc", "timg/tr_bugIcon_00.tpl", true},
+        {"sshd/item/skyloft_mantis.png", "/Layout/DoButton.arc", "timg/tr_bugIcon_09.tpl", true},
+        {"sshd/item/volcanic_ladybug.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_05.tpl", true},
+        {"sshd/item/blessed_butterfly.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_01.tpl", true},
+        {"sshd/item/lanayru_ant.png", "/Layout/DoButton.arc", "timg/tr_bugIcon_10.tpl", true},
+        {"sshd/item/sand_cicada.png", "/Layout/DoButton.arc", "timg/tr_bugIcon_06.tpl", true},
+        {"sshd/item/gerudo_dragonfly.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_02.tpl", true},
+        {"sshd/item/eldin_roller.png", "/Layout/DoButton.arc", "timg/tr_bugIcon_11.tpl", true},
+        {"sshd/item/sky_stag_beetle.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_07.tpl", true},
+        {"sshd/item/starry_firefly.png", "/Layout/DoButton.arc",
+         "timg/tr_bugIcon_03.tpl", true},
+        {"sshd/item/hornet_larvae.png", "/Layout/DoButton.arc",
+         "timg/uk_soaHachisu_00.tpl", true},
+        {"sshd/item/bird_feather.png", "/Layout/DoButton.arc", "timg/uk_sobHaneA_00.tpl", true},
+        {"sshd/item/tumbleweed.png", "/Layout/DoButton.arc", "timg/uk_socTumble_00.tpl", true},
+        {"sshd/item/lizard_tail.png", "/Layout/DoButton.arc", "timg/tr_sozaiIcon_03.tpl", true},
+        {"sshd/item/eldin_ore.png", "/Layout/DoButton.arc", "timg/uk_soeKoseki_00.tpl", true},
+        {"sshd/item/ancient_flower.png", "/Layout/DoButton.arc", "timg/uk_sofHana_00.tpl", true},
+        {"sshd/item/amber_relic.png", "/Layout/DoButton.arc",
+         "timg/uk_sogMagatamaA_00.tpl", true},
+        {"sshd/item/dusk_relic.png", "/Layout/DoButton.arc",
+         "timg/uk_sohMagatamaB_00.tpl", true},
+        {"sshd/item/jelly_blob.png", "/Layout/DoButton.arc", "timg/uk_soiPuyo_00.tpl", true},
+        {"sshd/item/monster_claw.png", "/Layout/DoButton.arc", "timg/uk_sojClaw_00.tpl", true},
+        {"sshd/item/monster_horn.png", "/Layout/DoButton.arc", "timg/uk_solHorn_00.tpl", true},
+        {"sshd/item/ornamental_skull.png", "/Layout/DoButton.arc",
+         "timg/uk_sokDokuroA_00.tpl", true},
+        {"sshd/item/evil_crystal.png", "/Layout/DoButton.arc", "timg/uk_somEvil_00.tpl", true},
+        {"sshd/item/blue_bird_feather.png", "/Layout/DoButton.arc",
+         "timg/uk_sonHaneB_00.tpl", true},
+        {"sshd/item/golden_skull.png", "/Layout/DoButton.arc",
+         "timg/uk_sooDokuroB_00.tpl", true},
+        {"sshd/item/goddess_plume.png", "/Layout/DoButton.arc",
+         "timg/uk_sopGoddess_00.tpl", true},
+        {"sshd/item/small_key.png", "/Layout/DoButton.arc", "timg/tr_keySmall_00.tpl", true},
+        {"sshd/item/dungeon_map.png", "/Layout/DoButton.arc", "timg/tr_map_00.tpl", true},
+        {"sshd/item/ancient_cistern_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss2A_00.tpl", true},
+        {"sshd/item/fire_sanctuary_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss2B_00.tpl", true},
+        {"sshd/item/sandship_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss2C_00.tpl", true},
+        {"sshd/item/skyview_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss1A_00.tpl", true},
+        {"sshd/item/earth_temple_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss1B_00.tpl", true},
+        {"sshd/item/lanayru_mining_facility_boss_key.png", "/Layout/DoButton.arc",
+         "timg/hm_keyBoss1C_00.tpl", true},
+        {"sshd/item/key_piece.png", "/Layout/DoButton.arc", "timg/ts_keyKakera_00.tpl", true},
+        {"sshd/item/gratitude_crystal.png", "/Layout/DoButton.arc",
+         "timg/uk_dawGenki_00.tpl", true},
+        {"sshd/dowsing/target_00.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_00.tpl", true},
+        {"sshd/dowsing/target_01.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_01.tpl", true},
+        {"sshd/dowsing/target_02.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_02.tpl", true},
+        {"sshd/dowsing/target_03.png", "/Layout/DoButton.arc", "timg/uk_dawGenki_00.tpl", true},
+        {"sshd/dowsing/target_04.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_04.tpl", true},
+        {"sshd/dowsing/target_05.png", "/Layout/DoButton.arc", "timg/uc_bottleHoly_00.tpl", true},
+        {"sshd/dowsing/target_06.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_06.tpl", true},
+        {"sshd/dowsing/target_07.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_07.tpl", true},
+        {"sshd/dowsing/target_08.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_08.tpl", true},
+        {"sshd/dowsing/target_09.png", "/Layout/DoButton.arc", "timg/tr_cameraMark_00.tpl", true},
+        {"sshd/dowsing/target_10.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_10.tpl", true},
+        {"sshd/dowsing/target_11.png", "/Layout/DoButton.arc", "timg/ts_keyKakera_00.tpl", true},
+        {"sshd/dowsing/target_12.png", "/Layout/DoButton.arc", "timg/ts_dauzPump_00.tpl", true},
+        {"sshd/dowsing/target_13.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_13.tpl", true},
+        {"sshd/dowsing/target_14.png", "/Layout/DoButton.arc", "timg/ts_waterPot_00.tpl", true},
+        {"sshd/dowsing/target_15.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_15.tpl", true},
+        {"sshd/dowsing/target_16.png", "/Layout/DoButton.arc", "timg/ts_GdsCube_00.tpl", true},
+        {"sshd/dowsing/target_17.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_17.tpl", true},
+        {"sshd/dowsing/target_18.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_18.tpl", true},
+        {"sshd/dowsing/target_19.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_19.tpl", true},
+        {"sshd/dowsing/target_20.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_20.tpl", true},
+        {"sshd/dowsing/target_21.png", "/Layout/DoButton.arc", "timg/tr_dauzTarget_21.tpl", true},
         {"sshd/map/world.png", "/Layout/Map2D.arc", "timg/tr_worldMapBace_00.tpl", true},
         {"sshd/map/faron.png", "/Layout/Map2D.arc", "timg/tr_worldMapMori_00.tpl", true},
         {"sshd/map/eldin.png", "/Layout/Map2D.arc", "timg/tr_worldMapKazan_00.tpl", true},
@@ -1614,6 +1851,881 @@ std::vector<u8> LoadMk8dMapCamera(const FileSys::VirtualDir& root,
     return source.value_or(std::vector<u8>{});
 }
 
+constexpr u64 XxhPrime1 = 11400714785074694791ULL;
+constexpr u64 XxhPrime2 = 14029467366897019727ULL;
+constexpr u64 XxhPrime3 = 1609587929392839161ULL;
+constexpr u64 XxhPrime4 = 9650029242287828579ULL;
+constexpr u64 XxhPrime5 = 2870177450012600261ULL;
+
+u64 RotateLeft(u64 value, u32 count) {
+    return (value << count) | (value >> (64U - count));
+}
+
+u64 XxhRound(u64 accumulator, u64 lane) {
+    accumulator += lane * XxhPrime2;
+    accumulator = RotateLeft(accumulator, 31);
+    return accumulator * XxhPrime1;
+}
+
+u64 XxhMergeRound(u64 accumulator, u64 lane) {
+    accumulator ^= XxhRound(0, lane);
+    return accumulator * XxhPrime1 + XxhPrime4;
+}
+
+u64 Xxh64(std::string_view source) {
+    const auto* data = reinterpret_cast<const u8*>(source.data());
+    const std::size_t length = source.size();
+    std::size_t cursor{};
+    u64 value{};
+    if (length >= 32) {
+        u64 v1 = XxhPrime1 + XxhPrime2;
+        u64 v2 = XxhPrime2;
+        u64 v3 = 0;
+        u64 v4 = 0 - XxhPrime1;
+        const std::size_t limit = length - 32;
+        while (cursor <= limit) {
+            v1 = XxhRound(v1, ReadU64(std::span<const u8>{data, length}, cursor));
+            v2 = XxhRound(v2, ReadU64(std::span<const u8>{data, length}, cursor + 8));
+            v3 = XxhRound(v3, ReadU64(std::span<const u8>{data, length}, cursor + 16));
+            v4 = XxhRound(v4, ReadU64(std::span<const u8>{data, length}, cursor + 24));
+            cursor += 32;
+        }
+        value = RotateLeft(v1, 1) + RotateLeft(v2, 7) + RotateLeft(v3, 12) +
+                RotateLeft(v4, 18);
+        value = XxhMergeRound(value, v1);
+        value = XxhMergeRound(value, v2);
+        value = XxhMergeRound(value, v3);
+        value = XxhMergeRound(value, v4);
+    } else {
+        value = XxhPrime5;
+    }
+    value += length;
+    while (cursor + 8 <= length) {
+        value ^= XxhRound(0, ReadU64(std::span<const u8>{data, length}, cursor));
+        value = RotateLeft(value, 27) * XxhPrime1 + XxhPrime4;
+        cursor += 8;
+    }
+    if (cursor + 4 <= length) {
+        value ^= static_cast<u64>(ReadU32(std::span<const u8>{data, length}, cursor)) * XxhPrime1;
+        value = RotateLeft(value, 23) * XxhPrime2 + XxhPrime3;
+        cursor += 4;
+    }
+    while (cursor < length) {
+        value ^= static_cast<u64>(data[cursor++]) * XxhPrime5;
+        value = RotateLeft(value, 11) * XxhPrime1;
+    }
+    value ^= value >> 33;
+    value *= XxhPrime2;
+    value ^= value >> 29;
+    value *= XxhPrime3;
+    value ^= value >> 32;
+    return value;
+}
+
+std::string NormalizeXcxArchivePath(std::string_view source) {
+    std::string result;
+    result.reserve(source.size() + 1);
+    if (source.empty() || source.front() != '/') {
+        result.push_back('/');
+    }
+    for (const char character : source) {
+        const char normalized = character == '\\' ? '/' : character;
+        result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(normalized))));
+    }
+    return result;
+}
+
+bool LoadXcxArchiveIndex(const FileSys::VirtualDir& root) {
+    if (xcx_archive_loaded) {
+        return xcx_archive_store != nullptr;
+    }
+    if (std::chrono::steady_clock::now() < xcx_archive_retry_after) {
+        return false;
+    }
+    const auto index = ReadRomfsFile(root, "/sts.arh", 4 * 1024 * 1024);
+    const auto store = root ? root->GetFileRelative("/sts.ard") : nullptr;
+    if (!index || index->size() < 16 || !HasMagic(*index, "arh2") || !store) {
+        xcx_archive_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
+        return false;
+    }
+    const u32 count = ReadU32(*index, 4);
+    const u32 alignment = ReadU32(*index, 8);
+    if (count == 0 || count > 500'000 || alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+        static_cast<u64>(count) * 16 + 16 > index->size()) {
+        xcx_archive_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
+        return false;
+    }
+
+    std::unordered_map<u64, XcxArchiveRange> ranges;
+    ranges.reserve(count);
+    u64 offset{};
+    const u64 store_size = store->GetSize();
+    for (u32 member = 0; member < count; ++member) {
+        const std::size_t entry = 16 + static_cast<std::size_t>(member) * 16;
+        const u64 path_hash = ReadU64(*index, entry);
+        const u32 disk_size = ReadU32(*index, entry + 8);
+        const u32 expanded_size = ReadU32(*index, entry + 12);
+        if (disk_size == 0 || expanded_size == 0 || offset > store_size ||
+            disk_size > store_size - offset ||
+            offset > std::numeric_limits<u64>::max() - disk_size - (alignment - 1)) {
+            xcx_archive_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
+            return false;
+        }
+        ranges.emplace(path_hash, XcxArchiveRange{offset, disk_size, expanded_size});
+        offset = (offset + disk_size + alignment - 1) & ~(static_cast<u64>(alignment) - 1);
+    }
+    xcx_archive_index = std::move(ranges);
+    xcx_archive_store = store;
+    xcx_archive_loaded = true;
+    xcx_archive_retry_after = {};
+    return true;
+}
+
+std::optional<std::vector<u8>> ExpandXcxArchiveMember(std::span<const u8> member,
+                                                       u32 expected_size) {
+    if (!HasMagic(member, "xbc1")) {
+        if (member.size() != expected_size || member.size() > MaxDecodedSourceSize) {
+            return std::nullopt;
+        }
+        return std::vector<u8>{member.begin(), member.end()};
+    }
+    if (member.size() < 0x30) {
+        return std::nullopt;
+    }
+    const u32 compression = ReadU32(member, 4);
+    const u32 expanded_size = ReadU32(member, 8);
+    const u32 compressed_size = ReadU32(member, 12);
+    if (expanded_size != expected_size || expanded_size == 0 ||
+        expanded_size > MaxDecodedSourceSize || compressed_size == 0 ||
+        compressed_size > member.size() - 0x30) {
+        return std::nullopt;
+    }
+    const auto payload = member.subspan(0x30, compressed_size);
+    std::vector<u8> result;
+    if (compression == 0) {
+        if (payload.size() != expanded_size) {
+            return std::nullopt;
+        }
+        result.assign(payload.begin(), payload.end());
+    } else if (compression == 1) {
+        result.resize(expanded_size);
+        uLongf destination_size = expanded_size;
+        if (uncompress(result.data(), &destination_size, payload.data(), payload.size()) != Z_OK ||
+            destination_size != expanded_size) {
+            return std::nullopt;
+        }
+    } else if (compression == 3) {
+        result = Common::Compression::DecompressDataZSTD(payload);
+    } else {
+        return std::nullopt;
+    }
+    return result.size() == expanded_size ? std::optional{std::move(result)} : std::nullopt;
+}
+
+std::optional<std::vector<u8>> ReadXcxArchiveMember(const FileSys::VirtualDir& root,
+                                                     std::string_view path) {
+    if (!LoadXcxArchiveIndex(root) || !xcx_archive_store) {
+        return std::nullopt;
+    }
+    const std::string normalized = NormalizeXcxArchivePath(path);
+    const auto found = xcx_archive_index.find(Xxh64(normalized));
+    if (found == xcx_archive_index.end() || found->second.disk_size > MaxDecodedSourceSize) {
+        return std::nullopt;
+    }
+    auto member = xcx_archive_store->ReadBytes(found->second.disk_size, found->second.offset);
+    if (member.size() != found->second.disk_size) {
+        return std::nullopt;
+    }
+    return ExpandXcxArchiveMember(member, found->second.expanded_size);
+}
+
+u32 XcxMurmur3(std::string_view text) {
+    constexpr u32 C1 = 0xCC9E2D51;
+    constexpr u32 C2 = 0x1B873593;
+    u32 hash{};
+    std::size_t cursor{};
+    while (cursor + 4 <= text.size()) {
+        u32 value = static_cast<u8>(text[cursor]) |
+                    (static_cast<u32>(static_cast<u8>(text[cursor + 1])) << 8) |
+                    (static_cast<u32>(static_cast<u8>(text[cursor + 2])) << 16) |
+                    (static_cast<u32>(static_cast<u8>(text[cursor + 3])) << 24);
+        value *= C1;
+        value = std::rotl(value, 15);
+        value *= C2;
+        hash ^= value;
+        hash = std::rotl(hash, 13) * 5 + 0xE6546B64;
+        cursor += 4;
+    }
+    u32 tail{};
+    switch (text.size() - cursor) {
+    case 3:
+        tail ^= static_cast<u32>(static_cast<u8>(text[cursor + 2])) << 16;
+        [[fallthrough]];
+    case 2:
+        tail ^= static_cast<u32>(static_cast<u8>(text[cursor + 1])) << 8;
+        [[fallthrough]];
+    case 1:
+        tail ^= static_cast<u8>(text[cursor]);
+        tail *= C1;
+        tail = std::rotl(tail, 15);
+        tail *= C2;
+        hash ^= tail;
+        break;
+    default:
+        break;
+    }
+    hash ^= static_cast<u32>(text.size());
+    hash ^= hash >> 16;
+    hash *= 0x85EBCA6B;
+    hash ^= hash >> 13;
+    hash *= 0xC2B2AE35;
+    hash ^= hash >> 16;
+    return hash;
+}
+
+std::size_t XcxBdatValueSize(u8 type) {
+    switch (type) {
+    case 1:
+    case 4:
+    case 10:
+    case 12:
+        return 1;
+    case 2:
+    case 5:
+    case 13:
+        return 2;
+    case 3:
+    case 6:
+    case 7:
+    case 8:
+    case 9:
+    case 11:
+        return 4;
+    default:
+        return 0;
+    }
+}
+
+struct XcxBdatColumn {
+    u8 type{};
+    u32 offset{};
+};
+
+struct XcxBdatTable {
+    std::span<const u8> file;
+    std::size_t base{};
+    u32 rows{};
+    u32 base_id{};
+    u32 row_offset{};
+    u32 row_length{};
+    u32 string_offset{};
+    u32 string_length{};
+    std::unordered_map<u32, XcxBdatColumn> columns;
+
+    std::optional<std::span<const u8>> RowByIndex(u32 index) const {
+        const u64 offset = static_cast<u64>(base) + row_offset +
+                           static_cast<u64>(index) * row_length;
+        if (index >= rows || offset > file.size() || row_length > file.size() - offset) {
+            return std::nullopt;
+        }
+        return file.subspan(static_cast<std::size_t>(offset), row_length);
+    }
+
+    std::optional<std::span<const u8>> RowById(u32 id) const {
+        return id < base_id ? std::nullopt : RowByIndex(id - base_id);
+    }
+
+    const XcxBdatColumn* Column(std::string_view name) const {
+        const auto found = columns.find(XcxMurmur3(name));
+        return found == columns.end() ? nullptr : &found->second;
+    }
+
+    u32 Unsigned(std::span<const u8> row, std::string_view name, u32 fallback = 0) const {
+        const auto* column = Column(name);
+        if (!column || column->offset >= row.size()) {
+            return fallback;
+        }
+        switch (column->type) {
+        case 1:
+        case 10:
+        case 12:
+            return row[column->offset];
+        case 2:
+        case 13:
+            return ReadU16(row, column->offset);
+        case 3:
+        case 9:
+            return ReadU32(row, column->offset);
+        default:
+            return fallback;
+        }
+    }
+
+    s32 Signed(std::span<const u8> row, std::string_view name, s32 fallback = 0) const {
+        const auto* column = Column(name);
+        if (!column || column->offset >= row.size()) {
+            return fallback;
+        }
+        switch (column->type) {
+        case 4:
+            return static_cast<s8>(row[column->offset]);
+        case 5:
+            return static_cast<s16>(ReadU16(row, column->offset));
+        case 6:
+            return static_cast<s32>(ReadU32(row, column->offset));
+        default:
+            return static_cast<s32>(Unsigned(row, name, static_cast<u32>(fallback)));
+        }
+    }
+
+    float Floating(std::span<const u8> row, std::string_view name) const {
+        const auto* column = Column(name);
+        if (!column || column->type != 8 || column->offset > row.size() ||
+            row.size() - column->offset < sizeof(float)) {
+            return 0.0F;
+        }
+        float value{};
+        std::memcpy(&value, row.data() + column->offset, sizeof(value));
+        return std::isfinite(value) ? value : 0.0F;
+    }
+
+    std::string String(std::span<const u8> row, std::string_view name) const {
+        const auto* column = Column(name);
+        if (!column || (column->type != 7 && column->type != 11) ||
+            column->offset > row.size() || row.size() - column->offset < 4) {
+            return {};
+        }
+        const u32 relative = ReadU32(row, column->offset);
+        const u64 begin = static_cast<u64>(base) + string_offset + relative;
+        const u64 end = static_cast<u64>(base) + string_offset + string_length;
+        if (begin >= end || end > file.size()) {
+            return {};
+        }
+        const char* first = reinterpret_cast<const char*>(file.data() + begin);
+        const char* last = reinterpret_cast<const char*>(file.data() + end);
+        const char* terminator = std::find(first, last, '\0');
+        return std::string(first, terminator);
+    }
+};
+
+std::optional<XcxBdatTable> FindXcxBdatTable(std::span<const u8> file,
+                                             std::string_view table_name) {
+    if (file.size() < 16 || !HasMagic(file, "BDAT") ||
+        ReadU32(file, 4) != 0x01001004) {
+        return std::nullopt;
+    }
+    const u32 count = ReadU32(file, 8);
+    if (count == 0 || count > 65'536 || static_cast<u64>(count) * 4 + 16 > file.size()) {
+        return std::nullopt;
+    }
+    const u32 wanted = XcxMurmur3(table_name);
+    for (u32 index = 0; index < count; ++index) {
+        const u32 base = ReadU32(file, 16 + index * 4);
+        if (base > file.size() || file.size() - base < 48 ||
+            !HasMagic(file.subspan(base), "BDAT") || ReadU32(file, base + 4) != 0x3004) {
+            continue;
+        }
+        const u32 columns = ReadU32(file, base + 8);
+        const u32 rows = ReadU32(file, base + 12);
+        const u32 base_id = ReadU32(file, base + 16);
+        const u32 column_offset = ReadU32(file, base + 24);
+        const u32 row_offset = ReadU32(file, base + 32);
+        const u32 row_length = ReadU32(file, base + 36);
+        const u32 string_offset = ReadU32(file, base + 40);
+        const u32 string_length = ReadU32(file, base + 44);
+        if (columns == 0 || columns > 4096 || rows > 1'000'000 || row_length == 0 ||
+            static_cast<u64>(base) + column_offset + static_cast<u64>(columns) * 3 > file.size() ||
+            static_cast<u64>(base) + row_offset + static_cast<u64>(rows) * row_length > file.size() ||
+            static_cast<u64>(base) + string_offset + string_length > file.size() ||
+            string_length < 5 || file[base + string_offset] != 0 ||
+            ReadU32(file, base + string_offset + 1) != wanted) {
+            continue;
+        }
+        XcxBdatTable table{file, base, rows, base_id, row_offset, row_length,
+                           string_offset, string_length, {}};
+        table.columns.reserve(columns);
+        u32 value_offset{};
+        for (u32 column_index = 0; column_index < columns; ++column_index) {
+            const u32 definition = base + column_offset + column_index * 3;
+            const u8 type = file[definition];
+            const u16 name_offset = ReadU16(file, definition + 1);
+            const std::size_t value_size = XcxBdatValueSize(type);
+            const u64 name = static_cast<u64>(base) + string_offset + name_offset;
+            if (value_size == 0 || value_offset + value_size > row_length ||
+                name > file.size() || file.size() - name < 4) {
+                return std::nullopt;
+            }
+            table.columns.emplace(ReadU32(file, static_cast<std::size_t>(name)),
+                                  XcxBdatColumn{type, value_offset});
+            value_offset += static_cast<u32>(value_size);
+        }
+        return table;
+    }
+    return std::nullopt;
+}
+
+void XcxAppendU16(std::vector<u8>& output, u16 value) {
+    output.push_back(static_cast<u8>(value));
+    output.push_back(static_cast<u8>(value >> 8));
+}
+
+void XcxAppendU32(std::vector<u8>& output, u32 value) {
+    for (u32 shift = 0; shift < 32; shift += 8) {
+        output.push_back(static_cast<u8>(value >> shift));
+    }
+}
+
+void XcxAppendFloat(std::vector<u8>& output, float value) {
+    u32 bits{};
+    std::memcpy(&bits, &value, sizeof(bits));
+    XcxAppendU32(output, bits);
+}
+
+std::shared_ptr<std::vector<u8>> LoadXcxBdat(const FileSys::VirtualDir& root,
+                                             std::string_view path,
+                                             std::shared_ptr<std::vector<u8>>& cache) {
+    if (!cache) {
+        auto data = ReadXcxArchiveMember(root, path);
+        if (data) {
+            cache = std::make_shared<std::vector<u8>>(std::move(*data));
+        }
+    }
+    return cache;
+}
+
+std::optional<u32> XcxSegmentMapRow(u32 zone) {
+    switch (zone) {
+    case 1001:
+    case 1101:
+    case 1201:
+    case 1301:
+    case 1401:
+        return 13;
+    case 1501:
+        return 6;
+    case 1601:
+        return 7;
+    case 1701:
+        return 8;
+    case 2001:
+        return 9;
+    case 2201:
+        return 10;
+    case 5000:
+        return 12;
+    default:
+        return std::nullopt;
+    }
+}
+
+std::vector<u8> LoadXcxMapMetadata(const FileSys::VirtualDir& root, u32 zone) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto bounds_id = XcxSegmentMapRow(zone);
+    if (!common || !messages || !bounds_id) {
+        return {};
+    }
+    const auto bounds = FindXcxBdatTable(*common, "SegmentMapInfo");
+    const auto markers = FindXcxBdatTable(*common, "MNU_SegMapInfo" + std::to_string(zone));
+    const auto locations = FindXcxBdatTable(*common, "FLD_Location");
+    const auto skip_travel = FindXcxBdatTable(*common, "FLD_SkipTravel");
+    const auto formations = FindXcxBdatTable(*common, "FLD_FormationList");
+    const auto terminals = FindXcxBdatTable(*common, "SEG_Terminal" + std::to_string(zone));
+    const auto field_list = FindXcxBdatTable(*common, "FLD_FieldNameList");
+    const auto field_names = FindXcxBdatTable(*messages, "fieldnamelist_ms");
+    const auto bounds_row = bounds ? bounds->RowById(*bounds_id) : std::nullopt;
+    if (!bounds || !markers || !locations || !skip_travel || !formations || !bounds_row) {
+        return {};
+    }
+
+    struct MarkerRecord {
+        u32 info_id{};
+        u16 discovery_flag{};
+        u16 open_flag{};
+        u32 skip_travel_id{};
+        u32 formation_id{};
+        u16 probe_id{};
+        u8 kind{};
+        u8 icon{};
+        u8 location_type{};
+        u8 flags{};
+        float world_x{};
+        float world_z{};
+        float offset_x{};
+        float offset_y{};
+        std::string name;
+    };
+    const auto read_location = [&](u32 id, MarkerRecord& record) {
+        const auto location = locations->RowById(id);
+        if (!location) {
+            return;
+        }
+        record.discovery_flag =
+            static_cast<u16>(locations->Unsigned(*location, "flg"));
+        record.skip_travel_id = locations->Unsigned(*location, "SkipTravel_id");
+        record.location_type =
+            static_cast<u8>(locations->Unsigned(*location, "Loc_type"));
+        const u32 name_id = locations->Unsigned(*location, "Loc_name");
+        if (const auto name_row = field_names ? field_names->RowById(name_id) : std::nullopt) {
+            record.name = field_names->String(*name_row, "name");
+        }
+        if (const auto skip = skip_travel->RowById(record.skip_travel_id)) {
+            record.formation_id = skip_travel->Unsigned(*skip, "formationId");
+            const u32 skip_flag = skip_travel->Unsigned(*skip, "loc_flg");
+            if (skip_flag != 0) {
+                record.discovery_flag = static_cast<u16>(skip_flag);
+            }
+            if (record.formation_id != 0) {
+                record.flags |= 1U; // Native fast-travel destination.
+            }
+        }
+    };
+
+    std::vector<MarkerRecord> records;
+    records.reserve(markers->rows + (terminals ? terminals->rows : 0));
+    for (u32 index = 0; index < markers->rows; ++index) {
+        const auto row = markers->RowByIndex(index);
+        if (!row) {
+            return {};
+        }
+        MarkerRecord record{};
+        record.info_id = markers->Unsigned(*row, "infoID");
+        record.kind = static_cast<u8>(markers->Unsigned(*row, "type"));
+        record.icon = static_cast<u8>(markers->Unsigned(*row, "icon"));
+        record.discovery_flag = static_cast<u16>(markers->Unsigned(*row, "flag"));
+        record.world_x = markers->Floating(*row, "posX");
+        record.world_z = markers->Floating(*row, "posZ");
+        record.offset_x = markers->Floating(*row, "offsetX");
+        record.offset_y = markers->Floating(*row, "offsetY");
+        read_location(record.info_id, record);
+        records.emplace_back(std::move(record));
+    }
+
+    if (terminals) {
+        for (u32 index = 0; index < terminals->rows; ++index) {
+            const auto terminal = terminals->RowByIndex(index);
+            if (!terminal || terminals->Unsigned(*terminal, "seg_type") != 1) {
+                continue;
+            }
+            MarkerRecord probe{};
+            probe.info_id = terminals->Unsigned(*terminal, "fieldLoc_id");
+            probe.open_flag = static_cast<u16>(terminals->Unsigned(*terminal, "flg_open"));
+            probe.probe_id = static_cast<u16>(terminals->Unsigned(*terminal, "seg_id"));
+            probe.kind = 3;
+            probe.location_type = 5;
+            probe.flags = 2U; // FrontierNav probe site.
+            read_location(probe.info_id, probe);
+            if (const auto formation = formations->RowById(probe.formation_id)) {
+                probe.world_x = formations->Floating(*formation, "inner1_pos_x");
+                probe.world_z = formations->Floating(*formation, "inner1_pos_z");
+            }
+            const auto duplicate = std::find_if(records.begin(), records.end(), [&](const auto& item) {
+                return item.info_id == probe.info_id;
+            });
+            if (duplicate == records.end()) {
+                records.emplace_back(std::move(probe));
+            } else {
+                const float existing_x = duplicate->world_x;
+                const float existing_z = duplicate->world_z;
+                *duplicate = std::move(probe);
+                if (existing_x != 0.0F || existing_z != 0.0F) {
+                    duplicate->world_x = existing_x;
+                    duplicate->world_z = existing_z;
+                }
+            }
+        }
+    }
+
+    std::string region_name;
+    if (field_list && field_names) {
+        for (u32 index = 0; index < field_list->rows; ++index) {
+            const auto field = field_list->RowByIndex(index);
+            if (!field || field_list->Unsigned(*field, "zoneNo") != zone) {
+                continue;
+            }
+            const auto name = field_names->RowById(field_list->Unsigned(*field, "name"));
+            if (name) {
+                region_name = field_names->String(*name, "name");
+            }
+            break;
+        }
+    }
+
+    std::vector<u8> output;
+    output.reserve(80 + region_name.size() + records.size() * 64);
+    XcxAppendU32(output, 0x50414D58); // XMAP
+    XcxAppendU16(output, 2);
+    XcxAppendU16(output, 80);
+    XcxAppendU32(output, zone);
+    XcxAppendFloat(output, static_cast<float>(bounds->Signed(*bounds_row, "left")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Signed(*bounds_row, "top")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Unsigned(*bounds_row, "width")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Unsigned(*bounds_row, "height")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Unsigned(*bounds_row, "size")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Unsigned(*bounds_row, "worldSize")));
+    XcxAppendU32(output, bounds->Unsigned(*bounds_row, "maxScale"));
+    XcxAppendU32(output, bounds->Unsigned(*bounds_row, "midScale"));
+    XcxAppendU32(output, bounds->Unsigned(*bounds_row, "minScale"));
+    XcxAppendFloat(output, static_cast<float>(bounds->Signed(*bounds_row, "startX")));
+    XcxAppendFloat(output, static_cast<float>(bounds->Signed(*bounds_row, "startY")));
+    XcxAppendU32(output, static_cast<u32>(bounds->Signed(*bounds_row, "move_top")));
+    XcxAppendU32(output, static_cast<u32>(bounds->Signed(*bounds_row, "move_left")));
+    XcxAppendU32(output, static_cast<u32>(bounds->Signed(*bounds_row, "move_bottom")));
+    XcxAppendU32(output, static_cast<u32>(bounds->Signed(*bounds_row, "move_right")));
+    XcxAppendU32(output, static_cast<u32>(records.size()));
+    XcxAppendU32(output, static_cast<u32>(region_name.size()));
+    output.insert(output.end(), region_name.begin(), region_name.end());
+    for (const auto& record : records) {
+        XcxAppendU32(output, record.info_id);
+        XcxAppendU16(output, record.discovery_flag);
+        XcxAppendU16(output, record.open_flag);
+        XcxAppendU32(output, record.skip_travel_id);
+        XcxAppendU32(output, record.formation_id);
+        XcxAppendU16(output, record.probe_id);
+        output.push_back(record.kind);
+        output.push_back(record.icon);
+        output.push_back(record.location_type);
+        output.push_back(record.flags);
+        XcxAppendU16(output, 0);
+        XcxAppendFloat(output, record.world_x);
+        XcxAppendFloat(output, record.world_z);
+        XcxAppendFloat(output, record.offset_x);
+        XcxAppendFloat(output, record.offset_y);
+        XcxAppendU32(output, static_cast<u32>(record.name.size()));
+        output.insert(output.end(), record.name.begin(), record.name.end());
+    }
+    return output;
+}
+
+std::vector<u8> LoadXcxPartyMetadata(const FileSys::VirtualDir& root) {
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto names = messages ? FindXcxBdatTable(*messages, "DEF_PcList_ms") : std::nullopt;
+    if (!names) {
+        return {};
+    }
+    struct PartyName {
+        u16 id;
+        std::string name;
+    };
+    std::vector<PartyName> records;
+    for (u32 id = 1; id <= 23; ++id) {
+        const auto row = names->RowById(id);
+        std::string name = row ? names->String(*row, "name") : std::string{};
+        if (name.empty()) {
+            continue;
+        }
+        records.push_back({static_cast<u16>(id), std::move(name)});
+    }
+    std::vector<u8> output;
+    XcxAppendU32(output, 0x54504358); // XCPT
+    XcxAppendU16(output, 1);
+    XcxAppendU16(output, 12);
+    XcxAppendU32(output, static_cast<u32>(records.size()));
+    for (const auto& record : records) {
+        XcxAppendU16(output, record.id);
+        XcxAppendU16(output, static_cast<u16>(record.name.size()));
+        output.insert(output.end(), record.name.begin(), record.name.end());
+    }
+    return output;
+}
+
+std::vector<u8> LoadXcxMissionMetadata(const FileSys::VirtualDir& root) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    if (!common || !messages) {
+        return {};
+    }
+    const auto quests = FindXcxBdatTable(*common, "FLD_questlist");
+    const auto quest_text = FindXcxBdatTable(*messages, "quest_ms");
+    if (!quests || !quest_text) {
+        return {};
+    }
+    struct MissionRecord {
+        u32 id;
+        u16 flag;
+        u8 category;
+        std::string title;
+        std::string summary;
+    };
+    std::vector<MissionRecord> records;
+    records.reserve(512);
+    for (u32 index = 0; index < quests->rows; ++index) {
+        const auto row = quests->RowByIndex(index);
+        if (!row || quests->Unsigned(*row, "prt_quest_id") != 0) {
+            continue;
+        }
+        const u16 title_id = static_cast<u16>(quests->Unsigned(*row, "quest_title"));
+        const u16 summary_id = static_cast<u16>(quests->Unsigned(*row, "summary"));
+        const u16 flag = static_cast<u16>(quests->Unsigned(*row, "flg_type_a"));
+        const u8 category = static_cast<u8>(quests->Unsigned(*row, "category"));
+        const auto title_row = quest_text->RowById(title_id);
+        const auto summary_row = quest_text->RowById(summary_id);
+        std::string title = title_row ? quest_text->String(*title_row, "name") : std::string{};
+        std::string summary = summary_row ? quest_text->String(*summary_row, "name") : std::string{};
+        if (flag == 0 || category == 0 || title.empty()) {
+            continue;
+        }
+        if (title.size() > std::numeric_limits<u16>::max() ||
+            summary.size() > std::numeric_limits<u16>::max()) {
+            continue;
+        }
+        records.push_back({quests->base_id + index, flag, category, std::move(title),
+                           std::move(summary)});
+    }
+    std::vector<u8> output;
+    XcxAppendU32(output, 0x54535158); // XQST
+    XcxAppendU16(output, 1);
+    XcxAppendU16(output, 12);
+    XcxAppendU32(output, static_cast<u32>(records.size()));
+    for (const auto& record : records) {
+        XcxAppendU32(output, record.id);
+        XcxAppendU16(output, record.flag);
+        output.push_back(record.category);
+        output.push_back(0);
+        XcxAppendU16(output, static_cast<u16>(record.title.size()));
+        XcxAppendU16(output, static_cast<u16>(record.summary.size()));
+        output.insert(output.end(), record.title.begin(), record.title.end());
+        output.insert(output.end(), record.summary.begin(), record.summary.end());
+    }
+    return output;
+}
+
+u32 XcxBlockHeightLog2(u32 block_rows) {
+    const u32 height_and_half = block_rows + block_rows / 2;
+    if (height_and_half >= 128) return 4;
+    if (height_and_half >= 64) return 3;
+    if (height_and_half >= 32) return 2;
+    if (height_and_half >= 16) return 1;
+    return 0;
+}
+
+std::vector<u8> DecodeXcxWilayPng(std::span<const u8> source) {
+    if (source.size() < 0x40 || !HasMagic(source, "LAHD")) {
+        return {};
+    }
+    const u32 textures_base = ReadU32(source, 0x24);
+    if (textures_base > source.size() || source.size() - textures_base < 8) {
+        return {};
+    }
+    const u32 array_offset = ReadU32(source, textures_base);
+    const u32 texture_count = ReadU32(source, textures_base + 4);
+    const u64 entry = static_cast<u64>(textures_base) + array_offset;
+    if (texture_count == 0 || texture_count > 256 || entry > source.size() ||
+        source.size() - entry < 12) {
+        return {};
+    }
+    const u32 mibl_offset = ReadU32(source, entry + 4);
+    const u32 mibl_size = ReadU32(source, entry + 8);
+    const u64 mibl_start = static_cast<u64>(textures_base) + mibl_offset;
+    if (mibl_size < 40 || mibl_start > source.size() || mibl_size > source.size() - mibl_start) {
+        return {};
+    }
+    const auto mibl = source.subspan(static_cast<std::size_t>(mibl_start), mibl_size);
+    const std::size_t footer = mibl.size() - 40;
+    if (!HasMagic(mibl.subspan(footer + 36), "LBIM")) {
+        return {};
+    }
+    const u32 image_size = ReadU32(mibl, footer);
+    const u32 width = ReadU32(mibl, footer + 8);
+    const u32 height = ReadU32(mibl, footer + 12);
+    const u32 depth = ReadU32(mibl, footer + 16);
+    const u32 image_format = ReadU32(mibl, footer + 24);
+    if (width == 0 || height == 0 || width > MaxTextureDimension ||
+        height > MaxTextureDimension || static_cast<u64>(width) * height > MaxTexturePixels ||
+        depth != 1 || image_format != 77 || image_size > footer) {
+        return {};
+    }
+    constexpr u32 block_width = 4;
+    constexpr u32 block_height = 4;
+    constexpr u32 bytes_per_block = 16;
+    const u32 blocks_x = DivCeil(width, block_width);
+    const u32 blocks_y = DivCeil(height, block_height);
+    const u32 block_height_log2 = XcxBlockHeightLog2(blocks_y);
+    const std::size_t required = Tegra::Texture::CalculateSize(
+        true, bytes_per_block, blocks_x, blocks_y, 1, block_height_log2, 0);
+    const std::size_t linear_size = static_cast<std::size_t>(blocks_x) * blocks_y *
+                                    bytes_per_block;
+    if (required > image_size || required > mibl.size()) {
+        return {};
+    }
+    std::vector<u8> linear(linear_size);
+    Tegra::Texture::UnswizzleTexture(linear, mibl.first(required), bytes_per_block,
+                                     blocks_x, blocks_y, 1, block_height_log2, 0);
+    std::vector<u8> rgba(static_cast<std::size_t>(width) * height * 4);
+    for (u32 block_y = 0; block_y < blocks_y; ++block_y) {
+        for (u32 block_x = 0; block_x < blocks_x; ++block_x) {
+            const std::size_t block = (static_cast<std::size_t>(block_y) * blocks_x + block_x) *
+                                      bytes_per_block;
+            u8* destination = rgba.data() +
+                              (static_cast<std::size_t>(block_y) * 4 * width + block_x * 4) * 4;
+            bcn::DecodeBc7(linear.data() + block, destination, block_x * 4, block_y * 4,
+                           width, height);
+        }
+    }
+    TextureInfo descriptor{};
+    descriptor.width = width;
+    descriptor.height = height;
+    return EncodePng(descriptor, rgba);
+}
+
+std::vector<u8> LoadXcxAsset(const FileSys::VirtualDir& root,
+                             std::string_view logical_path) {
+    const auto cached = xcx_asset_cache.find(std::string(logical_path));
+    if (cached != xcx_asset_cache.end()) {
+        return cached->second;
+    }
+    if (logical_path == "xcx/missions/data.bin") {
+        auto data = LoadXcxMissionMetadata(root);
+        if (!data.empty()) {
+            xcx_asset_cache.emplace(std::string(logical_path), data);
+        }
+        return data;
+    }
+    if (logical_path == "xcx/party/data.bin") {
+        auto data = LoadXcxPartyMetadata(root);
+        if (!data.empty()) {
+            xcx_asset_cache.emplace(std::string(logical_path), data);
+        }
+        return data;
+    }
+    constexpr std::string_view MapMetadataPrefix = "xcx/maps/meta_";
+    if (logical_path.starts_with(MapMetadataPrefix) && logical_path.ends_with(".bin")) {
+        const auto zone_text = logical_path.substr(
+            MapMetadataPrefix.size(), logical_path.size() - MapMetadataPrefix.size() - 4);
+        if (zone_text.empty() || zone_text.size() > 5 ||
+            !std::all_of(zone_text.begin(), zone_text.end(), [](char value) {
+                return std::isdigit(static_cast<unsigned char>(value));
+            })) {
+            return {};
+        }
+        u32 zone{};
+        for (const char value : zone_text) {
+            zone = zone * 10 + static_cast<u32>(value - '0');
+        }
+        auto data = LoadXcxMapMetadata(root, zone);
+        if (!data.empty()) {
+            xcx_asset_cache.emplace(std::string(logical_path), data);
+        }
+        return data;
+    }
+    if (!logical_path.starts_with("xcx/maps/map") || !logical_path.ends_with(".png")) {
+        return {};
+    }
+    const std::string_view name = logical_path.substr(9, logical_path.size() - 9 - 4);
+    if (name.size() < 8 || name.size() > 20 || name[0] != 'm' || name[1] != 'a' ||
+        name[2] != 'p' || !std::all_of(name.begin() + 3, name.end(), [](char value) {
+            return std::isdigit(static_cast<unsigned char>(value)) || value == '_';
+        })) {
+        return {};
+    }
+    const auto member = ReadXcxArchiveMember(root, "/ui/image/" + std::string(name) + ".wilay");
+    auto png = member ? DecodeXcxWilayPng(*member) : std::vector<u8>{};
+    if (!png.empty()) {
+        xcx_asset_cache.emplace(std::string(logical_path), png);
+    }
+    return png;
+}
+
 }
 
 std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_path) {
@@ -1626,7 +2738,7 @@ std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_pa
         }
         title_id = session.System().GetApplicationProcessProgramID();
         if (title_id != BotwTitleId && title_id != Mk8dTitleId && title_id != PlzaTitleId &&
-            title_id != SshdTitleId) {
+            title_id != SshdTitleId && title_id != XcxTitleId) {
             return {};
         }
         root = GetRomfsRoot(session, title_id);
@@ -1686,6 +2798,9 @@ std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_pa
     if (title_id == SshdTitleId) {
         return LoadSshdAsset(root, logical_path);
     }
+    if (title_id == XcxTitleId) {
+        return LoadXcxAsset(root, logical_path);
+    }
     return {};
 }
 
@@ -1697,7 +2812,7 @@ std::string GetRevision(EmulationSession& session) {
     auto& system = session.System();
     const u64 title_id = system.GetApplicationProcessProgramID();
     if (title_id != BotwTitleId && title_id != Mk8dTitleId && title_id != PlzaTitleId &&
-        title_id != SshdTitleId) {
+        title_id != SshdTitleId && title_id != XcxTitleId) {
         return {};
     }
     const FileSys::PatchManager patch_manager{
@@ -1718,6 +2833,9 @@ void Reset() {
     plza_texture_cache.clear();
     sshd_asset_cache.clear();
     sshd_archive_cache.clear();
+    xcx_asset_cache.clear();
+    xcx_common_bdat.reset();
+    xcx_message_bdat.reset();
     mk8d_character_archive.reset();
     mk8d_item_archive.reset();
     botw_common_archive.reset();
@@ -1731,6 +2849,10 @@ void Reset() {
     plza_trinity_store.reset();
     plza_trinity_loaded = false;
     plza_trinity_retry_after = {};
+    xcx_archive_index.clear();
+    xcx_archive_store.reset();
+    xcx_archive_loaded = false;
+    xcx_archive_retry_after = {};
 }
 
 }

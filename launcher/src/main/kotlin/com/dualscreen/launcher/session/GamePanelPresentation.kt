@@ -126,7 +126,11 @@ class GamePanelPresentation(
         launchStatusView = waiting
         root.addView(waiting, FrameLayout.LayoutParams(-1, -1))
 
-        val router = NativePanelTouchRouter(context, game.id == STARDEW_GAME_ID)
+        val router = NativePanelTouchRouter(
+            context = context,
+            stardewNative = game.id == STARDEW_GAME_ID,
+            rejectRepeatedCompletions = game.id == TRANSFORMERS_WFC_GAME_ID,
+        )
         root.setOnTouchListener(router)
         surface.setOnTouchListener(router)
         SecondScreenOutput.setOnStateListener { _, claimed ->
@@ -158,13 +162,16 @@ class GamePanelPresentation(
 
     private companion object {
         const val STARDEW_GAME_ID = "stardew-valley"
+        const val TRANSFORMERS_WFC_GAME_ID = "transformers-wfc"
     }
 }
 
 private class NativePanelTouchRouter(
     context: Context,
     private val stardewNative: Boolean,
+    private val rejectRepeatedCompletions: Boolean,
 ) : View.OnTouchListener {
+    private val completionGate = NativeGestureCompletionGate()
     private var downX = 0f
     private var downY = 0f
     private var dragging = false
@@ -275,8 +282,19 @@ private class NativePanelTouchRouter(
             }
 
             MotionEvent.ACTION_UP -> {
-                if (dragging) send("up", event.x, event.y, 0f)
-                else if (!pinchGesture) send("tap", event.x, event.y, 0f)
+                // SurfaceView and its FrameLayout parent deliberately share
+                // this router so the waiting overlay and the live panel both
+                // remain touchable. Android normally chooses only one target,
+                // but a SurfaceView hand-off during creation/recreation can
+                // replay the terminal event through both. Never turn that one
+                // physical gesture into two native actions (or into a tap
+                // after the first delivery already cleared drag/pinch state).
+                if (!rejectRepeatedCompletions ||
+                    completionGate.accept(event.downTime, event.eventTime)
+                ) {
+                    if (dragging) send("up", event.x, event.y, 0f)
+                    else if (!pinchGesture) send("tap", event.x, event.y, 0f)
+                }
                 dragging = false
                 pinching = false
                 pinchGesture = false
@@ -358,5 +376,18 @@ private class NativePanelTouchRouter(
         private const val PINCH_TERMINAL_LOG_EPSILON = 0.000001
         private const val PINCH_PACKET_MAX_DELAY_MS = 50L
         private val PINCH_MAX_PACKET_LOG_SCALE = ln(2.0)
+    }
+}
+
+/** Rejects only an exact replay of one completed Android gesture. */
+internal class NativeGestureCompletionGate {
+    private var lastDownTime = Long.MIN_VALUE
+    private var lastEventTime = Long.MIN_VALUE
+
+    fun accept(downTime: Long, eventTime: Long): Boolean {
+        if (downTime == lastDownTime && eventTime == lastEventTime) return false
+        lastDownTime = downTime
+        lastEventTime = eventTime
+        return true
     }
 }

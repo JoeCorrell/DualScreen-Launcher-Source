@@ -11,6 +11,7 @@ class GameCatalogTest {
             "fallout3",
             "fallout4",
             "grim-dawn",
+            "transformers-wfc",
             "deus-ex-hrdc",
             "dead-island-de",
             "valheim",
@@ -41,6 +42,7 @@ class GameCatalogTest {
         assertThat(GameCatalog.byId("fallout3")?.requiredBuild).contains("1.7.0.4")
         assertThat(GameCatalog.byId("fallout4")?.requiredBuild).contains("1.11.240.0")
         assertThat(GameCatalog.byId("grim-dawn")?.requiredBuild).contains("1.3.0.7")
+        assertThat(GameCatalog.byId("transformers-wfc")?.requiredBuild).contains("42650")
         assertThat(GameCatalog.byId("deus-ex-hrdc")?.requiredBuild).contains("2.0.66.0")
         assertThat(GameCatalog.byId("stardew-valley")?.requiredBuild).contains("1.6.15.24356")
     }
@@ -142,6 +144,7 @@ class GameCatalogTest {
         val fallout3 = checkNotNull(GameCatalog.byId("fallout3"))
         val fallout4 = checkNotNull(GameCatalog.byId("fallout4"))
         val grimDawn = checkNotNull(GameCatalog.byId("grim-dawn"))
+        val transformers = checkNotNull(GameCatalog.byId("transformers-wfc"))
         val deusEx = checkNotNull(GameCatalog.byId("deus-ex-hrdc"))
         val deadIsland = checkNotNull(GameCatalog.byId("dead-island-de"))
 
@@ -164,6 +167,12 @@ class GameCatalogTest {
             "fa2e444b9d89496156f8e403d264c34651303b63250147de6ff2b489c048017f",
             "687adb5626df2ca6ad3a3048cd29b8ef73fda495ab3d0b622c10da9b1420d580",
         ).inOrder()
+        assertThat(transformers.executableCandidates).containsExactly("Binaries/TWFC.exe")
+        assertThat(transformers.requiredFiles).contains("Binaries/TWFC.exe")
+        assertThat(transformers.fileRules.single().sha256)
+            .isEqualTo("1db04b09b36094571fab861cd01ca175d44d610b5417f950f37523cd97eeb016")
+        assertThat(transformers.nativeDllOverrides)
+            .containsExactly("dinput8", "native,builtin")
         assertThat(deusEx.fileRules.single().sha256)
             .isEqualTo("7a3ebf1397ecdb9f6bd3b624cb5346d6a3a24107e516126d0a1ede1c62a8e7fa")
         assertThat(deadIsland.fileRules.mapNotNull { it.bytes }).containsExactly(

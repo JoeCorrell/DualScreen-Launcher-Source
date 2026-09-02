@@ -48,6 +48,27 @@ constexpr VAddr ComponentMaxStaminaOffset = 0x186C;
 constexpr VAddr HealthGetterVtableOffset = 0x2B8;
 constexpr VAddr PlayerMatrixOffset = 0x398;
 constexpr float HyruleWorldLimit = 20'000.0f;
+constexpr VAddr PlayerSpeedEffectOneSecondsOffset = 0x1180;
+constexpr VAddr PlayerSpeedEffectOneLevelOffset = 0x1184;
+constexpr VAddr PlayerSpeedEffectTwoSecondsOffset = 0x1188;
+constexpr VAddr PlayerSpeedEffectTwoLevelOffset = 0x118C;
+constexpr VAddr PlayerSpeedEffectThreeSecondsOffset = 0x1190;
+constexpr VAddr PlayerSpeedEffectThreeLevelOffset = 0x1194;
+constexpr VAddr PlayerAttackEffectSecondsOffset = 0x11A8;
+constexpr VAddr PlayerAttackEffectLevelOffset = 0x11AC;
+constexpr VAddr PlayerDefenseEffectSecondsOffset = 0x11B0;
+constexpr VAddr PlayerDefenseEffectLevelOffset = 0x11B4;
+constexpr VAddr PlayerHeatEffectSecondsOffset = 0x11B8;
+constexpr VAddr PlayerHeatEffectLevelOffset = 0x11BC;
+constexpr VAddr PlayerColdEffectSecondsOffset = 0x11C0;
+constexpr VAddr PlayerColdEffectLevelOffset = 0x11C4;
+constexpr VAddr PlayerFireproofEffectSecondsOffset = 0x11C8;
+constexpr VAddr PlayerFireproofEffectLevelOffset = 0x11CC;
+constexpr VAddr PlayerShockEffectSecondsOffset = 0x11D8;
+constexpr VAddr PlayerShockEffectLevelOffset = 0x11DC;
+constexpr VAddr PlayerStealthEffectSecondsOffset = 0x11E8;
+constexpr VAddr PlayerStealthEffectLevelOffset = 0x11EC;
+constexpr s32 MaximumCookEffectSeconds = 86'400;
 
 // qst::Manager::sInstance is direct storage in this exact executable. Manager::mQuests is a
 // sead::ObjArray whose count and pointer buffer live at +0xB8/+0xC0. Quest and Step offsets are
@@ -102,6 +123,9 @@ constexpr int ActionFastTravel = 3;
 constexpr int ActionEatItem = 4;
 constexpr int ActionHoldItem = 5;
 constexpr int ActionUnequipItem = 6;
+constexpr s32 PouchItemTypeMaterial = 7;
+constexpr s32 PouchItemTypeFood = 8;
+constexpr s32 ItemUseCureItem = 10;
 constexpr size_t EquipMailboxSize = 0x4000;
 constexpr size_t EquipMailboxRequestOffset = 0;
 constexpr size_t EquipMailboxCompletedOffset = 8;
@@ -249,6 +273,26 @@ struct PouchItemSnapshot {
     std::string name;
 };
 
+constexpr bool IsHoldablePouchItem(const PouchItemSnapshot& item) {
+    return item.type == PouchItemTypeMaterial && item.value > 0;
+}
+
+constexpr bool IsEdiblePouchItem(const PouchItemSnapshot& item) {
+    return item.value > 0 &&
+           (item.type == PouchItemTypeFood ||
+            (item.type == PouchItemTypeMaterial && item.item_use == ItemUseCureItem));
+}
+
+constexpr s32 PouchTabGroup(s32 type) {
+    if (type == 1) {
+        return 2;
+    }
+    if (type >= 4 && type <= 6) {
+        return 6;
+    }
+    return type;
+}
+
 struct ChampionPowerSnapshot {
     std::string_view id;
     std::string_view name;
@@ -264,6 +308,12 @@ struct PlayerMapSnapshot {
     float y{};
     float z{};
     float heading{};
+};
+
+struct ActiveEffectSnapshot {
+    std::string_view name;
+    s32 seconds{};
+    float level{};
 };
 
 struct ShrineDefinition {
@@ -822,6 +872,58 @@ std::optional<PlayerMapSnapshot> ReadPlayerMap(Core::Memory::Memory& memory, VAd
     return PlayerMapSnapshot{x, y, z, heading};
 }
 
+std::vector<ActiveEffectSnapshot> ReadActiveCookEffects(Core::Memory::Memory& memory,
+                                                         VAddr player_actor) {
+    std::vector<ActiveEffectSnapshot> effects;
+    effects.reserve(8);
+    const auto add_integer_effect = [&](std::string_view name, VAddr seconds_offset,
+                                        VAddr level_offset) {
+        const auto seconds = Read<s32>(memory, player_actor + seconds_offset);
+        const auto level = Read<float>(memory, player_actor + level_offset);
+        if (seconds && level && *seconds > 0 && *seconds <= MaximumCookEffectSeconds &&
+            std::isfinite(*level) && *level > 0.0f && *level <= 10000.0f) {
+            effects.push_back({name, *seconds, *level});
+        }
+    };
+    add_integer_effect("Attack Up", PlayerAttackEffectSecondsOffset,
+                       PlayerAttackEffectLevelOffset);
+    add_integer_effect("Defense Up", PlayerDefenseEffectSecondsOffset,
+                       PlayerDefenseEffectLevelOffset);
+    add_integer_effect("Heat Resistance", PlayerHeatEffectSecondsOffset,
+                       PlayerHeatEffectLevelOffset);
+    add_integer_effect("Cold Resistance", PlayerColdEffectSecondsOffset,
+                       PlayerColdEffectLevelOffset);
+    add_integer_effect("Flame Guard", PlayerFireproofEffectSecondsOffset,
+                       PlayerFireproofEffectLevelOffset);
+    add_integer_effect("Shock Resistance", PlayerShockEffectSecondsOffset,
+                       PlayerShockEffectLevelOffset);
+    add_integer_effect("Stealth Up", PlayerStealthEffectSecondsOffset,
+                       PlayerStealthEffectLevelOffset);
+
+    float speed_seconds = 0.0f;
+    float speed_level = 0.0f;
+    for (const auto [seconds_offset, level_offset] :
+         std::array<std::pair<VAddr, VAddr>, 3>{{
+             {PlayerSpeedEffectOneSecondsOffset, PlayerSpeedEffectOneLevelOffset},
+             {PlayerSpeedEffectTwoSecondsOffset, PlayerSpeedEffectTwoLevelOffset},
+             {PlayerSpeedEffectThreeSecondsOffset, PlayerSpeedEffectThreeLevelOffset},
+         }}) {
+        const auto seconds = Read<float>(memory, player_actor + seconds_offset);
+        const auto level = Read<float>(memory, player_actor + level_offset);
+        if (seconds && level && std::isfinite(*seconds) && std::isfinite(*level) &&
+            *seconds > 0.0f && *seconds <= static_cast<float>(MaximumCookEffectSeconds) &&
+            *level > 0.0f && *level <= 10000.0f) {
+            speed_seconds = std::max(speed_seconds, *seconds);
+            speed_level = std::max(speed_level, *level);
+        }
+    }
+    if (speed_seconds > 0.0f) {
+        effects.push_back(
+            {"Speed Up", static_cast<s32>(std::ceil(speed_seconds)), speed_level});
+    }
+    return effects;
+}
+
 std::optional<std::vector<QuestSnapshot>> ReadQuests(Core::Memory::Memory& memory,
                                                       VAddr main_base) {
     const auto manager = Read<u64>(memory, main_base + QuestManagerStaticOffset);
@@ -999,8 +1101,23 @@ std::optional<PouchSelection> FindPouchSelection(Core::Memory::Memory& memory, V
         if (!head) {
             return std::nullopt;
         }
+        if (*head == 0) {
+            continue;
+        }
+        const auto head_type = Read<s32>(memory, *head + PouchItemTypeOffset);
+        if (!head_type) {
+            return std::nullopt;
+        }
+        const s32 tab_group = PouchTabGroup(*head_type);
         VAddr item = *head;
         for (u32 slot = 0; item && slot < PouchItemsPerTab; ++slot) {
+            const auto item_type = Read<s32>(memory, item + PouchItemTypeOffset);
+            if (!item_type) {
+                return std::nullopt;
+            }
+            if (PouchTabGroup(*item_type) != tab_group) {
+                break;
+            }
             if (item == target) {
                 u32 tab_item_count = slot + 1;
                 VAddr count_item = item;
@@ -1011,7 +1128,13 @@ std::optional<PouchSelection> FindPouchSelection(Core::Memory::Memory& memory, V
                         *next_node < node_offset) {
                         break;
                     }
-                    count_item = *next_node - node_offset;
+                    const VAddr next_item = *next_node - node_offset;
+                    const auto next_type =
+                        Read<s32>(memory, next_item + PouchItemTypeOffset);
+                    if (!next_type || PouchTabGroup(*next_type) != tab_group) {
+                        break;
+                    }
+                    count_item = next_item;
                     ++tab_item_count;
                 }
                 return PouchSelection{tab, slot, node_offset, tab_item_count, *head};
@@ -1312,11 +1435,14 @@ void AppendPouchItemJson(std::ostringstream& out, const PouchItemSnapshot& item)
         }
     }
     out << R"({"id":)" << item.address << R"(,"itemType":)" << item.type
+        << R"(,"itemUse":)" << item.item_use
         << R"(,"actorName":)" << JsonString(item.name)
         << R"(,"iconActorName":)" << JsonString(icon_actor_name)
         << R"(,"name":)" << JsonString(localized ? localized->name : item.name)
         << R"(,"category":)" << JsonString(PouchCategoryName(item.type))
-        << R"(,"equippable":)" << (equippable ? "true" : "false");
+        << R"(,"equippable":)" << (equippable ? "true" : "false")
+        << R"(,"holdable":)" << (IsHoldablePouchItem(item) ? "true" : "false")
+        << R"(,"edible":)" << (IsEdiblePouchItem(item) ? "true" : "false");
     if (item.type <= 3) {
         out << R"(,"durability":)" << item.value << R"(,"modifierValue":)"
             << item.modifier_value << R"(,"modifierFlags":)" << item.modifier_flags;
@@ -1763,6 +1889,9 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     const auto player_map = component && *component
                                 ? ReadPlayerMap(memory, *component)
                                 : std::nullopt;
+    const auto active_effects = component && *component
+                                    ? ReadActiveCookEffects(memory, *component)
+                                    : std::vector<ActiveEffectSnapshot>{};
 
     std::optional<s32> health;
     std::optional<VAddr> health_getter;
@@ -1903,7 +2032,13 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     }
     const VAddr equip_mailbox = action_mailbox;
     const bool equip_bridge = pouch_items && action_bridge;
-    const auto eat_notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
+    const auto player_link_proc = Read<u64>(memory, *player + PlayerInfoLinkOffset);
+    const auto player_link_id = Read<u32>(memory, *player + PlayerInfoLinkOffset +
+                                                     BaseProcLinkIdOffset);
+    const bool player_alive = valid_health && *health > 0;
+    const bool hold_bridge = equip_bridge && player_alive && player_link_proc &&
+                             *player_link_proc && player_link_id &&
+                             *player_link_id != InvalidBaseProcLinkId;
     const auto eat_screen_registry =
         Read<u64>(memory, main_base + EatScreenRegistryOffset);
     const auto eat_screen_count = eat_screen_registry && *eat_screen_registry
@@ -1912,9 +2047,9 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     const auto eat_screen_array = eat_screen_registry && *eat_screen_registry
                                       ? Read<u64>(memory, *eat_screen_registry + 0x30)
                                       : std::nullopt;
-    const bool eat_bridge = equip_bridge && player && *player && eat_notifier && *eat_notifier &&
-                            eat_screen_registry && *eat_screen_registry && eat_screen_count &&
-                            eat_screen_array && *eat_screen_array;
+    const bool eat_bridge = equip_bridge && player_alive && eat_screen_registry &&
+                            *eat_screen_registry && eat_screen_count && eat_screen_array &&
+                            *eat_screen_array;
     const u32 equip_state = equip_bridge
                                 ? LoadEquipMailbox<u32>(system, equip_mailbox,
                                                         EquipMailboxStateOffset, __ATOMIC_ACQUIRE)
@@ -1969,6 +2104,8 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     }
     if (equip_bridge) {
         capabilities |= 1U << 6;
+    }
+    if (hold_bridge) {
         capabilities |= 1U << 11;
     }
     if (eat_bridge) {
@@ -2147,7 +2284,16 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
             AppendQuestJson(out, quests->at(index));
         }
     }
-    out << R"(],"effects":[],"debug":{)"
+    out << R"(],"effects":[)";
+    for (size_t index = 0; index < active_effects.size(); ++index) {
+        if (index) {
+            out << ',';
+        }
+        out << R"({"name":)" << JsonString(active_effects[index].name)
+            << R"(,"seconds":)" << active_effects[index].seconds
+            << R"(,"level":)" << active_effects[index].level << '}';
+    }
+    out << R"(],"debug":{)"
         << R"("mainBase":)" << JsonString(HexAddress(main_base)) << R"(,"player":)"
         << JsonString(HexAddress(*player)) << R"(,"component":)"
         << JsonString(HexAddress(component.value_or(0))) << R"(,"healthGetter":)"
@@ -2223,6 +2369,37 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
 
     auto& memory = system.ApplicationMemory();
     const VAddr equip_mailbox = system.GetApplicationProcessCompanionMailbox();
+
+    if (action == ActionEatItem || action == ActionHoldItem) {
+        const auto player_singleton = Read<u64>(memory, main_base + PlayerSingletonOffset);
+        const auto player_info = player_singleton && *player_singleton
+                                     ? Read<u64>(memory, *player_singleton)
+                                     : std::nullopt;
+        const auto player_actor = player_info && *player_info
+                                      ? Read<u64>(memory, *player_info + PlayerComponentOffset)
+                                      : std::nullopt;
+        const auto player_vtable = player_actor && *player_actor
+                                       ? Read<u64>(memory, *player_actor)
+                                       : std::nullopt;
+        const auto health_getter = player_vtable && *player_vtable
+                                       ? Read<u64>(memory, *player_vtable +
+                                                             HealthGetterVtableOffset)
+                                       : std::nullopt;
+        const auto health_address = health_getter && *health_getter
+                                        ? ResolvePointerGetter(memory, *player_actor,
+                                                               *health_getter)
+                                        : std::nullopt;
+        const auto health = health_address ? Read<s32>(memory, *health_address) : std::nullopt;
+        if (!player_info || !*player_info || !player_actor || !*player_actor || !health ||
+            *health <= 0) {
+            LOG_WARNING(Frontend,
+                        "[BOTW-ITEM-ACTION] rejected action={} reason=player-unavailable-or-dead "
+                        "playerInfo={:016X} player={:016X} health={}",
+                        action_name, player_info.value_or(0), player_actor.value_or(0),
+                        health ? std::to_string(*health) : "unavailable");
+            return false;
+        }
+    }
 
     if (action == ActionFastTravel) {
         if (argument >= static_cast<long long>(BotwShrines.size())) {
@@ -2383,9 +2560,9 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
     const auto held_count = pouch_manager && *pouch_manager
                                 ? ReadGrabbedItemCount(memory, *pouch_manager)
                                 : std::nullopt;
-    const bool valid_hold = target->type == 7 && target->value > 0 &&
-                             held_count && *held_count < PouchGrabbedItemCapacity;
-    const bool valid_eat = (target->type == 7 || target->type == 8) && target->value > 0;
+    const bool valid_hold = IsHoldablePouchItem(*target) && held_count &&
+                            *held_count < PouchGrabbedItemCapacity;
+    const bool valid_eat = IsEdiblePouchItem(*target);
     const bool valid_unequip = valid_equip_type && target->equipped;
     if ((action == ActionEquipItem && !valid_equip_type) ||
         (action == ActionEatItem && !valid_eat) ||
@@ -2410,77 +2587,94 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
     u32 hold_controller_action_before = ActionDiagnosticUnavailable;
     u32 hold_controller_active_before = ActionDiagnosticUnavailable;
     if (action == ActionHoldItem) {
+        const auto player_info = Read<u64>(memory, main_base + PlayerInfoStorageOffset);
+        const auto player_actor = player_info && *player_info
+                                      ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
+                                      : std::nullopt;
+        const auto player_link_proc = player_info && *player_info
+                                          ? Read<u64>(memory, *player_info + PlayerInfoLinkOffset)
+                                          : std::nullopt;
+        const auto player_link_id = player_info && *player_info
+                                        ? Read<u32>(memory, *player_info + PlayerInfoLinkOffset +
+                                                               BaseProcLinkIdOffset)
+                                        : std::nullopt;
+        const auto player_link_acquired =
+            player_info && *player_info
+                ? Read<u8>(memory, *player_info + PlayerInfoLinkOffset +
+                                       BaseProcLinkAcquiredOffset)
+                : std::nullopt;
+        if (!player_info || !*player_info || !player_actor || !*player_actor ||
+            !player_link_proc || !*player_link_proc || !player_link_id ||
+            *player_link_id == InvalidBaseProcLinkId || !player_link_acquired) {
+            LOG_WARNING(Frontend,
+                        "[BOTW-HOLD] rejected reason=player-link-unavailable "
+                        "playerInfo={:016X} player={:016X} linkProc={:016X} linkId={} "
+                        "linkAcquired={}",
+                        player_info.value_or(0), player_actor.value_or(0),
+                        player_link_proc.value_or(0),
+                        player_link_id ? std::to_string(*player_link_id) : "unavailable",
+                        player_link_acquired ? std::to_string(*player_link_acquired)
+                                             : "unavailable");
+            return false;
+        }
         const auto controller_storage =
             Read<u64>(memory, main_base + HoldControllerGotOffset);
         const auto controller = controller_storage && *controller_storage
                                     ? Read<u64>(memory, *controller_storage)
                                     : std::nullopt;
-        if (!controller || !*controller) {
-            LOG_WARNING(Frontend,
-                        "[BOTW Companion] Rejected guest hold: native hold controller is null");
-            return false;
-        }
-        const auto active_flag_pointer = Read<u64>(memory, *controller + 0x40);
+        const auto active_flag_pointer = controller && *controller
+                                             ? Read<u64>(memory, *controller + 0x40)
+                                             : std::nullopt;
         const auto active_flag = active_flag_pointer && *active_flag_pointer
                                      ? Read<u8>(memory, *active_flag_pointer)
                                      : std::nullopt;
-        const auto controller_state = Read<s32>(memory, *controller + 0xA0);
-        const auto controller_action = Read<s32>(memory, *controller + 0x30);
-        const auto controller_target = Read<u64>(memory, *controller + 0xA8);
-        const auto controller_link_first =
-            Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset);
+        const auto controller_state = controller && *controller
+                                          ? Read<s32>(memory, *controller + 0xA0)
+                                          : std::nullopt;
+        const auto controller_action = controller && *controller
+                                           ? Read<s32>(memory, *controller + 0x30)
+                                           : std::nullopt;
+        const auto controller_target = controller && *controller
+                                           ? Read<u64>(memory, *controller + 0xA8)
+                                           : std::nullopt;
+        const auto controller_link_first = controller && *controller
+                                               ? Read<u64>(memory, *controller +
+                                                                      HoldControllerPlayerLinkOffset)
+                                               : std::nullopt;
         const auto controller_link_second =
-            Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset + sizeof(u64));
-        const auto player_info = Read<u64>(memory, main_base + PlayerInfoStorageOffset);
-        const auto player_actor = player_info && *player_info
-                                      ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
-                                      : std::nullopt;
-        if (!active_flag_pointer || !*active_flag_pointer || !active_flag ||
-            !controller_state || !controller_action || !controller_target ||
-            !controller_link_first || !controller_link_second) {
-            LOG_WARNING(Frontend,
-                        "[BOTW-HOLD] rejected reason=controller-fields-unreadable "
-                        "controller={:016X} flagPointer={:016X} flagReadable={} "
-                        "stateReadable={} actionReadable={} targetReadable={} "
-                        "linkFirstReadable={} linkSecondReadable={} playerInfo={:016X} "
-                        "player={:016X}",
-                        *controller, active_flag_pointer.value_or(0), active_flag.has_value(),
-                        controller_state.has_value(), controller_action.has_value(),
-                        controller_target.has_value(), controller_link_first.has_value(),
-                        controller_link_second.has_value(), player_info.value_or(0),
-                        player_actor.value_or(0));
-            return false;
-        }
-        if (*controller_state == 12) {
-            LOG_WARNING(Frontend,
-                        "[BOTW-HOLD] rejected reason=native-controller-state-blocked "
-                        "controller={:016X} state={} action={} active={} target={:016X}",
-                        *controller, *controller_state, *controller_action, *active_flag,
-                        *controller_target);
-            return false;
-        }
+            controller && *controller
+                ? Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset + sizeof(u64))
+                : std::nullopt;
         LOG_INFO(Frontend,
-                 "[BOTW-HOLD] validated controller={:016X} state={} action={} active={} "
-                 "targetBefore={:016X} linkFirst={:016X} linkSecond={:016X} "
-                 "playerInfo={:016X} player={:016X} heldBefore={}/{} "
-                 "nativeAction=main+00DA46A0 nativeOutputRequired=true gameThreadDispatch=guest-hook",
-                 *controller, *controller_state, *controller_action, *active_flag,
-                 *controller_target, *controller_link_first, *controller_link_second,
-                 player_info.value_or(0), player_actor.value_or(0), *held_count,
-                 PouchGrabbedItemCapacity);
-        hold_controller_address = *controller;
-        hold_active_flag_pointer_address = *active_flag_pointer;
-        hold_controller_target_before = *controller_target;
-        hold_controller_link_first = *controller_link_first;
-        hold_controller_link_second = *controller_link_second;
-        hold_controller_state_before = static_cast<u32>(*controller_state);
-        hold_controller_action_before = static_cast<u32>(*controller_action);
-        hold_controller_active_before = *active_flag;
-        action_player_address = player_actor.value_or(0);
+                 "[BOTW-HOLD] validated playerInfo={:016X} player={:016X} "
+                 "playerLinkProc={:016X} playerLinkId={} playerLinkAcquired={} "
+                 "heldBefore={}/{} nativeMutation=main+00D9F0E8 "
+                 "nativeCapture=main+00CC12F0 nativeAttachMessage=08000003 "
+                 "menuControllerRequired=false gameThreadDispatch=guest-hook",
+                 *player_info, *player_actor, *player_link_proc, *player_link_id,
+                 *player_link_acquired, *held_count, PouchGrabbedItemCapacity);
+        hold_controller_address = controller.value_or(0);
+        hold_active_flag_pointer_address = active_flag_pointer.value_or(0);
+        hold_controller_target_before = controller_target.value_or(0);
+        hold_controller_link_first = controller_link_first.value_or(0);
+        hold_controller_link_second = controller_link_second.value_or(0);
+        if (controller_state) {
+            hold_controller_state_before = static_cast<u32>(*controller_state);
+        }
+        if (controller_action) {
+            hold_controller_action_before = static_cast<u32>(*controller_action);
+        }
+        if (active_flag) {
+            hold_controller_active_before = *active_flag;
+        }
+        action_player_address = *player_actor;
     }
     if (action == ActionEatItem) {
         eat_selection = FindPouchSelection(memory, *pouch_manager, target->address);
         const auto notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
+        const auto notifier_actor = notifier && *notifier
+                                        ? Read<u64>(memory, *notifier + 0x48)
+                                        : std::nullopt;
         const auto player_info = Read<u64>(memory, main_base + PlayerInfoStorageOffset);
         const auto player_actor = player_info && *player_info
                                       ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
@@ -2497,20 +2691,22 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                                           ? Read<u64>(memory, *screen_array + screen_slot_offset)
                                           : std::nullopt;
         if (!eat_selection || eat_selection->tab >= PouchTabCount ||
-            eat_selection->slot >= PouchItemsPerTab || !notifier || !*notifier ||
-            !player_info || !*player_info || !player_actor || !*player_actor ||
+            eat_selection->slot >= PouchItemsPerTab || !player_info || !*player_info ||
+            !player_actor || !*player_actor ||
             !screen_registry || !*screen_registry || !screen_count || !screen_array ||
             !*screen_array) {
             LOG_WARNING(Frontend,
                         "[BOTW-EAT] rejected reason=native-context-invalid actor={} "
                         "target={:016X} selection={} tab={} slot={} notifier={:016X} "
+                        "notifierActor={:016X} "
                         "playerInfo={:016X} player={:016X} screenRegistry={:016X} "
                         "screenArray={:016X} screenCount={} inventoryMenuState=not-consulted "
                         "inventoryMenuRequired=false",
                         target->name, target->address, eat_selection.has_value(),
                         eat_selection ? eat_selection->tab : std::numeric_limits<u32>::max(),
                         eat_selection ? eat_selection->slot : std::numeric_limits<u32>::max(),
-                        notifier.value_or(0), player_info.value_or(0),
+                        notifier.value_or(0), notifier_actor.value_or(0),
+                        player_info.value_or(0),
                         player_actor.value_or(0), screen_registry.value_or(0),
                         screen_array.value_or(0),
                         screen_count ? std::to_string(*screen_count) : "unavailable");
@@ -2521,6 +2717,7 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                  "[BOTW-EAT] validated actor={} target={:016X} type={} quantityBefore={} "
                  "tab={} slot={} tabHead={:016X} tabItemCount={} nodeOffset={} "
                  "player={:016X} pouchManager={:016X} notifier={:016X} "
+                 "notifierActor={:016X} "
                  "screenRegistry={:016X} screenArray={:016X} screenCount={} "
                  "screenCandidate={:016X} inventoryMenuState=not-consulted "
                  "menuContextRequired=false nativeGameplay=00E3EDE4 nativePouchUse=00D97B84 "
@@ -2529,7 +2726,8 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                  eat_selection->tab, eat_selection->slot, eat_selection->tab_head,
                  eat_selection->tab_item_count, eat_selection->node_offset, *player_actor,
                  *pouch_manager,
-                 *notifier, *screen_registry, *screen_array, *screen_count,
+                 notifier.value_or(0), notifier_actor.value_or(0), *screen_registry,
+                 *screen_array, *screen_count,
                  screen_candidate.value_or(0));
     }
 

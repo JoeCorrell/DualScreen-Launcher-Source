@@ -557,6 +557,10 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener,
             return true
         }
 
+        if (isControllerInput && XcxControllerBridge.dispatchKeyEvent(event)) {
+            return true
+        }
+
         return InputHandler.dispatchKeyEvent(event)
     }
 
@@ -588,6 +592,9 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener,
                 return true
             }
             if (PlzaControllerBridge.dispatchMotionEvent(event)) {
+                return true
+            }
+            if (XcxControllerBridge.dispatchMotionEvent(event)) {
                 return true
             }
         }

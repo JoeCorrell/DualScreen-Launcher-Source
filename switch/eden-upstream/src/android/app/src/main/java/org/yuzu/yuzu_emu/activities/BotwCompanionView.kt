@@ -56,7 +56,7 @@ internal class BotwCompanionView(
     private enum class ControllerFocus {
         Pages, Categories, Inventory, Runes, Map, QuestFilters, QuestList, ShrinePopup, ItemMenu
     }
-    private enum class ContextAction(val label: String) { Eat("Eat"), Hold("Hold") }
+    private enum class ContextAction(val label: String) { Hold("Hold"), Eat("Eat") }
 
     private data class Stats(
         val health: Int?, val maxHealth: Int?, val stamina: Float?, val maxStamina: Float?,
@@ -65,11 +65,13 @@ internal class BotwCompanionView(
     )
 
     private data class Item(
-        val id: Long, val itemType: Int, val actorName: String, val iconActorName: String,
+        val id: Long, val itemType: Int, val itemUse: Int, val actorName: String,
+        val iconActorName: String,
         val name: String, val category: String,
         val power: Int?, val defense: Int?,
         val durability: Int?, val count: Int?, val modifierValue: Int?, val modifierFlags: Int?,
-        val equippable: Boolean, val equipped: Boolean, val description: String
+        val equippable: Boolean, val holdable: Boolean, val edible: Boolean,
+        val equipped: Boolean, val description: String
     )
 
     private data class Equipment(val slot: String, val item: Item)
@@ -89,7 +91,7 @@ internal class BotwCompanionView(
         val id: Long, val actorName: String, val name: String, val objective: String,
         val step: String, val location: String, val type: String, val complete: Boolean
     )
-    private data class Effect(val name: String, val seconds: Int)
+    private data class Effect(val name: String, val seconds: Int, val level: Float)
     private data class Rune(
         val id: String, val name: String, val type: Int, val available: Boolean,
         val upgraded: Boolean, val selected: Boolean
@@ -1249,7 +1251,10 @@ internal class BotwCompanionView(
                 val y = effectsRect.top + 21f + index * 29f
                 drawEffectIcon(canvas, effectsRect.left + 22f, y, index)
                 text(
-                    canvas, ellipsizeToWidth(effect.name, 105f, 13f),
+                    canvas,
+                    ellipsizeToWidth(
+                        "${effect.name}  Lv ${effect.level.roundToInt()}", 150f, 13f
+                    ),
                     effectsRect.left + 43f, y + 5f, 13f, muted
                 )
                 text(
@@ -2105,13 +2110,13 @@ internal class BotwCompanionView(
         contextItemId?.let { id -> snapshot.inventory.firstOrNull { it.id == id } }
 
     private fun contextActions(item: Item): List<ContextAction> = buildList {
-        if ((item.category.equals("Materials", true) || item.category.equals("Food", true)) &&
-            snapshot.capabilities and CAP_EAT_ACTIONS != 0
-        ) add(ContextAction.Eat)
-        if (item.category.equals("Materials", true) &&
+        if (item.holdable &&
             snapshot.capabilities and CAP_HOLD_ACTIONS != 0 &&
             (snapshot.heldItemCount ?: MAX_HELD_ITEMS) < MAX_HELD_ITEMS
         ) add(ContextAction.Hold)
+        if (item.edible && snapshot.capabilities and CAP_EAT_ACTIONS != 0) {
+            add(ContextAction.Eat)
+        }
     }
 
     private fun contextPanelRect() = RectF(390f, 230f, 850f, 850f)
@@ -3051,14 +3056,15 @@ internal class BotwCompanionView(
             } && mailboxAddressMatches(snapshot.actionCompleted, pending.item.id) &&
                 snapshot.actionType == expectedType
             if (confirmed) {
-                if (pending.action == ContextAction.Hold) {
-                    val previewIcon = loadItemBitmap(pending.item)?.let { bitmap ->
-                        runCatching {
-                            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
-                        }.getOrNull()
-                    }
-                    onPlayerItemAction(pending.item.actorName, previewIcon, false)
+                val previewIcon = loadItemBitmap(pending.item)?.let { bitmap ->
+                    runCatching {
+                        bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+                    }.getOrNull()
                 }
+                onPlayerItemAction(
+                    pending.item.actorName, previewIcon,
+                    pending.action == ContextAction.Eat
+                )
                 val tag = if (pending.action == ContextAction.Eat) "BOTW-EAT" else "BOTW-ITEM-ACTION"
                 Log.info(
                     "[$tag] completed action=${pending.action.label} actor=${pending.item.actorName} " +
@@ -3267,7 +3273,9 @@ internal class BotwCompanionView(
                 it.optString("type"), it.optBoolean("complete")
             )
         }
-        val effects = root.optJSONArray("effects").mapObjects { Effect(it.optString("name"), it.optInt("seconds")) }
+        val effects = root.optJSONArray("effects").mapObjects {
+            Effect(it.optString("name"), it.optInt("seconds"), it.optDouble("level").toFloat())
+        }
         val runes = root.optJSONArray("runes").mapObjects {
             Rune(
                 it.optString("id"), it.optString("name"), it.optInt("type", -1),
@@ -3405,13 +3413,15 @@ internal class BotwCompanionView(
             else -> item.optString("name")
         }
         return Item(
-            item.optLong("id"), item.optInt("itemType", -1), actorName,
+            item.optLong("id"), item.optInt("itemType", -1),
+            item.optInt("itemUse", -1), actorName,
             item.optString("iconActorName", actorName),
             displayName, item.optString("category"),
             item.optIntOrNull("power"), item.optIntOrNull("defense"),
             item.optIntOrNull("durability"), item.optIntOrNull("count"),
             item.optIntOrNull("modifierValue"), item.optIntOrNull("modifierFlags"),
-            item.optBoolean("equippable"), item.optBoolean("equipped"),
+            item.optBoolean("equippable"), item.optBoolean("holdable"),
+            item.optBoolean("edible"), item.optBoolean("equipped"),
             item.optString("description")
         )
     }

@@ -27,6 +27,8 @@ final class SharedBox64RuntimeState {
     static final String MANAGED_STEAM_SPEC_MARKER_KEY = "wemuOfficialSteamRuntimeSpec";
     static final String MANAGED_STEAM_CONTAINER_REVISION_KEY =
             "wemuOfficialSteamRuntimeRevision";
+    static final String PINNED_RUNTIME_KEY = "wemuPinnedBox64Runtime";
+    static final String TRANSFORMERS_WFC_RUNTIME = "transformers-wfc-0.4.2";
     static final String MANAGED_STEAM_CONTAINER_MARKER = "1";
     static final String BOX64_0_4_4_VERSION = "0.4.4";
     static final String BOX64_0_4_4_SHA256 =
@@ -34,6 +36,8 @@ final class SharedBox64RuntimeState {
     static final String BOX64_0_4_2_VERSION = "0.4.2";
     static final String BOX64_0_4_2_SHA256 =
             "06443C6E561B45D3693468811977C8329D65577490156CE39A7F596BF19FF6DB";
+    static final String WOWBOX64_0_4_2_SHA256 =
+            "C9FBC97FC4F76A8B7D99E004007B0455E168B2F006910DD6F0AE9D0CCBA63DEB";
     static final String BOX64_0_4_2_SAVE_MEM_VERSION = "0.4.2-save-mem";
     static final String BOX64_0_4_2_SAVE_MEM_SHA256 =
             "6BE096B81C8EEA2E0B9F57FDAF1917EC7A3C3E476C6C5B18F34AFCC102448FCE";
@@ -196,8 +200,46 @@ final class SharedBox64RuntimeState {
             String managedSteamContainerRevision,
             String wineVersion,
             String selectedVersion) {
+        return runtimeRequest(
+                managedSteamContainerMarker,
+                managedSteamSpecMarker,
+                managedSteamContainerRevision,
+                wineVersion,
+                selectedVersion,
+                null);
+    }
+
+    static RuntimeRequest runtimeRequest(
+            String managedSteamContainerMarker,
+            String managedSteamSpecMarker,
+            String managedSteamContainerRevision,
+            String wineVersion,
+            String selectedVersion,
+            String pinnedRuntime) {
         if (!MANAGED_STEAM_CONTAINER_MARKER.equals(managedSteamContainerMarker)) {
-            return new RuntimeRequest(selectedVersion, selectedVersion, null, true);
+            if (isEmpty(pinnedRuntime)) {
+                return new RuntimeRequest(
+                        selectedVersion, selectedVersion, null, null,
+                        true, false, false);
+            }
+            if (!TRANSFORMERS_WFC_RUNTIME.equals(pinnedRuntime)
+                    || !BOX64_0_4_2_VERSION.equals(selectedVersion)) {
+                throw new IllegalStateException(
+                        "The pinned game container has an unknown Box64 runtime");
+            }
+            return new RuntimeRequest(
+                    BOX64_0_4_2_VERSION,
+                    "wemu-transformers-wfc-box64-0.4.2-v1",
+                    BOX64_0_4_2_SHA256,
+                    WOWBOX64_0_4_2_SHA256,
+                    false,
+                    false,
+                    true);
+        }
+
+        if (!isEmpty(pinnedRuntime)) {
+            throw new IllegalStateException(
+                    "A managed Steam container cannot claim a pinned game runtime");
         }
 
         ManagedRuntimeSpec spec = findManagedRuntime(
@@ -212,7 +254,28 @@ final class SharedBox64RuntimeState {
                 spec.box64Version,
                 spec.markerId,
                 spec.requiredSha256,
+                null,
+                false,
+                true,
                 false);
+    }
+
+    /** Resolves the active translator while preventing a shortcut from weakening a pinned game. */
+    static String resolveEmulator(
+            RuntimeRequest request,
+            String containerEmulator,
+            String shortcutEmulator,
+            boolean arm64EcWine) {
+        String selected = isEmpty(shortcutEmulator) ? containerEmulator : shortcutEmulator;
+        if (request != null && request.forceBox64Translator) {
+            if (!"box64".equalsIgnoreCase(containerEmulator)
+                    || !"box64".equalsIgnoreCase(selected)) {
+                throw new IllegalStateException(
+                        "The pinned game container requires the Box64 translator");
+            }
+            return "box64";
+        }
+        return arm64EcWine ? "fexcore" : selected;
     }
 
     private static ManagedRuntimeSpec findManagedRuntime(
@@ -242,7 +305,7 @@ final class SharedBox64RuntimeState {
         return null;
     }
 
-    private static boolean isEmpty(String value) {
+    static boolean isEmpty(String value) {
         return value == null || value.isEmpty();
     }
 
@@ -844,17 +907,26 @@ final class SharedBox64RuntimeState {
         final String version;
         final String markerId;
         final String requiredSha256;
+        final String requiredWowBox64Sha256;
         final boolean allowInstalledProfile;
+        final boolean managedSteamRuntime;
+        final boolean forceBox64Translator;
 
         RuntimeRequest(
                 String version,
                 String markerId,
                 String requiredSha256,
-                boolean allowInstalledProfile) {
+                String requiredWowBox64Sha256,
+                boolean allowInstalledProfile,
+                boolean managedSteamRuntime,
+                boolean forceBox64Translator) {
             this.version = version;
             this.markerId = markerId;
             this.requiredSha256 = requiredSha256;
+            this.requiredWowBox64Sha256 = requiredWowBox64Sha256;
             this.allowInstalledProfile = allowInstalledProfile;
+            this.managedSteamRuntime = managedSteamRuntime;
+            this.forceBox64Translator = forceBox64Translator;
         }
     }
 }
