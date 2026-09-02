@@ -22,6 +22,11 @@ int main() {
   snapshot.max_resource = 10.0f;
   assert(PublishSnapshot(snapshot));
   assert(!PublishSnapshot(snapshot));
+  Snapshot same_content = snapshot;
+  same_content.sequence++;
+  assert(SnapshotContentEqual(snapshot, same_content));
+  same_content.health++;
+  assert(!SnapshotContentEqual(snapshot, same_content));
 
   Command command;
   command.type = CommandType::kReload;

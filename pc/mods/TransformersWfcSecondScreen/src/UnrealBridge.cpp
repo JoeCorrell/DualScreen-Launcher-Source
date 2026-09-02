@@ -27,6 +27,8 @@ constexpr size_t kMemoryRegionCacheCapacity = 128;
 constexpr size_t kNameCacheCapacity = 128;
 constexpr size_t kLookupCacheCapacity = 512;
 constexpr uint32_t kFunctionDefined = 0x00000002u;
+constexpr uint32_t kFunctionIterator = 0x00000004u;
+constexpr uint32_t kFunctionLatent = 0x00000008u;
 constexpr uint32_t kFunctionNative = 0x00000400u;
 constexpr uint32_t kFunctionExecutorRejected = 0x18000000u;
 constexpr uint32_t kPropertyParm = 0x00000080u;
@@ -360,6 +362,7 @@ bool ValidScriptFunction(void* function) {
   const uint16_t native_token = *reinterpret_cast<const uint16_t*>(
       static_cast<const uint8_t*>(function) + 0x58);
   return (flags & kFunctionDefined) != 0 &&
+         (flags & (kFunctionIterator | kFunctionLatent)) == 0 &&
          (flags & kFunctionNative) == 0 &&
          (flags & kFunctionExecutorRejected) == 0 && native_token == 0;
 }

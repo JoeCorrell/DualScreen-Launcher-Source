@@ -6,6 +6,8 @@ import android.net.Uri
 import android.os.Environment
 import android.util.Log
 import androidx.documentfile.provider.DocumentFile
+import com.dualscreen.launcher.DualScreenLauncherApplication
+import com.dualscreen.launcher.access.AccessState
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -411,6 +413,10 @@ class EdenSwitchBackend(private val application: Application) {
         }
 
     suspend fun createLaunchIntent(game: SwitchGameDefinition): Result<Intent> = runCatching {
+        val access = (application as? DualScreenLauncherApplication)?.access
+            ?: error("The secure access service is unavailable.")
+        val accessState = access.verifyNow()
+        check(accessState is AccessState.Granted) { accessState.message }
         operationLock.withLock {
             ensureInitialized()
             val installed = registry.get(game.id) ?: error("Add the base game before pressing Play.")

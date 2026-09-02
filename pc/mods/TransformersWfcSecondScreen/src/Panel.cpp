@@ -32,8 +32,6 @@ constexpr COLORREF kPanelAlt = RGB(6, 22, 31);
 constexpr COLORREF kCyan = RGB(0, 183, 235);
 constexpr COLORREF kCyanDim = RGB(10, 74, 96);
 constexpr COLORREF kOrange = RGB(255, 151, 0);
-constexpr COLORREF kTransformYellow = RGB(255, 193, 7);
-constexpr COLORREF kTransformYellowPressed = RGB(255, 211, 64);
 constexpr COLORREF kWhite = RGB(226, 232, 235);
 constexpr COLORREF kMuted = RGB(148, 164, 171);
 
@@ -49,7 +47,6 @@ HFONT g_font_body = nullptr;
 HFONT g_font_title = nullptr;
 HFONT g_font_action = nullptr;
 HFONT g_font_mode = nullptr;
-HFONT g_font_transform = nullptr;
 SOCKET g_socket = INVALID_SOCKET;
 bool g_winsock = false;
 PanelPage g_page = PanelPage::kCombat;
@@ -58,6 +55,8 @@ HitTarget g_focus = HitTarget::kTransform;
 ULONGLONG g_pressed_until = 0;
 std::array<ULONGLONG, 16> g_last_action_by_target = {};
 uint64_t g_drawn_sequence = 0;
+Snapshot g_drawn_snapshot = {};
+bool g_have_drawn_snapshot = false;
 
 RECT Rect(int left, int top, int right, int bottom) {
   RECT value = {left, top, right, bottom};
@@ -203,15 +202,12 @@ void DrawStatus(HDC dc, const Snapshot& state) {
            kWhite);
   Text(dc, FactionText(state.faction), Rect(107, 157, 350, 193),
        g_font_label, kCyan);
-  Text(dc, L"HEALTH", Rect(370, 111, 500, 145), g_font_label, kWhite);
-  Segments(dc, Rect(370, 153, 660, 180), state.health, state.max_health, kCyan);
-  Text(dc, L"ENERGON", Rect(700, 111, 830, 145), g_font_label, kWhite);
-  Segments(dc, Rect(700, 153, 955, 180), state.resource,
-           state.max_resource, kOrange);
-  Text(dc, L"MODE", Rect(985, 111, 1070, 145), g_font_label, kWhite);
-  Text(dc, ModeText(state.mode), Rect(985, 146, 1134, 192), g_font_mode,
-       kCyan);
-  DrawCachedAsset(dc, "OptimusPortrait", Rect(1145, 103, 1216, 198));
+  Text(dc, L"HEALTH", Rect(370, 111, 790, 145), g_font_label, kWhite);
+  Segments(dc, Rect(370, 153, 790, 180), state.health, state.max_health, kCyan);
+  Text(dc, L"MODE", Rect(825, 111, 1210, 145), g_font_label, kWhite,
+       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  Text(dc, ModeText(state.mode), Rect(825, 146, 1210, 192), g_font_mode,
+       kCyan, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 void DrawWeapon(HDC dc, RECT rect, const wchar_t* label,
@@ -220,19 +216,59 @@ void DrawWeapon(HDC dc, RECT rect, const wchar_t* label,
   Text(dc, label, Rect(rect.left + 24, rect.top + 8, rect.right - 20,
                        rect.top + 46), g_font_label, kCyan);
   RECT art = Rect(rect.left + 24, rect.top + 55, rect.right - 24,
-                  rect.bottom - 76);
+                  rect.bottom - 105);
   if (!weapon.available || !DrawCachedAsset(dc, weapon.icon_key, art))
     Text(dc, L"--", art, g_font_title, kCyanDim,
          DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+  // WFC presents weapon capacity as an Energon meter. Keep the meter local to
+  // its weapon card so primary and secondary capacity can never be confused.
+  float capacity_current = -1.0f;
+  float capacity_maximum = -1.0f;
   TextUtf8(dc, weapon.name,
-           Rect(rect.left + 24, rect.bottom - 72, rect.right - 150,
-                rect.bottom - 23), g_font_title, kWhite);
-  wchar_t ammo[64] = L"--";
-  if (weapon.magazine >= 0 && weapon.reserve >= 0)
-    std::swprintf(ammo, 64, L"%d / %d", weapon.magazine, weapon.reserve);
-  Text(dc, ammo, Rect(rect.right - 145, rect.bottom - 72, rect.right - 20,
-                      rect.bottom - 23), g_font_title, kWhite,
+           Rect(rect.left + 24, rect.bottom - 96, rect.right - 178,
+                rect.bottom - 58), g_font_body, kWhite,
+           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+  wchar_t capacity[96] = L"--";
+  if (weapon.heat_based && weapon.heat >= 0.0f &&
+      weapon.heat_capacity > 0.0f) {
+    capacity_maximum = weapon.heat_capacity;
+    capacity_current =
+        std::clamp(weapon.heat_capacity - weapon.heat, 0.0f,
+                   weapon.heat_capacity);
+    std::swprintf(capacity, 96, L"%.0f / %.0f", capacity_current,
+                  capacity_maximum);
+  } else if (weapon.clipless && weapon.reserve >= 0) {
+    capacity_current = static_cast<float>(weapon.reserve);
+    if (weapon.unlimited_reserve) {
+      capacity_maximum = capacity_current > 0.0f ? capacity_current : 1.0f;
+      capacity_current = capacity_maximum;
+      std::swprintf(capacity, 96, L"UNLIMITED");
+    } else if (weapon.reserve_capacity > 0) {
+      capacity_maximum = static_cast<float>(weapon.reserve_capacity);
+      std::swprintf(capacity, 96, L"%d / %d", weapon.reserve,
+                    weapon.reserve_capacity);
+    } else {
+      std::swprintf(capacity, 96, L"%d", weapon.reserve);
+    }
+  } else if (weapon.magazine >= 0) {
+    capacity_current = static_cast<float>(weapon.magazine);
+    if (weapon.magazine_capacity > 0) {
+      capacity_maximum = static_cast<float>(weapon.magazine_capacity);
+      std::swprintf(capacity, 96, L"%d / %d", weapon.magazine,
+                    weapon.magazine_capacity);
+    } else {
+      std::swprintf(capacity, 96, L"%d", weapon.magazine);
+    }
+  }
+  Text(dc, capacity,
+       Rect(rect.right - 172, rect.bottom - 96, rect.right - 24,
+            rect.bottom - 58), g_font_mode, kOrange,
        DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+  Segments(dc,
+           Rect(rect.left + 24, rect.bottom - 49, rect.right - 24,
+                rect.bottom - 26),
+           capacity_current, capacity_maximum, kOrange);
 }
 
 void DrawAbility(HDC dc, RECT rect, const wchar_t* label,
@@ -276,22 +312,16 @@ void DrawAbility(HDC dc, RECT rect, const wchar_t* label,
 }
 
 void DrawAction(HDC dc, RECT rect, const wchar_t* label, const char* icon_key,
-                HitTarget target, bool enabled, bool orange = false) {
+                HitTarget target, bool enabled) {
   const bool active = Pressed(target) || Focused(target);
-  if (orange) {
-    Fill(dc, rect, active ? kTransformYellowPressed : kTransformYellow);
-    Frame(dc, rect, active ? kWhite : kOrange, active ? 4 : 3);
-  } else {
-    PanelBox(dc, rect, active);
-  }
-  if (active && !orange) {
+  PanelBox(dc, rect, active);
+  if (active) {
     RECT inset = rect;
     InflateRect(&inset, -4, -4);
     Fill(dc, inset, RGB(15, 39, 47));
-    Frame(dc, rect, orange ? kOrange : kCyan, 4);
+    Frame(dc, rect, kCyan, 4);
   }
-  const COLORREF color = orange ? kBackground
-                                : (enabled ? kCyan : kMuted);
+  const COLORREF color = enabled ? kCyan : kMuted;
   if (icon_key && *icon_key)
     DrawCachedAsset(dc, icon_key,
                     Rect(rect.left + 55, rect.top + 18, rect.right - 55,
@@ -299,7 +329,7 @@ void DrawAction(HDC dc, RECT rect, const wchar_t* label, const char* icon_key,
   Text(dc, label,
        Rect(rect.left + 8, rect.bottom - 72, rect.right - 8,
             rect.bottom - 14),
-       orange ? g_font_transform : g_font_title, color,
+       g_font_title, color,
        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
@@ -376,8 +406,8 @@ void DrawCombat(HDC dc, const Snapshot& state) {
        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
   DrawAction(dc, Rect(kTransformRect), L"TRANSFORM", "AutobotEmblem",
-             HitTarget::kTransform,
-             (state.capabilities & kCapTransformAction) != 0, true);
+              HitTarget::kTransform,
+              (state.capabilities & kCapTransformAction) != 0);
   DrawAction(dc, Rect(kReloadRect), L"RELOAD", "Reload",
              HitTarget::kReload,
              (state.capabilities & kCapReloadAction) != 0);
@@ -502,6 +532,8 @@ void Render() {
     return;
   }
   g_drawn_sequence = state.sequence;
+  g_drawn_snapshot = state;
+  g_have_drawn_snapshot = true;
   if (state.lifecycle != Lifecycle::kLive && state.lifecycle != Lifecycle::kDead) {
     Text(g_memory_dc, LifecycleText(state.lifecycle),
          Rect(0, 100, kWidth, kHeight), g_font_action,
@@ -757,10 +789,19 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
       {
         Snapshot state;
         const ULONGLONG now = GetTickCount64();
-        const bool feedback_active = g_pressed != HitTarget::kNone;
-        if (feedback_active && now >= g_pressed_until) g_pressed = HitTarget::kNone;
-        if ((CopyLatestSnapshot(&state) && state.sequence != g_drawn_sequence) ||
-            feedback_active) {
+        bool feedback_expired = false;
+        if (g_pressed != HitTarget::kNone && now >= g_pressed_until) {
+          g_pressed = HitTarget::kNone;
+          feedback_expired = true;
+        }
+        bool state_changed = false;
+        if (CopyLatestSnapshot(&state) &&
+            state.sequence != g_drawn_sequence) {
+          state_changed = !g_have_drawn_snapshot ||
+                          !SnapshotContentEqual(state, g_drawn_snapshot);
+          if (!state_changed) g_drawn_sequence = state.sequence;
+        }
+        if (state_changed || feedback_expired) {
           Render();
           InvalidateRect(window, nullptr, FALSE);
         }
@@ -818,7 +859,6 @@ DWORD WINAPI PanelThread(void*) {
   g_font_title = Font(35, FW_BOLD);
   g_font_action = Font(50, FW_BOLD);
   g_font_mode = Font(21, FW_SEMIBOLD);
-  g_font_transform = Font(40, FW_BOLD);
   if (!InitializeAssetCache(g_module))
     Log(LogLevel::kWarning,
         "[DualScreen] GDI+ asset cache unavailable; text fallbacks active");
@@ -831,8 +871,8 @@ DWORD WINAPI PanelThread(void*) {
   SetWindowPos(g_window, HWND_TOPMOST, 0, 1080, kWidth, kHeight,
                SWP_NOACTIVATE | SWP_SHOWWINDOW);
   Log(LogLevel::kInfo,
-      "[DualScreen] panel ready class=TransformersWfcSecondScreenPanel size=1240x1080 port=%u",
-      kInputPort);
+      "[DualScreen] panel ready tid=%lu class=TransformersWfcSecondScreenPanel size=1240x1080 port=%u",
+      static_cast<unsigned long>(GetCurrentThreadId()), kInputPort);
   MSG message = {};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
     TranslateMessage(&message);
@@ -849,7 +889,6 @@ DWORD WINAPI PanelThread(void*) {
   if (g_font_title) DeleteObject(g_font_title);
   if (g_font_action) DeleteObject(g_font_action);
   if (g_font_mode) DeleteObject(g_font_mode);
-  if (g_font_transform) DeleteObject(g_font_transform);
   ShutdownAssetCache();
   g_window = nullptr;
   UnregisterClassW(cls.lpszClassName, g_module);

@@ -14,6 +14,8 @@ HANDLE g_worker = nullptr;
 volatile LONG g_stopping = 0;
 
 DWORD WINAPI Worker(void*) {
+  Log(LogLevel::kInfo, "[Lifecycle] mod worker ready tid=%lu",
+      static_cast<unsigned long>(GetCurrentThreadId()));
   const BuildIdentity build = IdentifyExecutable(GetModuleHandleW(nullptr));
   Log(LogLevel::kInfo,
       "[DualScreen] executable supported=%u machine=%04X timestamp=%08lX image=%08lX bytes=%llu sha256=%s",
@@ -34,6 +36,7 @@ DWORD WINAPI Worker(void*) {
   while (InterlockedCompareExchange(&g_stopping, 0, 0) == 0) Sleep(250);
   ShutdownGameBridge();
   StopPanel();
+  ShutdownLog();
   return 0;
 }
 

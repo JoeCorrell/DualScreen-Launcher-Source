@@ -5,7 +5,7 @@
 
 namespace wfcds {
 
-constexpr uint32_t kSnapshotVersion = 0x00010002u;
+constexpr uint32_t kSnapshotVersion = 0x00010003u;
 constexpr uint32_t kSquadCapacity = 3;
 
 enum class Lifecycle : uint32_t {
@@ -49,8 +49,14 @@ struct WeaponState {
   int32_t magazine = -1;
   int32_t reserve = -1;
   int32_t magazine_capacity = -1;
+  int32_t reserve_capacity = -1;
+  float heat = -1.0f;
+  float heat_capacity = -1.0f;
   uint8_t equipped = 0;
   uint8_t available = 0;
+  uint8_t unlimited_reserve = 0;
+  uint8_t clipless = 0;
+  uint8_t heat_based = 0;
   char name[80] = {};
   char icon_key[128] = {};
 };

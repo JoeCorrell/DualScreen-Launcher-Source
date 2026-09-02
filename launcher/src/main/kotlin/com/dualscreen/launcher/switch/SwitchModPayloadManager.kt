@@ -4,7 +4,9 @@ import android.content.Context
 import com.dualscreen.launcher.BuildConfig
 import com.dualscreen.launcher.PayloadAssetStore
 import com.dualscreen.launcher.isNewerVersion
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.security.MessageDigest
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.model.Game
@@ -20,7 +22,7 @@ internal class SwitchModPayloadManager(private val context: Context) {
         val prefix = "mods/switch/${game.id}"
         val manifestBytes = runCatching {
             PayloadAssetStore.open(context, "$prefix/manifest.json").use { input ->
-                input.readNBytes(MAX_MANIFEST_BYTES + 1)
+                input.readAtMost(MAX_MANIFEST_BYTES + 1)
             }
         }.getOrElse { return false }
         require(manifestBytes.size <= MAX_MANIFEST_BYTES) { "${game.title} mod manifest is too large." }
@@ -137,4 +139,18 @@ internal class SwitchModPayloadManager(private val context: Context) {
         const val MAX_FILES = 10_000
         const val MAX_FILE_BYTES = 2_000_000_000L
     }
+}
+
+private fun InputStream.readAtMost(limit: Int): ByteArray {
+    require(limit > 0)
+    val output = ByteArrayOutputStream(minOf(limit, DEFAULT_BUFFER_SIZE))
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var remaining = limit
+    while (remaining > 0) {
+        val count = read(buffer, 0, minOf(buffer.size, remaining))
+        if (count < 0) break
+        output.write(buffer, 0, count)
+        remaining -= count
+    }
+    return output.toByteArray()
 }

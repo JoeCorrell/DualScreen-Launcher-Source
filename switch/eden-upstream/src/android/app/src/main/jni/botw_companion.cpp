@@ -187,10 +187,11 @@ constexpr VAddr HoldControllerGotOffset = 0x01D6A550;
 constexpr VAddr PlayerInfoStorageOffset = 0x01E13ED0;
 constexpr VAddr PlayerInfoActorOffset = 0x60;
 constexpr VAddr HoldControllerPlayerLinkOffset = 0x150;
-// The gameplay notifier owns a registered ActorMessage sender at +0x198. Its dispatcher at
-// +0x1A0 is initialized during ordinary gameplay and does not depend on PauseMenuController.
-constexpr VAddr GameplayMessageSenderOffset = 0x198;
-constexpr VAddr GameplayMessageDispatcherOffset = GameplayMessageSenderOffset + sizeof(u64);
+// Actor::mMsgTransceiver is registered for Link throughout gameplay. The vanilla pause sender
+// carries this same player identity; using a generic sender spawns the item but leaves CarryBox
+// attached to that stationary sender instead of Link.
+constexpr VAddr PlayerMessageSenderOffset = 0x5E0;
+constexpr VAddr PlayerMessageDispatcherOffset = PlayerMessageSenderOffset + sizeof(u64);
 
 constexpr bool IsEquipMailboxBusy(u32 state) {
     return state == EquipMailboxQueued || state == EquipMailboxRunning ||
@@ -2030,18 +2031,16 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     const VAddr equip_mailbox = action_mailbox;
     const bool equip_bridge = pouch_items && action_bridge;
     const bool player_alive = valid_health && *health > 0;
-    const auto gameplay_notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
-    const auto gameplay_message_dispatcher =
-        gameplay_notifier && *gameplay_notifier
-            ? Read<u64>(memory, *gameplay_notifier + GameplayMessageDispatcherOffset)
+    const auto player_message_dispatcher =
+        component && *component
+            ? Read<u64>(memory, *component + PlayerMessageDispatcherOffset)
             : std::nullopt;
-    const auto gameplay_message_vtable = gameplay_message_dispatcher && *gameplay_message_dispatcher
-                                             ? Read<u64>(memory, *gameplay_message_dispatcher)
-                                             : std::nullopt;
-    const bool hold_bridge = equip_bridge && player_alive && gameplay_notifier &&
-                             *gameplay_notifier && gameplay_message_dispatcher &&
-                             *gameplay_message_dispatcher && gameplay_message_vtable &&
-                             *gameplay_message_vtable;
+    const auto player_message_vtable = player_message_dispatcher && *player_message_dispatcher
+                                           ? Read<u64>(memory, *player_message_dispatcher)
+                                           : std::nullopt;
+    const bool hold_bridge = equip_bridge && player_alive && player_message_dispatcher &&
+                             *player_message_dispatcher && player_message_vtable &&
+                             *player_message_vtable;
     const auto eat_screen_registry = Read<u64>(memory, main_base + EatScreenRegistryOffset);
     const auto eat_screen_count = eat_screen_registry && *eat_screen_registry
                                       ? Read<u32>(memory, *eat_screen_registry + 0x28)
@@ -2593,28 +2592,26 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
         const auto player_actor = player_info && *player_info
                                       ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
                                       : std::nullopt;
-        const auto gameplay_notifier = Read<u64>(memory, main_base + EatNotifyStorageOffset);
-        const auto gameplay_message_dispatcher =
-            gameplay_notifier && *gameplay_notifier
-                ? Read<u64>(memory, *gameplay_notifier + GameplayMessageDispatcherOffset)
+        const auto player_message_dispatcher =
+            player_actor && *player_actor
+                ? Read<u64>(memory, *player_actor + PlayerMessageDispatcherOffset)
                 : std::nullopt;
-        const auto gameplay_message_vtable =
-            gameplay_message_dispatcher && *gameplay_message_dispatcher
-                ? Read<u64>(memory, *gameplay_message_dispatcher)
+        const auto player_message_vtable =
+            player_message_dispatcher && *player_message_dispatcher
+                ? Read<u64>(memory, *player_message_dispatcher)
                 : std::nullopt;
         if (!player_info || !*player_info || !player_actor || !*player_actor ||
-            !gameplay_notifier || !*gameplay_notifier || !gameplay_message_dispatcher ||
-            !*gameplay_message_dispatcher || !gameplay_message_vtable ||
-            !*gameplay_message_vtable) {
+            !player_message_dispatcher || !*player_message_dispatcher ||
+            !player_message_vtable || !*player_message_vtable) {
             LOG_WARNING(
                 Frontend,
                 "[BOTW-HOLD] rejected reason=native-context-unavailable "
-                "playerInfo={:016X} player={:016X} gameplayNotifier={:016X} "
-                "messageSender={:016X} messageDispatcher={:016X} "
+                "playerInfo={:016X} player={:016X} messageSender={:016X} "
+                "messageDispatcher={:016X} "
                 "messageVtable={:016X}",
-                player_info.value_or(0), player_actor.value_or(0), gameplay_notifier.value_or(0),
-                gameplay_notifier.value_or(0) + GameplayMessageSenderOffset,
-                gameplay_message_dispatcher.value_or(0), gameplay_message_vtable.value_or(0));
+                player_info.value_or(0), player_actor.value_or(0),
+                player_actor.value_or(0) + PlayerMessageSenderOffset,
+                player_message_dispatcher.value_or(0), player_message_vtable.value_or(0));
             return false;
         }
         const auto controller_storage = Read<u64>(memory, main_base + HoldControllerGotOffset);
@@ -2642,14 +2639,14 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
                 : std::nullopt;
         LOG_INFO(Frontend,
                  "[BOTW-HOLD] validated playerInfo={:016X} player={:016X} "
-                 "gameplayNotifier={:016X} messageSender={:016X} "
-                 "messageDispatcher={:016X} messageVtable={:016X} "
+                 "messageSender={:016X} messageDispatcher={:016X} "
+                 "messageVtable={:016X} senderIdentity=player "
                  "heldBefore={}/{} nativeMutation=main+00D9F0E8 "
                  "nativeCapture=main+00CC12F0 nativeAttachMessage=08000003 "
                  "menuControllerRequired=false gameThreadDispatch=guest-hook",
-                 *player_info, *player_actor, *gameplay_notifier,
-                 *gameplay_notifier + GameplayMessageSenderOffset, *gameplay_message_dispatcher,
-                 *gameplay_message_vtable, *held_count, PouchGrabbedItemCapacity);
+                 *player_info, *player_actor, *player_actor + PlayerMessageSenderOffset,
+                 *player_message_dispatcher, *player_message_vtable, *held_count,
+                 PouchGrabbedItemCapacity);
         hold_controller_address = controller.value_or(0);
         hold_active_flag_pointer_address = active_flag_pointer.value_or(0);
         hold_controller_target_before = controller_target.value_or(0);

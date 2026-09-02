@@ -150,6 +150,7 @@ internal class BotwPlayerRenderView(
         private const val SSHD_ACTOR_OPENING = "LinkOpening"
         private const val SSHD_ACTOR_HERO = "LinkHero"
         private const val PORTRAIT_FIT_MARGIN = 1.015f
+        private const val HELD_ITEM_PREVIEW_SCALE = 0.26f
 
 
 
@@ -328,7 +329,7 @@ internal class BotwPlayerRenderView(
     private val restBoneTransforms = mutableMapOf<Int, FloatArray>()
     private var activePreviewClip: PreviewAnimationClip? = null
     private var activePreviewFrameIndex = -1
-    private var activePreviewStartedAt = 0L
+    private var activePreviewStartedAtNanos = 0L
     private var previewAnimationGeneration = 0
     private var displayedPreviewFrame: PreviewAnimationFrame? = null
     private var heldItemActor: String? = null
@@ -350,11 +351,10 @@ internal class BotwPlayerRenderView(
     private var releasing = false
     private var released = false
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val previewAnimationTick = object : Runnable {
-        override fun run() {
-            advancePreviewAnimation()
-        }
+    private val previewAnimationFrameCallback = Choreographer.FrameCallback { frameTimeNanos ->
+        advancePreviewAnimation(frameTimeNanos)
     }
+    private val interpolatedPreviewMatrix = FloatArray(16)
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = false }
     private var frameBitmap: Bitmap? = null
     private var readbackBuffer: ByteBuffer? = null
@@ -486,7 +486,7 @@ internal class BotwPlayerRenderView(
             itemIcon?.takeUnless(Bitmap::isRecycled)?.recycle()
             return
         }
-        mainHandler.removeCallbacks(previewAnimationTick)
+        Choreographer.getInstance().removeFrameCallback(previewAnimationFrameCallback)
         previewAnimationGeneration++
         resetPreviewPose()
         heldItemBitmap?.takeUnless(Bitmap::isRecycled)?.recycle()
@@ -496,7 +496,7 @@ internal class BotwPlayerRenderView(
         holdStateGraceUntil = if (eating) 0L else SystemClock.uptimeMillis() + 2_000L
         activePreviewClip = previewAnimations[if (eating) "Eat" else "Hold"]
         activePreviewFrameIndex = -1
-        activePreviewStartedAt = 0L
+        activePreviewStartedAtNanos = 0L
         displayedPreviewFrame = null
         cachedAppearance = null
         invalidate()
@@ -529,10 +529,10 @@ internal class BotwPlayerRenderView(
         ) {
             return
         }
-        mainHandler.removeCallbacks(previewAnimationTick)
+        Choreographer.getInstance().removeFrameCallback(previewAnimationFrameCallback)
         previewAnimationGeneration++
         activePreviewClip = null
-        activePreviewStartedAt = 0L
+        activePreviewStartedAtNanos = 0L
         resetPreviewPose()
         clearHeldItem()
         cachedAppearance = null
@@ -546,30 +546,41 @@ internal class BotwPlayerRenderView(
     }
 
     private fun startPreviewAnimation() {
-        if (activePreviewClip == null || activePreviewStartedAt != 0L || !bodyReady) return
-        activePreviewStartedAt = SystemClock.uptimeMillis()
-        mainHandler.post(previewAnimationTick)
+        if (activePreviewClip == null || activePreviewStartedAtNanos != 0L || !bodyReady) return
+        activePreviewStartedAtNanos = System.nanoTime()
+        Choreographer.getInstance().postFrameCallback(previewAnimationFrameCallback)
     }
 
-    private fun advancePreviewAnimation() {
+    private fun advancePreviewAnimation(frameTimeNanos: Long) {
         val clip = activePreviewClip ?: return
         if (!bodyReady || engine == null) return
-        if (activePreviewStartedAt == 0L) activePreviewStartedAt = SystemClock.uptimeMillis()
-        val elapsed = SystemClock.uptimeMillis() - activePreviewStartedAt
+        if (activePreviewStartedAtNanos == 0L) activePreviewStartedAtNanos = frameTimeNanos
+        val elapsed = ((frameTimeNanos - activePreviewStartedAtNanos) / 1_000_000L)
+            .coerceAtLeast(0L)
         val nextIndex = clip.frames.indexOfLast { frame -> frame.timeMs <= elapsed }
             .coerceAtLeast(0)
-        if (nextIndex != activePreviewFrameIndex) {
-            activePreviewFrameIndex = nextIndex
-            applyPreviewFrame(clip.frames[nextIndex])
-        }
         if (nextIndex + 1 < clip.frames.size) {
-            val delay = (clip.frames[nextIndex + 1].timeMs - elapsed).coerceAtLeast(1L)
-            mainHandler.postDelayed(previewAnimationTick, delay)
+            activePreviewFrameIndex = nextIndex
+            val current = clip.frames[nextIndex]
+            val next = clip.frames[nextIndex + 1]
+            val interval = (next.timeMs - current.timeMs).coerceAtLeast(1L)
+            val progress = ((elapsed - current.timeMs).toFloat() / interval.toFloat())
+                .coerceIn(0f, 1f)
+            applyInterpolatedPreviewFrame(current, next, progress)
+            Choreographer.getInstance().postFrameCallback(previewAnimationFrameCallback)
         } else if (clip.holdLastFrame) {
+            if (activePreviewFrameIndex != nextIndex) {
+                activePreviewFrameIndex = nextIndex
+                applyPreviewFrame(clip.frames[nextIndex])
+            }
             activePreviewClip = null
-            activePreviewStartedAt = 0L
+            activePreviewStartedAtNanos = 0L
             Log.info("[BOTW Companion] Preview hold pose retained for $heldItemActor")
         } else {
+            if (activePreviewFrameIndex != nextIndex) {
+                activePreviewFrameIndex = nextIndex
+                applyPreviewFrame(clip.frames[nextIndex])
+            }
             val generation = previewAnimationGeneration
             mainHandler.postDelayed(
                 {
@@ -579,7 +590,7 @@ internal class BotwPlayerRenderView(
                         resetPreviewPose()
                         clearHeldItem()
                         activePreviewClip = null
-                        activePreviewStartedAt = 0L
+                        activePreviewStartedAtNanos = 0L
                         cachedAppearance = null
                         requestRenderFrame("${clip.source}-complete")
                     }
@@ -587,6 +598,40 @@ internal class BotwPlayerRenderView(
                 250L
             )
         }
+    }
+
+    private fun applyInterpolatedPreviewFrame(
+        current: PreviewAnimationFrame,
+        next: PreviewAnimationFrame,
+        progress: Float
+    ) {
+        val nextEngine = engine ?: return
+        val transforms = nextEngine.transformManager
+        loadedSlots.forEach { (slot, loaded) ->
+            if (slot !in bodySlots) return@forEach
+            val entities = previewBoneEntities.getOrPut(slot) { mutableMapOf() }
+            current.bones.forEach { (boneName, currentMatrix) ->
+                val entity = entities.getOrPut(boneName) {
+                    loaded.asset.getFirstEntityByName(boneName)
+                }
+                if (entity != 0 && transforms.hasComponent(entity)) {
+                    val instance = transforms.getInstance(entity)
+                    restBoneTransforms.getOrPut(entity) {
+                        transforms.getTransform(instance, FloatArray(16))
+                    }
+                    val nextMatrix = next.bones[boneName] ?: currentMatrix
+                    for (index in interpolatedPreviewMatrix.indices) {
+                        interpolatedPreviewMatrix[index] = currentMatrix[index] +
+                            (nextMatrix[index] - currentMatrix[index]) * progress
+                    }
+                    transforms.setTransform(instance, interpolatedPreviewMatrix)
+                }
+            }
+            loaded.asset.instance.animator.updateBoneMatrices()
+        }
+        displayedPreviewFrame = if (progress < 0.5f) current else next
+        cachedAppearance = null
+        requestRenderFrame("preview-animation-interpolated")
     }
 
     private fun applyPreviewFrame(frame: PreviewAnimationFrame) {
@@ -642,10 +687,10 @@ internal class BotwPlayerRenderView(
     }
 
     private fun cancelPreviewAction(clearHeldItem: Boolean) {
-        mainHandler.removeCallbacks(previewAnimationTick)
+        Choreographer.getInstance().removeFrameCallback(previewAnimationFrameCallback)
         previewAnimationGeneration++
         activePreviewClip = null
-        activePreviewStartedAt = 0L
+        activePreviewStartedAtNanos = 0L
         resetPreviewPose()
         if (clearHeldItem) clearHeldItem()
     }
@@ -955,7 +1000,7 @@ internal class BotwPlayerRenderView(
         }
         heldItemBitmap?.let { bitmap ->
             if (!bitmap.isRecycled) {
-                val size = min(width, height) * 0.18f
+                val size = min(width, height) * HELD_ITEM_PREVIEW_SCALE
                 val centerX = width * 0.50f
                 val centerY = height * 0.39f
                 canvas.drawBitmap(

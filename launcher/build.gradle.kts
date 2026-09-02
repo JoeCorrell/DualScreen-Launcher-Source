@@ -12,15 +12,33 @@ val releaseSigningProperties = Properties().apply {
     }
 }
 
+fun gradleBuildConfigString(name: String): String =
+    providers.gradleProperty(name).orNull.orEmpty()
+        .replace("\\", "\\\\")
+        .replace("\"", "\\\"")
+
 android {
     namespace = "com.dualscreen.launcher"
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 21
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.9"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 22
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
+        // Both values are safe to ship: the URL identifies the service and the
+        // public key only verifies its short-lived access leases. All secrets
+        // remain in the entitlement service.
+        buildConfigField(
+            "String",
+            "ACCESS_API_BASE_URL",
+            "\"${gradleBuildConfigString("accessApiBaseUrl")}\"",
+        )
+        buildConfigField(
+            "String",
+            "ACCESS_LEASE_PUBLIC_KEY",
+            "\"${gradleBuildConfigString("accessLeasePublicKey")}\"",
+        )
     }
 
     val localReleaseSigning = if (releaseSigningPropertiesFile.isFile) {

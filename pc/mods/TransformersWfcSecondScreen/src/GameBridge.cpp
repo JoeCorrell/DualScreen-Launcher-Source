@@ -20,8 +20,9 @@ constexpr uintptr_t kGameEngineTickRva = 0x00D9C130u;
 constexpr uintptr_t kGameEngineTickVtableSlotRva = 0x0203BA1Cu;
 constexpr uint8_t kGameEngineTickPrologue[] = {
     0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};
-constexpr ULONGLONG kPublishIntervalMs = 500;
-constexpr ULONGLONG kResolveIntervalMs = 250;
+constexpr ULONGLONG kPublishIntervalMs = 1000;
+constexpr ULONGLONG kResolveIntervalMs = 500;
+constexpr ULONGLONG kSlowStateIntervalMs = 2000;
 constexpr ULONGLONG kWorldStabilizeMs = 750;
 constexpr ULONGLONG kResolveDiagnosticIntervalMs = 5000;
 constexpr ULONGLONG kLiveSummaryIntervalMs = 10000;
@@ -131,9 +132,11 @@ volatile LONG g_tick_entry_logged = 0;
 volatile LONG g_tick_return_logged = 0;
 volatile LONG g_purecall_logged = 0;
 volatile LONG g_tick_in_progress = 0;
+volatile LONG g_hook_stopping = 0;
 DWORD g_game_thread = 0;
 ULONGLONG g_last_pulse = 0;
 ULONGLONG g_last_publish = 0;
+ULONGLONG g_last_slow_state_read = 0;
 ULONGLONG g_resolve_retry_at = 0;
 ULONGLONG g_world_ready_since = 0;
 ULONGLONG g_last_resolve_diagnostic = 0;
@@ -151,6 +154,14 @@ std::array<void*, kSquadCapacity> g_squad_controllers = {};
 std::array<void*, kSquadCapacity> g_squad_pawns = {};
 bool g_switch_in_progress = false;
 const char* volatile g_snapshot_stage = "idle";
+volatile LONG g_tick_started_ms = 0;
+volatile LONG g_watchdog_reported_start = 0;
+volatile LONG g_watchdog_stop = 0;
+volatile LONG g_last_action_type = 0;
+volatile LONG g_last_action_phase = 0;
+volatile LONG g_last_action_tick = 0;
+volatile LONG g_last_action_request_low = 0;
+HANDLE g_watchdog_thread = nullptr;
 
 struct PendingAbilityRelease {
   bool pending = false;
@@ -170,10 +181,22 @@ using CaptureStackBackTraceFn = USHORT (WINAPI*)(ULONG, ULONG, PVOID*,
 
 int __cdecl HookedPurecall() {
   if (InterlockedCompareExchange(&g_purecall_logged, 1, 0) == 0) {
-    Log(LogLevel::kError,
-        "[Crash] MSVCR90 _purecall tid=%lu gameTid=%lu snapshotStage=%s",
+    const LONG action_tick =
+        InterlockedCompareExchange(&g_last_action_tick, 0, 0);
+    const DWORD action_age = action_tick
+                                 ? GetTickCount() -
+                                       static_cast<DWORD>(action_tick)
+                                 : 0;
+    LogEmergency(
+        LogLevel::kError,
+        "[Crash] MSVCR90 _purecall tid=%lu gameTid=%lu snapshotStage=%s actionType=%ld actionPhase=%ld actionRequestLow=%lu actionAgeMs=%lu",
         static_cast<unsigned long>(GetCurrentThreadId()),
-        static_cast<unsigned long>(g_game_thread), g_snapshot_stage);
+        static_cast<unsigned long>(g_game_thread), g_snapshot_stage,
+        InterlockedCompareExchange(&g_last_action_type, 0, 0),
+        InterlockedCompareExchange(&g_last_action_phase, 0, 0),
+        static_cast<unsigned long>(InterlockedCompareExchange(
+            &g_last_action_request_low, 0, 0)),
+        static_cast<unsigned long>(action_age));
     HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
     const FARPROC capture_address =
         kernel ? GetProcAddress(kernel, "RtlCaptureStackBackTrace") : nullptr;
@@ -191,7 +214,8 @@ int __cdecl HookedPurecall() {
       GetModuleFileNameA(module, path, MAX_PATH);
       const uintptr_t rva = reinterpret_cast<uintptr_t>(frames[index]) -
                             reinterpret_cast<uintptr_t>(module);
-      Log(LogLevel::kError,
+      LogEmergency(
+          LogLevel::kError,
           "[Crash] purecall frame=%u address=%p module=%p rva=%08lX path=%s",
           static_cast<unsigned>(index), frames[index], module,
           static_cast<unsigned long>(rva), path[0] ? path : "<unknown>");
@@ -200,6 +224,28 @@ int __cdecl HookedPurecall() {
   return g_original_purecall
              ? reinterpret_cast<PurecallFn>(g_original_purecall)()
              : 0;
+}
+
+DWORD WINAPI TickWatchdog(void*) {
+  while (InterlockedCompareExchange(&g_watchdog_stop, 0, 0) == 0) {
+    Sleep(250);
+    if (InterlockedCompareExchange(&g_tick_in_progress, 0, 0) == 0) continue;
+    const LONG started =
+        InterlockedCompareExchange(&g_tick_started_ms, 0, 0);
+    if (!started) continue;
+    const DWORD elapsed = GetTickCount() - static_cast<DWORD>(started);
+    if (elapsed < 2000) continue;
+    if (InterlockedCompareExchange(&g_watchdog_reported_start, started,
+                                   started) == started)
+      continue;
+    InterlockedExchange(&g_watchdog_reported_start, started);
+    const char* stage = g_snapshot_stage;
+    Log(LogLevel::kError,
+        "[Hang] game tick blocked for %lums tid=%lu stage=%s",
+        static_cast<unsigned long>(elapsed),
+        static_cast<unsigned long>(g_game_thread), stage ? stage : "unknown");
+  }
+  return 0;
 }
 
 void CopyText(char* destination, size_t capacity, const char* source) {
@@ -299,6 +345,7 @@ void ClearResolvedWorld(const char* reason) {
   g_game_replication_info = nullptr;
   g_pending_ability_release = {};
   g_world_ready_since = 0;
+  g_last_slow_state_read = 0;
   ++g_world_epoch;
   RejectStaleCommands(g_world_epoch);
   Log(LogLevel::kInfo, "[Lifecycle] world invalidated reason=%s epoch=%llu",
@@ -375,6 +422,7 @@ void ResolveStableObjects(ULONGLONG now) {
   g_game_replication_info = replication_info;
   if (world_changed) {
     g_world_ready_since = now;
+    g_last_slow_state_read = 0;
     g_pending_ability_release = {};
     ++g_world_epoch;
     RejectStaleCommands(g_world_epoch);
@@ -459,38 +507,63 @@ TransformerMode ReadMode(void* pawn) {
   return TransformerMode::kUnknown;
 }
 
-void ReadVitals(void* pawn, float* health, float* maximum, bool* downed,
+bool ReadVitals(void* pawn, float* health, float* maximum, bool* downed,
                 bool* alive) {
   *health = -1.0f;
   *maximum = -1.0f;
   *downed = false;
-  *alive = UnrealObjectValid(pawn) && !PendingDestroy(pawn);
-  UnrealReadFloatProperty(pawn, L"Health", health);
-  UnrealReadFloatProperty(pawn, L"HealthMax", maximum);
-  UnrealReadBoolProperty(pawn, L"_IsDowned", downed);
+  *alive = false;
+  const bool valid = UnrealObjectValid(pawn) && !PendingDestroy(pawn);
+  const bool have_health = UnrealReadFloatProperty(pawn, L"Health", health);
+  const bool have_maximum =
+      UnrealReadFloatProperty(pawn, L"HealthMax", maximum);
+  const bool have_downed =
+      UnrealReadBoolProperty(pawn, L"_IsDowned", downed);
   bool dead = false;
-  UnrealReadBoolProperty(pawn, L"_DeferredDied", &dead);
-  if (*health >= 0.0f) dead = dead || *health <= 0.0f;
-  *alive = *alive && !dead;
+  const bool have_dead =
+      UnrealReadBoolProperty(pawn, L"_DeferredDied", &dead);
+  const bool complete = valid && have_health && have_maximum && have_downed &&
+                        have_dead && std::isfinite(*health) &&
+                        std::isfinite(*maximum) && *maximum > 0.0f;
+  if (complete) dead = dead || *health <= 0.0f;
+  *alive = complete && !dead;
+  return complete;
 }
 
-bool ReadRestrictions(Snapshot* state) {
-  bool paused = false, combat = false, move_ignored = false, look_ignored = false;
+bool ReadRestrictions(Snapshot* state, bool require_complete = false) {
+  bool complete = UnrealObjectValid(g_world_info) &&
+                  UnrealObjectValid(g_controller) &&
+                  UnrealObjectValid(g_pawn);
+  bool paused = false, combat = false;
   bool movie = false, cinematic = false, nonmovie = false;
   bool disable_move = false, disable_look = false, frozen = false;
   bool matinee = false;
   void* pauser = nullptr;
-  UnrealReadObjectProperty(g_world_info, L"Pauser", &pauser);
+  complete = UnrealReadObjectProperty(g_world_info, L"Pauser", &pauser) &&
+             complete;
   paused = pauser != nullptr;
-  UnrealReadBoolProperty(g_controller, L"bFullScreenMoviePlaying", &movie);
-  UnrealReadBoolProperty(g_controller, L"bCinematicMode", &cinematic);
-  UnrealReadBoolProperty(g_controller, L"bNonMovieCinematicMode", &nonmovie);
-  UnrealReadBoolProperty(g_controller, L"bCinemaDisableInputMove", &disable_move);
-  UnrealReadBoolProperty(g_controller, L"bCinemaDisableInputLook", &disable_look);
-  UnrealReadBoolProperty(g_controller, L"bFrozen", &frozen);
-  UnrealReadBoolProperty(g_pawn, L"_MatineeAnimationPlaying", &matinee);
-  UnrealReadBoolProperty(g_controller, L"bIgnoreMoveInput", &move_ignored);
-  UnrealReadBoolProperty(g_controller, L"bIgnoreLookInput", &look_ignored);
+  complete = UnrealReadBoolProperty(g_controller, L"bFullScreenMoviePlaying",
+                                    &movie) && complete;
+  complete = UnrealReadBoolProperty(g_controller, L"bCinematicMode",
+                                    &cinematic) && complete;
+  complete = UnrealReadBoolProperty(g_controller, L"bNonMovieCinematicMode",
+                                    &nonmovie) && complete;
+  complete = UnrealReadBoolProperty(g_controller, L"bCinemaDisableInputMove",
+                                    &disable_move) && complete;
+  complete = UnrealReadBoolProperty(g_controller, L"bCinemaDisableInputLook",
+                                    &disable_look) && complete;
+  complete = UnrealReadBoolProperty(g_controller, L"bFrozen", &frozen) &&
+             complete;
+  complete = UnrealReadBoolProperty(g_pawn, L"_MatineeAnimationPlaying",
+                                    &matinee) && complete;
+  uint8_t move_ignored_value = 0;
+  uint8_t look_ignored_value = 0;
+  complete = UnrealReadByteProperty(g_controller, L"bIgnoreMoveInput",
+                                    &move_ignored_value) && complete;
+  complete = UnrealReadByteProperty(g_controller, L"bIgnoreLookInput",
+                                    &look_ignored_value) && complete;
+  const bool move_ignored = move_ignored_value != 0;
+  const bool look_ignored = look_ignored_value != 0;
   void* enemy = nullptr;
   combat = UnrealReadObjectProperty(g_controller, L"Enemy", &enemy) &&
            enemy && !PendingDestroy(enemy);
@@ -508,22 +581,29 @@ bool ReadRestrictions(Snapshot* state) {
     combat = true;
   void* ui_controller = nullptr;
   void* current_ui = nullptr;
-  const bool menu =
-      UnrealReadObjectProperty(g_controller, L"UIController", &ui_controller) &&
-      ui_controller &&
-      UnrealReadObjectProperty(ui_controller, L"_CurrentUI", &current_ui) &&
-      current_ui;
+  const bool have_ui_controller =
+      UnrealReadObjectProperty(g_controller, L"UIController", &ui_controller);
+  complete = have_ui_controller && complete;
+  bool have_current_ui = true;
+  if (ui_controller)
+    have_current_ui =
+        UnrealReadObjectProperty(ui_controller, L"_CurrentUI", &current_ui);
+  complete = have_current_ui && complete;
+  const bool menu = current_ui != nullptr;
   void* view_target = nullptr;
-  UnrealReadObjectProperty(g_controller, L"ViewTarget", &view_target);
+  complete = UnrealReadObjectProperty(g_controller, L"ViewTarget",
+                                      &view_target) && complete;
   const bool foreign_view = view_target && view_target != g_pawn;
   uint8_t interact_state = 0;
-  const bool interacting =
-      UnrealReadByteProperty(g_controller, L"PlayerInteractState",
-                             &interact_state) && interact_state >= 2;
+  const bool have_interact = UnrealReadByteProperty(
+      g_controller, L"PlayerInteractState", &interact_state);
+  complete = have_interact && complete;
+  const bool interacting = have_interact && interact_state >= 2;
   void* turret = nullptr;
-  const bool using_turret =
-      UnrealReadObjectProperty(g_controller, L"TurretInUse", &turret) &&
-      turret && !PendingDestroy(turret);
+  const bool have_turret =
+      UnrealReadObjectProperty(g_controller, L"TurretInUse", &turret);
+  complete = have_turret && complete;
+  const bool using_turret = have_turret && turret && !PendingDestroy(turret);
   state->paused = paused;
   state->in_combat = combat;
   state->in_cutscene = movie || cinematic || nonmovie || matinee || foreign_view;
@@ -534,7 +614,8 @@ bool ReadRestrictions(Snapshot* state) {
   // Combat is a normal state for the combat-page actions.  Only possession is
   // prohibited while fighting; transform, reload, weapon, ability, and grenade
   // requests still use their native per-action availability checks below.
-  return !(paused || state->in_cutscene || menu ||
+  return (!require_complete || complete) &&
+         !(paused || state->in_cutscene || menu ||
            state->in_scripted_sequence);
 }
 
@@ -654,8 +735,41 @@ void FillWeapon(void* weapon, void* active, WeaponState* output) {
                     sizeof(kWeaponAssets) / sizeof(kWeaponAssets[0])));
   UnrealReadIntProperty(weapon, L"AmmoClipCount", &output->magazine);
   UnrealReadIntProperty(weapon, L"ReserveAmmoCount", &output->reserve);
-  UnrealReadIntProperty(weapon, L"MaxAmmoClipCount",
-                        &output->magazine_capacity);
+  void* data = nullptr;
+  if (UnrealReadObjectProperty(weapon, L"Data", &data) && data) {
+    UnrealReadIntProperty(data, L"MaxAmmoClipCount",
+                          &output->magazine_capacity);
+    UnrealReadIntProperty(data, L"MaxAmmoCount", &output->reserve_capacity);
+    bool unlimited = false;
+    if (UnrealReadBoolProperty(data, L"bHasUnlimitedReserveAmmo",
+                               &unlimited))
+      output->unlimited_reserve = unlimited ? 1 : 0;
+    UnrealReadStructFloatProperty(data, L"HeatProperties", L"HeatMax",
+                                  &output->heat_capacity);
+  }
+  void* weapon_heat = nullptr;
+  if (UnrealReadObjectProperty(weapon, L"WeaponHeat", &weapon_heat) &&
+      weapon_heat) {
+    UnrealReadFloatProperty(weapon_heat, L"CurrentHeat", &output->heat);
+    float live_heat_capacity = -1.0f;
+    if (UnrealReadStructFloatProperty(weapon_heat, L"HeatProperties",
+                                      L"HeatMax", &live_heat_capacity) &&
+        std::isfinite(live_heat_capacity) && live_heat_capacity > 0.0f)
+      output->heat_capacity = live_heat_capacity;
+  }
+  output->heat_based = std::isfinite(output->heat_capacity) &&
+                               output->heat_capacity > 0.0f
+                           ? 1
+                           : 0;
+  int32_t ammo_increase = 0;
+  if (output->reserve_capacity >= 0 &&
+      UnrealReadIntProperty(weapon, L"AmmoIncrease", &ammo_increase)) {
+    const int64_t adjusted = static_cast<int64_t>(output->reserve_capacity) +
+                             static_cast<int64_t>(ammo_increase);
+    if (adjusted >= 0 && adjusted <= 1000000)
+      output->reserve_capacity = static_cast<int32_t>(adjusted);
+  }
+  output->clipless = output->magazine_capacity == 0 ? 1 : 0;
 }
 
 bool IsRangedWeapon(void* inventory) {
@@ -1053,6 +1167,10 @@ void SanitizeSnapshotMetrics(Snapshot* state) {
   sanitize(&state->max_health);
   sanitize(&state->resource);
   sanitize(&state->max_resource);
+  for (WeaponState& weapon : state->weapons) {
+    sanitize(&weapon.heat);
+    sanitize(&weapon.heat_capacity);
+  }
   for (AbilityState& ability : state->abilities) {
     sanitize(&ability.resource_cost);
     sanitize(&ability.cooldown_remaining);
@@ -1090,6 +1208,12 @@ Snapshot BuildSnapshot() {
   state.lifecycle = Lifecycle::kLive;
   state.local_controller_object_index = UnrealObjectIndex(g_controller);
   state.player_pawn_object_index = UnrealObjectIndex(g_pawn);
+  const bool reuse_slow_state =
+      have_previous && previous.world_epoch == g_world_epoch &&
+      previous.player_pawn_object_index == state.player_pawn_object_index &&
+      previous.lifecycle != Lifecycle::kWaitingForWorld &&
+      g_last_slow_state_read &&
+      now - g_last_slow_state_read < kSlowStateIntervalMs;
   state.mode = ReadMode(g_pawn);
   bool downed = false, alive = false;
   ReadVitals(g_pawn, &state.health, &state.max_health, &downed, &alive);
@@ -1099,10 +1223,21 @@ Snapshot BuildSnapshot() {
   if (state.health >= 0.0f && state.max_health > 0.0f)
     state.capabilities |= kCapVitals;
   if (state.mode != TransformerMode::kUnknown) state.capabilities |= kCapMode;
-  if (ResolveCharacter(g_controller, g_pawn, state.mode, state.character_name,
-                       sizeof(state.character_name), &state.faction,
-                       state.portrait_key, sizeof(state.portrait_key)))
+  if (reuse_slow_state) {
+    state.faction = previous.faction;
+    CopyText(state.character_name, sizeof(state.character_name),
+             previous.character_name);
+    CopyText(state.portrait_key, sizeof(state.portrait_key),
+             previous.portrait_key);
+    if (previous.capabilities & kCapIdentity)
+      state.capabilities |= kCapIdentity;
+  } else if (ResolveCharacter(g_controller, g_pawn, state.mode,
+                              state.character_name,
+                              sizeof(state.character_name), &state.faction,
+                              state.portrait_key,
+                              sizeof(state.portrait_key))) {
     state.capabilities |= kCapIdentity;
+  }
   g_snapshot_stage = "restrictions";
   const bool unrestricted = ReadRestrictions(&state);
   g_snapshot_stage = "abilities";
@@ -1117,21 +1252,33 @@ Snapshot BuildSnapshot() {
   state.inventory_manager_object_index = UnrealObjectIndex(inventory_manager);
   state.active_weapon_object_index = UnrealObjectIndex(active_weapon);
   state.grenade_object_index = UnrealObjectIndex(grenade);
-  g_snapshot_stage = "objective";
-  ReadObjective(&state);
-  g_snapshot_stage = "squad";
-  ReadSquad(&state, false);
+  if (reuse_slow_state) {
+    state.objective = previous.objective;
+    state.squad_count = previous.squad_count;
+    for (uint32_t slot = 0; slot < kSquadCapacity; ++slot)
+      state.squad[slot] = previous.squad[slot];
+    if (previous.capabilities & kCapObjective)
+      state.capabilities |= kCapObjective;
+    if (previous.capabilities & kCapSquad)
+      state.capabilities |= kCapSquad;
+  } else {
+    g_snapshot_stage = "objective";
+    ReadObjective(&state);
+    g_snapshot_stage = "squad";
+    ReadSquad(&state, false);
+    g_last_slow_state_read = now;
+  }
 
-  // Capability polling is direct-state-only.  ProcessEvent is entered solely
-  // by ExecuteCommand after a user tap, never while producing a snapshot.
+  // Capability polling is direct-state-only. Function lookup and ProcessEvent
+  // are reserved for ExecuteCommand after a tap; FindFunction is a UObject
+  // virtual and is unsafe as a recurring poll against transitioning objects.
   const bool can_act = unrestricted && alive && !downed;
   bool transforming_enabled = false;
   g_snapshot_stage = "capabilities";
   UnrealReadBoolProperty(g_pawn, L"_TransformingEnabled",
                          &transforming_enabled);
   if (can_act && transforming_enabled &&
-      state.mode != TransformerMode::kTransitioning &&
-      UnrealCanCallVoid(g_controller, L"PressTransform"))
+      state.mode != TransformerMode::kTransitioning)
     state.capabilities |= kCapTransformAction;
 
   int32_t active_reserve = -1;
@@ -1140,25 +1287,28 @@ Snapshot BuildSnapshot() {
   if (active_weapon) {
     UnrealReadIntProperty(active_weapon, L"ReserveAmmoCount", &active_reserve);
     UnrealReadIntProperty(active_weapon, L"AmmoClipCount", &active_clip);
-    UnrealReadIntProperty(active_weapon, L"MaxAmmoClipCount", &active_clip_max);
+    void* weapon_data = nullptr;
+    if (UnrealReadObjectProperty(active_weapon, L"Data", &weapon_data) &&
+        weapon_data)
+      UnrealReadIntProperty(weapon_data, L"MaxAmmoClipCount",
+                            &active_clip_max);
   }
   if (can_act && inventory_manager && active_weapon && active_reserve > 0 &&
       active_clip >= 0 && active_clip_max > 0 && active_clip < active_clip_max &&
-      IsRangedWeapon(active_weapon) &&
-      UnrealCanCallVoid(g_controller, L"ReloadWeapon"))
+      IsRangedWeapon(active_weapon))
     state.capabilities |= kCapReloadAction;
   if (can_act && active_weapon && IsRangedWeapon(active_weapon) &&
       state.weapons[0].object_index &&
-      state.weapons[1].object_index &&
-      UnrealCanCallVoid(g_controller, L"NextWeapon"))
+      state.weapons[1].object_index)
     state.capabilities |= kCapSwapAction;
   if (can_act && ability_manager &&
-      (state.abilities[0].available || state.abilities[1].available) &&
-      UnrealCanCallVoidInt(g_controller, L"TriggerAbility", L"number") &&
-      UnrealCanCallVoidInt(g_controller, L"UnTriggerAbility", L"number"))
+      (state.abilities[0].available || state.abilities[1].available))
     state.capabilities |= kCapAbilityActions;
-  if (can_act && grenade && state.grenade_count > 0 &&
-      UnrealCanCallVoid(g_controller, L"TossGrenade"))
+  // TossGrenade is implemented by the PlayerWalking state. Vehicle/plane/tank
+  // states fall back to an empty controller implementation, so never expose a
+  // grenade action outside robot form.
+  if (can_act && state.mode == TransformerMode::kRobot && grenade &&
+      state.grenade_count > 0)
     state.capabilities |= kCapGrenadeAction;
 
   // Squad possession remains disabled unless the native squad record and its
@@ -1183,12 +1333,22 @@ bool SwitchSquadMember(const Command& command, const Snapshot& state) {
 template <typename Callback>
 bool InvokeAction(const Command& command, const char* stage, Callback callback) {
   g_snapshot_stage = stage;
+  InterlockedExchange(&g_last_action_type,
+                      static_cast<LONG>(command.type));
+  InterlockedExchange(&g_last_action_request_low,
+                      static_cast<LONG>(command.request_id & 0xFFFFFFFFu));
+  InterlockedExchange(&g_last_action_tick,
+                      static_cast<LONG>(GetTickCount()));
+  // 2 = native invocation entered, 3 = returned successfully, 4 = returned
+  // false. The purecall hook can read these without doing game-thread I/O.
+  InterlockedExchange(&g_last_action_phase, 2);
   Log(LogLevel::kInfo,
       "[Action] request=%llu type=%u invocation=begin target=%lu",
       static_cast<unsigned long long>(command.request_id),
       static_cast<unsigned>(command.type),
       static_cast<unsigned long>(command.expected_target_object_index));
   const bool result = callback();
+  InterlockedExchange(&g_last_action_phase, result ? 3 : 4);
   g_snapshot_stage = "idle";
   Log(result ? LogLevel::kInfo : LogLevel::kWarning,
       "[Action] request=%llu type=%u invocation=end result=%s",
@@ -1203,8 +1363,10 @@ bool CurrentPlayableState() {
   bool alive = false;
   float health = -1.0f;
   float maximum = -1.0f;
-  ReadVitals(g_pawn, &health, &maximum, &downed, &alive);
-  return alive && !downed && ReadRestrictions(&restrictions);
+  const bool vitals_complete =
+      ReadVitals(g_pawn, &health, &maximum, &downed, &alive);
+  return vitals_complete && alive && !downed &&
+         ReadRestrictions(&restrictions, true);
 }
 
 bool CurrentInventory(void** manager_output, void** active_output) {
@@ -1213,15 +1375,36 @@ bool CurrentInventory(void** manager_output, void** active_output) {
   *active_output = nullptr;
   void* manager = nullptr;
   if (!UnrealReadObjectProperty(g_pawn, L"InvManager", &manager) ||
-      !manager)
+      !manager || PendingDestroy(manager))
     return false;
   void* active = nullptr;
   UnrealReadObjectProperty(manager, L"CurrentWeapon", &active);
   if (!active) UnrealReadObjectProperty(g_pawn, L"Weapon", &active);
-  if (!active || !UnrealObjectValid(active)) return false;
+  if (!active || !UnrealObjectValid(active) || PendingDestroy(active))
+    return false;
   *manager_output = manager;
   *active_output = active;
   return true;
+}
+
+bool HasAlternateRangedWeapon(void* manager, void* active) {
+  if (!manager || !active || PendingDestroy(manager) ||
+      PendingDestroy(active))
+    return false;
+  void* inventory = nullptr;
+  if (!UnrealReadObjectProperty(manager, L"InventoryChain", &inventory))
+    return false;
+  for (uint32_t examined = 0; inventory && examined < 64; ++examined) {
+    if (inventory != active && !PendingDestroy(inventory) &&
+        IsRangedWeapon(inventory))
+      return true;
+    void* next = nullptr;
+    if (!UnrealReadObjectProperty(inventory, L"Inventory", &next) ||
+        next == inventory)
+      return false;
+    inventory = next;
+  }
+  return false;
 }
 
 bool CurrentAbilityReady(int32_t slot, const Command& command,
@@ -1244,14 +1427,16 @@ bool CurrentAbilityReady(int32_t slot, const Command& command,
                               &abilities_enabled) || !abilities_enabled)
     return false;
   bool requires_robot = false;
-  if (UnrealReadBoolProperty(ability, L"RequiresRobotForm",
-                             &requires_robot) && requires_robot &&
-      ReadMode(g_pawn) != TransformerMode::kRobot)
+  if (!UnrealReadBoolProperty(ability, L"RequiresRobotForm",
+                              &requires_robot) ||
+      (requires_robot &&
+       ReadMode(g_pawn) != TransformerMode::kRobot))
     return false;
   bool requires_server_start = false;
-  if (UnrealReadBoolProperty(ability, L"RequiresServerStartCooldown",
-                             &requires_server_start) &&
-      requires_server_start) {
+  if (!UnrealReadBoolProperty(ability, L"RequiresServerStartCooldown",
+                              &requires_server_start))
+    return false;
+  if (requires_server_start) {
     bool server_can_start = false;
     if (!UnrealReadBoolProperty(ability, L"bServerCanStartCooldown",
                                 &server_can_start) || !server_can_start)
@@ -1276,13 +1461,15 @@ bool CurrentAbilityReady(int32_t slot, const Command& command,
       !UnrealReadFloatArrayElement(spam_cooldowns, slot, &spam_cooldown) ||
       !std::isfinite(spam_cooldown) || spam_cooldown > 0.0f)
     return false;
-  return UnrealCanCallVoidInt(g_controller, L"TriggerAbility", L"number") &&
-         UnrealCanCallVoidInt(g_controller, L"UnTriggerAbility", L"number");
+  // Confirm the matching release exists before issuing the press. Trigger is
+  // prepared exactly once by UnrealCallVoidInt in ExecuteCommand.
+  return UnrealCanCallVoidInt(g_controller, L"UnTriggerAbility", L"number");
 }
 
 bool CurrentGrenade(const Command& command, const Snapshot& state) {
   if (!state.inventory_manager_object_index || !state.grenade_object_index)
     return false;
+  if (ReadMode(g_pawn) != TransformerMode::kRobot) return false;
   void* manager = nullptr;
   if (!UnrealReadObjectProperty(g_pawn, L"InvManager", &manager) || !manager ||
       UnrealObjectIndex(manager) != state.inventory_manager_object_index)
@@ -1312,7 +1499,7 @@ bool CurrentGrenade(const Command& command, const Snapshot& state) {
   int32_t count = -1;
   if (!UnrealReadIntProperty(grenade, L"AmmoCount", &count))
     UnrealReadIntProperty(grenade, L"ReserveAmmoCount", &count);
-  return count > 0 && UnrealCanCallVoid(g_controller, L"TossGrenade");
+  return count > 0;
 }
 
 void ScheduleAbilityRelease(int32_t slot) {
@@ -1327,7 +1514,9 @@ void ScheduleAbilityRelease(int32_t slot) {
   g_pending_ability_release.due_at = GetTickCount64() + 1;
 }
 
-bool AuthoritativeIdentityMatches(const PendingAbilityRelease& release) {
+bool AuthoritativeIdentityMatches(uint64_t world_epoch,
+                                  uint32_t controller_object_index,
+                                  uint32_t pawn_object_index) {
   if (!UnrealObjectValid(g_game_engine)) return false;
   UnrealArrayView players;
   void* local_player = nullptr;
@@ -1342,16 +1531,22 @@ bool AuthoritativeIdentityMatches(const PendingAbilityRelease& release) {
          controller && !PendingDestroy(controller) &&
          UnrealObjectIsA(controller, L"TnPlayerControllerCampaign") &&
          controller == g_controller &&
-         UnrealObjectIndex(controller) == release.controller_object_index &&
+         UnrealObjectIndex(controller) == controller_object_index &&
          (pawn = ControllerPawn(controller)) != nullptr &&
          !PendingDestroy(pawn) &&
          UnrealObjectIsA(pawn, L"TnPlayerPawn") &&
          pawn == g_pawn &&
-         UnrealObjectIndex(pawn) == release.pawn_object_index &&
+         UnrealObjectIndex(pawn) == pawn_object_index &&
          PawnController(pawn) == controller &&
          UnrealReadObjectProperty(controller, L"WorldInfo", &world) &&
          world && UnrealObjectIsA(world, L"WorldInfo") &&
-         world == g_world_info && release.world_epoch == g_world_epoch;
+         world == g_world_info && world_epoch == g_world_epoch;
+}
+
+bool AuthoritativeIdentityMatches(const PendingAbilityRelease& release) {
+  return AuthoritativeIdentityMatches(
+      release.world_epoch, release.controller_object_index,
+      release.pawn_object_index);
 }
 
 void ProcessPendingAbilityRelease() {
@@ -1370,17 +1565,6 @@ void ProcessPendingAbilityRelease() {
         "[Action] ability release dropped slot=%d epoch=%llu identity=%u",
         release.slot, static_cast<unsigned long long>(release.world_epoch),
         identity_matches ? 1u : 0u);
-    return;
-  }
-  if (!UnrealCanCallVoidInt(g_controller, L"UnTriggerAbility", L"number")) {
-    if (++g_pending_ability_release.attempts >= 3) {
-      g_pending_ability_release = {};
-      Log(LogLevel::kWarning,
-          "[Action] ability release abandoned slot=%d after preflight retries",
-          release.slot);
-    } else {
-      g_pending_ability_release.due_at = GetTickCount64() + 1;
-    }
     return;
   }
   g_snapshot_stage = "command-ability-release";
@@ -1410,6 +1594,9 @@ bool ExecuteCommand(const Command& command, const Snapshot& state) {
       command.expected_player_pawn_object_index !=
           state.player_pawn_object_index ||
       !UnrealObjectValid(g_controller) || !UnrealObjectValid(g_pawn) ||
+      !AuthoritativeIdentityMatches(
+          command.world_epoch, command.expected_controller_object_index,
+          command.expected_player_pawn_object_index) ||
       UnrealObjectIndex(g_controller) !=
           command.expected_controller_object_index ||
       UnrealObjectIndex(g_pawn) != command.expected_player_pawn_object_index ||
@@ -1426,8 +1613,7 @@ bool ExecuteCommand(const Command& command, const Snapshot& state) {
         if (!UnrealReadBoolProperty(g_pawn, L"_TransformingEnabled",
                                     &transforming_enabled) ||
             !transforming_enabled ||
-            ReadMode(g_pawn) == TransformerMode::kTransitioning ||
-            !UnrealCanCallVoid(g_controller, L"PressTransform"))
+            ReadMode(g_pawn) == TransformerMode::kTransitioning)
           return false;
       }
       return InvokeAction(command, "command-transform", [] {
@@ -1449,9 +1635,14 @@ bool ExecuteCommand(const Command& command, const Snapshot& state) {
           !IsRangedWeapon(active) ||
           !UnrealReadIntProperty(active, L"ReserveAmmoCount", &reserve) ||
           !UnrealReadIntProperty(active, L"AmmoClipCount", &clip) ||
-          !UnrealReadIntProperty(active, L"MaxAmmoClipCount", &clip_max) ||
-          reserve <= 0 || clip < 0 || clip_max <= 0 || clip >= clip_max ||
-          !UnrealCanCallVoid(g_controller, L"ReloadWeapon"))
+          !([&] {
+            void* weapon_data = nullptr;
+            return UnrealReadObjectProperty(active, L"Data", &weapon_data) &&
+                   weapon_data &&
+                   UnrealReadIntProperty(weapon_data, L"MaxAmmoClipCount",
+                                         &clip_max);
+          }()) ||
+          reserve <= 0 || clip < 0 || clip_max <= 0 || clip >= clip_max)
         return false;
       return InvokeAction(command, "command-reload", [] {
         return UnrealCallVoid(g_controller, L"ReloadWeapon");
@@ -1467,7 +1658,7 @@ bool ExecuteCommand(const Command& command, const Snapshot& state) {
           UnrealObjectIndex(manager) != state.inventory_manager_object_index ||
           UnrealObjectIndex(active) != command.expected_target_object_index ||
           !IsRangedWeapon(active) ||
-          !UnrealCanCallVoid(g_controller, L"NextWeapon"))
+          !HasAlternateRangedWeapon(manager, active))
         return false;
       return InvokeAction(command, "command-swap", [] {
         return UnrealCallVoid(g_controller, L"NextWeapon");
@@ -1513,8 +1704,17 @@ bool ExecuteCommand(const Command& command, const Snapshot& state) {
 void ProcessOneQueuedCommand() {
   Command command;
   if (!PollCommand(&command)) return;
+  InterlockedExchange(&g_last_action_type,
+                      static_cast<LONG>(command.type));
+  InterlockedExchange(&g_last_action_request_low,
+                      static_cast<LONG>(command.request_id & 0xFFFFFFFFu));
+  InterlockedExchange(&g_last_action_tick,
+                      static_cast<LONG>(GetTickCount()));
+  // 1 = dequeued for authoritative validation.
+  InterlockedExchange(&g_last_action_phase, 1);
   Snapshot state;
   if (!CopyLatestSnapshot(&state)) {
+    InterlockedExchange(&g_last_action_phase, 5);
     Log(LogLevel::kWarning,
         "[Action] request=%llu type=%u result=rejected reason=no-snapshot",
         static_cast<unsigned long long>(command.request_id),
@@ -1523,6 +1723,8 @@ void ProcessOneQueuedCommand() {
   }
   UnrealBeginGameThreadPulse();
   const bool accepted = ExecuteCommand(command, state);
+  if (InterlockedCompareExchange(&g_last_action_phase, 0, 0) == 1)
+    InterlockedExchange(&g_last_action_phase, accepted ? 3 : 5);
   Log(accepted ? LogLevel::kInfo : LogLevel::kWarning,
       "[Action] request=%llu type=%u result=%s epoch=%llu",
       static_cast<unsigned long long>(command.request_id),
@@ -1556,10 +1758,14 @@ void GameThreadPulse() {
     }
     return;
   }
+  Snapshot previous;
+  const bool have_previous = CopyLatestSnapshot(&previous);
   Snapshot state = BuildSnapshot();
   SanitizeSnapshotMetrics(&state);
-  const bool published = PublishSnapshot(state);
-  if (!published &&
+  const bool changed = !have_previous ||
+                       !SnapshotContentEqual(state, previous);
+  const bool published = changed && PublishSnapshot(state);
+  if (changed && !published &&
       now - g_last_snapshot_reject_log >= kResolveDiagnosticIntervalMs) {
     g_last_snapshot_reject_log = now;
     Log(LogLevel::kWarning,
@@ -1568,7 +1774,7 @@ void GameThreadPulse() {
         static_cast<unsigned long long>(state.world_epoch),
         static_cast<unsigned>(state.lifecycle));
   }
-  if (published && state.lifecycle == Lifecycle::kLive &&
+  if (state.lifecycle == Lifecycle::kLive &&
       now - g_last_live_summary_log >= kLiveSummaryIntervalMs) {
     g_last_live_summary_log = now;
     Log(LogLevel::kInfo,
@@ -1593,24 +1799,46 @@ void GameThreadPulse() {
 void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
   const bool outermost =
       InterlockedCompareExchange(&g_tick_in_progress, 1, 0) == 0;
+  if (outermost &&
+      InterlockedCompareExchange(&g_hook_stopping, 0, 0) == 0) {
+    g_game_engine = self;
+    InterlockedExchange(&g_tick_started_ms,
+                        static_cast<LONG>(GetTickCount()));
+    // Bottom-screen actions are native input edges. Dispatch them before the
+    // world tick so the engine can complete controller, pawn, animation,
+    // collision and render-state transitions inside its normal frame. The old
+    // post-Tick dispatch let Transform mutate render-backed pawn state after
+    // the frame had already been submitted, producing an asynchronous R6025
+    // on WFC's rendering thread.
+    if (g_game_thread && GetCurrentThreadId() == g_game_thread) {
+      g_snapshot_stage = "pending-ability-release";
+      ProcessPendingAbilityRelease();
+      g_snapshot_stage = "queued-command";
+      ProcessOneQueuedCommand();
+    }
+    g_snapshot_stage = "original-tick";
+  }
   if (InterlockedCompareExchange(&g_tick_entry_logged, 1, 0) == 0) {
     Log(LogLevel::kInfo,
         "[Lifecycle] first detoured game tick entered tid=%lu self=%p original=%p",
         static_cast<unsigned long>(GetCurrentThreadId()), self, g_original_tick);
   }
   WfcCallThisTick(g_original_tick, self, delta);
+  if (outermost &&
+      InterlockedCompareExchange(&g_hook_stopping, 0, 0) != 0) {
+    g_snapshot_stage = "idle";
+    InterlockedExchange(&g_tick_started_ms, 0);
+    InterlockedExchange(&g_tick_in_progress, 0);
+    return;
+  }
+  if (outermost) g_snapshot_stage = "bridge-pulse";
   if (InterlockedCompareExchange(&g_tick_return_logged, 1, 0) == 0) {
     Log(LogLevel::kInfo, "[Lifecycle] first original game tick returned");
   }
-  g_game_engine = self;
   if (outermost) {
     GameThreadPulse();
-    // UGameEngine::Tick is expected on the game thread, but never allow a
-    // reflected action if this virtual is unexpectedly reached elsewhere.
-    if (g_game_thread && GetCurrentThreadId() == g_game_thread) {
-      ProcessPendingAbilityRelease();
-      ProcessOneQueuedCommand();
-    }
+    g_snapshot_stage = "idle";
+    InterlockedExchange(&g_tick_started_ms, 0);
     InterlockedExchange(&g_tick_in_progress, 0);
   }
 }
@@ -1620,6 +1848,7 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
 bool InitializeGameBridge(HMODULE executable) {
   if (!executable || g_tick_slot) return g_tick_slot != nullptr;
   g_executable = executable;
+  InterlockedExchange(&g_hook_stopping, 0);
   if (!InitializeUnrealBridge(executable)) return false;
   void** purecall_slot = FindIatSlot(executable, "MSVCR90.dll", "_purecall");
   if (purecall_slot &&
@@ -1665,6 +1894,13 @@ bool InitializeGameBridge(HMODULE executable) {
     return false;
   }
   g_tick_slot = slot;
+  InterlockedExchange(&g_watchdog_stop, 0);
+  g_watchdog_thread = CreateThread(nullptr, 0, TickWatchdog, nullptr, 0,
+                                   nullptr);
+  if (!g_watchdog_thread)
+    Log(LogLevel::kWarning,
+        "[Lifecycle] game-tick watchdog unavailable error=%lu",
+        static_cast<unsigned long>(GetLastError()));
   Log(LogLevel::kInfo,
       "[Lifecycle] exact-build UGameEngine::Tick vtable hook installed function=%08lX slot=%08lX",
       static_cast<unsigned long>(kGameEngineTickRva),
@@ -1673,9 +1909,28 @@ bool InitializeGameBridge(HMODULE executable) {
 }
 
 void ShutdownGameBridge() {
+  InterlockedExchange(&g_hook_stopping, 1);
   if (g_tick_slot) {
     RestoreIatHook(g_tick_slot, reinterpret_cast<void*>(&HookedTick),
                    g_original_tick);
+  }
+  const ULONGLONG wait_until = GetTickCount64() + 2000;
+  while (InterlockedCompareExchange(&g_tick_in_progress, 0, 0) != 0 &&
+         GetTickCount64() < wait_until)
+    Sleep(1);
+  const bool tick_idle =
+      InterlockedCompareExchange(&g_tick_in_progress, 0, 0) == 0;
+  InterlockedExchange(&g_watchdog_stop, 1);
+  if (g_watchdog_thread) {
+    WaitForSingleObject(g_watchdog_thread, 1000);
+    CloseHandle(g_watchdog_thread);
+    g_watchdog_thread = nullptr;
+  }
+  if (!tick_idle) {
+    Log(LogLevel::kWarning,
+        "[Lifecycle] bridge teardown deferred: hooked game tick is still active stage=%s",
+        g_snapshot_stage ? g_snapshot_stage : "unknown");
+    return;
   }
   if (g_purecall_slot) {
     RestoreIatHook(g_purecall_slot, reinterpret_cast<void*>(&HookedPurecall),
@@ -1690,10 +1945,18 @@ void ShutdownGameBridge() {
   g_tick_return_logged = 0;
   g_purecall_logged = 0;
   g_tick_in_progress = 0;
+  g_hook_stopping = 0;
+  g_tick_started_ms = 0;
+  g_watchdog_reported_start = 0;
+  g_last_action_type = 0;
+  g_last_action_phase = 0;
+  g_last_action_tick = 0;
+  g_last_action_request_low = 0;
   g_executable = nullptr;
   g_game_thread = 0;
   g_last_pulse = 0;
   g_last_publish = 0;
+  g_last_slow_state_read = 0;
   g_resolve_retry_at = 0;
   g_world_ready_since = 0;
   g_last_resolve_diagnostic = 0;

@@ -123,9 +123,9 @@ bool DrawCachedAsset(HDC dc, const char* key, const RECT& bounds) {
 
   Gdiplus::Graphics graphics(dc);
   graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
-  graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
-  graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
+  graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+  graphics.SetInterpolationMode(Gdiplus::InterpolationModeBilinear);
+  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
   return graphics.DrawImage(image, left, top, width, height) == Gdiplus::Ok;
 }
 
@@ -137,28 +137,33 @@ bool DrawCachedAssetCover(HDC dc, const char* key, const RECT& bounds) {
 
   const int available_width = bounds.right - bounds.left;
   const int available_height = bounds.bottom - bounds.top;
-  const double scale = std::max(
-      static_cast<double>(available_width) / image->GetWidth(),
-      static_cast<double>(available_height) / image->GetHeight());
-  const int width = std::max(1, static_cast<int>(image->GetWidth() * scale));
-  const int height = std::max(1, static_cast<int>(image->GetHeight() * scale));
-  const int left = bounds.left + (available_width - width) / 2;
-  const int top = bounds.top + (available_height - height) / 2;
-
-  const int saved = SaveDC(dc);
-  if (!saved) return false;
-  IntersectClipRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom);
-  bool drawn = false;
-  {
-    Gdiplus::Graphics graphics(dc);
-    graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
-    graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighQuality);
-    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
-    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHighQuality);
-    drawn = graphics.DrawImage(image, left, top, width, height) == Gdiplus::Ok;
+  const double source_width = static_cast<double>(image->GetWidth());
+  const double source_height = static_cast<double>(image->GetHeight());
+  const double source_aspect = source_width / source_height;
+  const double target_aspect = static_cast<double>(available_width) /
+                               static_cast<double>(available_height);
+  Gdiplus::REAL source_x = 0.0f;
+  Gdiplus::REAL source_y = 0.0f;
+  Gdiplus::REAL crop_width = static_cast<Gdiplus::REAL>(source_width);
+  Gdiplus::REAL crop_height = static_cast<Gdiplus::REAL>(source_height);
+  if (source_aspect > target_aspect) {
+    crop_width = static_cast<Gdiplus::REAL>(source_height * target_aspect);
+    source_x = static_cast<Gdiplus::REAL>((source_width - crop_width) * 0.5);
+  } else {
+    crop_height = static_cast<Gdiplus::REAL>(source_width / target_aspect);
+    source_y = static_cast<Gdiplus::REAL>((source_height - crop_height) * 0.5);
   }
-  RestoreDC(dc, saved);
-  return drawn;
+
+  Gdiplus::Graphics graphics(dc);
+  graphics.SetCompositingMode(Gdiplus::CompositingModeSourceOver);
+  graphics.SetCompositingQuality(Gdiplus::CompositingQualityHighSpeed);
+  graphics.SetInterpolationMode(Gdiplus::InterpolationModeBilinear);
+  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+  const Gdiplus::Rect destination(bounds.left, bounds.top, available_width,
+                                  available_height);
+  return graphics.DrawImage(image, destination, source_x, source_y,
+                            crop_width, crop_height,
+                            Gdiplus::UnitPixel) == Gdiplus::Ok;
 }
 
 }  // namespace wfcds

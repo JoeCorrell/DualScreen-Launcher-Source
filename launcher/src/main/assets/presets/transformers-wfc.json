@@ -23,7 +23,7 @@
   "box64Version": "0.4.2",
   "fexcorePreset": "PERFORMANCE",
   "fexcoreVersion": "FEXCore-2608-stable-0",
-  "box64Preset": "COMPATIBILITY",
+  "box64Preset": "PERFORMANCE",
   "desktopTheme": "DARK,IMAGE,#0277bd",
   "dpi": 96,
   "extraData": {

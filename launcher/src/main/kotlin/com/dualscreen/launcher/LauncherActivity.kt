@@ -23,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.lifecycleScope
+import com.dualscreen.launcher.access.AccessGate
+import com.dualscreen.launcher.access.AccessState
 import com.dualscreen.launcher.session.GameSessionActivity
 import com.dualscreen.launcher.switch.SwitchGameDefinition
 import com.thor.core.display.DisplayTopology
@@ -31,24 +33,47 @@ import kotlinx.coroutines.launch
 
 class LauncherActivity : ComponentActivity() {
     private val model: LauncherViewModel by viewModels()
+    private val access get() = (application as DualScreenLauncherApplication).access
     private var lowerPanel: LauncherPanelPresentation? = null
     private var storagePermissionPrompted = false
+    private var launcherStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        ensureSharedStorageAccess()
         window.decorView.systemUiVisibility = FULLSCREEN_FLAGS
         setContent {
             LauncherTheme {
-                LauncherScreen(
-                    model = model,
-                    onPlay = { game, installed -> launch(game, installed, configuration = false) },
-                    onConfigure = { game, installed -> launch(game, installed, configuration = true) },
-                    onPlaySwitch = ::launchSwitch,
-                )
+                AccessGate(access) {
+                    LauncherScreen(
+                        model = model,
+                        onPlay = { game, installed -> launch(game, installed, configuration = false) },
+                        onConfigure = { game, installed -> launch(game, installed, configuration = true) },
+                        onPlaySwitch = ::launchSwitch,
+                    )
+                }
             }
         }
+        lifecycleScope.launch {
+            access.state.collectLatest { state ->
+                if (state is AccessState.Granted) {
+                    startLauncherAfterAccess()
+                } else {
+                    lowerPanel?.dismiss()
+                    lowerPanel = null
+                }
+            }
+        }
+        handleAccessCallback(intent)
+    }
+
+    private fun startLauncherAfterAccess() {
+        if (launcherStarted) {
+            if (hasWindowFocus()) showLowerPanel()
+            return
+        }
+        launcherStarted = true
+        ensureSharedStorageAccess()
         lifecycleScope.launch {
             model.installed.collectLatest { ready ->
                 lowerPanel?.update(ready, model.progress.value, model.saveProgress.value, model.launchStatus.value)
@@ -69,6 +94,8 @@ class LauncherActivity : ComponentActivity() {
                 lowerPanel?.update(model.installed.value, model.progress.value, model.saveProgress.value, launch)
             }
         }
+        model.refreshUpdates()
+        showLowerPanel()
     }
 
     /**
@@ -106,8 +133,26 @@ class LauncherActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         window.decorView.systemUiVisibility = FULLSCREEN_FLAGS
-        model.refreshUpdates()
-        showLowerPanel()
+        if (launcherStarted && access.state.value is AccessState.Granted) {
+            model.refreshUpdates()
+            showLowerPanel()
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAccessCallback(intent)
+    }
+
+    private fun handleAccessCallback(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme == "dualscreen" && uri.host == "auth" && uri.path == "/callback") {
+            // Do not retain the one-time OAuth completion secret in the
+            // Activity's saved Intent after handing it to the access manager.
+            setIntent(Intent(intent).setData(null))
+            lifecycleScope.launch { access.handleOAuthCallback(uri) }
+        }
     }
 
     override fun onPause() {
@@ -183,7 +228,7 @@ class LauncherActivity : ComponentActivity() {
 }
 
 @Composable
-private fun LauncherTheme(content: @Composable () -> Unit) {
+internal fun LauncherTheme(content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = androidx.compose.material3.darkColorScheme(
             primary = Color(0xFFF4AA43),

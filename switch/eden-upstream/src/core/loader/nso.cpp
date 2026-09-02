@@ -109,10 +109,11 @@ constexpr u32 BotwEatGameplayEpilogueOffset = 0x00E3ED98;
 constexpr u32 BotwUpdateCookEffectsOffset = 0x00CF05F0;
 constexpr u32 BotwEatNotifyOffset = 0x00D4279C;
 constexpr u32 BotwEatNotifyStorageOffset = 0x01E15FB8;
-// The always-live gameplay notifier owns a fully registered actor-message sender here.  Unlike
-// the pause-menu sender used by the vanilla Hold button, it exists without opening that menu.
-constexpr u32 BotwGameplayMessageSenderOffset = 0x198;
-constexpr u32 BotwGameplayMessageDispatcherOffset = BotwGameplayMessageSenderOffset + 0x08;
+// Actor::mMsgTransceiver is always live on Link. Using it makes the hold message originate from
+// Link, just like the pause sender's player-bound identity, so CarryBox keeps its parent while
+// Link moves. A generic gameplay sender is registered but identifies the wrong actor.
+constexpr u32 BotwPlayerMessageSenderOffset = 0x5E0;
+constexpr u32 BotwPlayerMessageDispatcherOffset = BotwPlayerMessageSenderOffset + 0x08;
 constexpr u32 BotwEatScreenRegistryOffset = 0x01E374B8;
 constexpr u32 BotwActorMessageSendOffset = 0x0154C61C;
 constexpr u32 BotwCaptureSpawnedActorOffset = 0x00CC12F0;
@@ -1147,9 +1148,10 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const auto branch_hold_empty = emit(0);
     emit_stage(0x30);
     emit_unlock();
-    emit_load_address(0, BotwEatNotifyStorageOffset);
-    const auto branch_hold_no_gameplay_notifier = emit(0);
-    emit(EncodeLoadUnsigned64(8, 0, BotwGameplayMessageDispatcherOffset));
+    emit_page_address(14, mailbox_main_offset);
+    emit(EncodeLoadUnsigned64(0, 14, 0x110));
+    const auto branch_hold_no_player = emit(0);
+    emit(EncodeLoadUnsigned64(8, 0, BotwPlayerMessageDispatcherOffset));
     const auto branch_hold_message_sender_unavailable = emit(0);
     emit(EncodeLoadUnsigned64(8, 8, 0));
     const auto branch_hold_message_dispatcher_unavailable = emit(0);
@@ -1181,9 +1183,10 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit(0xAA0503E0U);
     emit_call(BotwGetActorMessageIdOffset);
     emit(0xAA0003E1U);
-    emit_load_address(0, BotwEatNotifyStorageOffset);
+    emit_page_address(14, mailbox_main_offset);
+    emit(EncodeLoadUnsigned64(0, 14, 0x110));
     const auto branch_hold_no_sender_after_mutation = emit(0);
-    emit(EncodeAddImmediate64(0, 0, BotwGameplayMessageSenderOffset));
+    emit(EncodeAddImmediate64(0, 0, BotwPlayerMessageSenderOffset));
     emit_page_address(14, mailbox_main_offset);
     emit(EncodeAddImmediate64(2, 14, BotwHoldMessageScratchOffset));
     emit(0x52800068U);
@@ -1581,8 +1584,8 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     code[branch_hold_wrong_type] =
         EncodeConditionalBranch(1, branch_hold_wrong_type, unlock_reject);
     code[branch_hold_empty] = EncodeConditionalBranch(0xB, branch_hold_empty, unlock_reject);
-    code[branch_hold_no_gameplay_notifier] =
-        EncodeCompareBranchZero(true, 0, branch_hold_no_gameplay_notifier, reject_stack);
+    code[branch_hold_no_player] =
+        EncodeCompareBranchZero(true, 0, branch_hold_no_player, reject_stack);
     code[branch_hold_message_sender_unavailable] =
         EncodeCompareBranchZero(true, 8, branch_hold_message_sender_unavailable, reject_stack);
     code[branch_hold_message_dispatcher_unavailable] =

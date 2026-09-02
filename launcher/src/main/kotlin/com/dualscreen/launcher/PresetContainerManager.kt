@@ -366,7 +366,7 @@ class PresetContainerManager(private val context: Context) {
         private const val KEY_CONTAINER_ID = "containerId"
         private const val KEY_FINGERPRINT = "fingerprint"
         private const val KEY_MATERIALIZATION_REVISION = "companionPresetMaterialization"
-        private const val MATERIALIZATION_REVISION = "3"
+        private const val MATERIALIZATION_REVISION = "4"
 
         private fun presetFor(game: SupportedGame): PresetSpecification = when (game.id) {
             "stardew-valley" -> STARDEW_PRESET

@@ -38,14 +38,14 @@ class AssetIntegrityTest {
     }
 
     @Test
-    fun transformersPresetPinsTheExactWemuBox64BuildAndStableDynarecProfile() {
+    fun transformersPresetPinsTheExactWemuBox64BuildAndPerformanceProfile() {
         val games = JSONObject(File(assets, "presets/games.json").readText())
         val transformers = JSONObject(File(assets, "presets/transformers-wfc.json").readText())
 
         assertThat(transformers.getString("name")).isEqualTo("Transformers WFC")
         assertThat(transformers.getString("emulator")).isEqualTo("box64")
         assertThat(transformers.getString("box64Version")).isEqualTo("0.4.2")
-        assertThat(transformers.getString("box64Preset")).isEqualTo("COMPATIBILITY")
+        assertThat(transformers.getString("box64Preset")).isEqualTo("PERFORMANCE")
         assertThat(transformers.getJSONObject("extraData").getString("box64Version"))
             .isEqualTo("0.4.2")
         assertThat(transformers.getJSONObject("extraData").getString("wemuPinnedBox64Runtime"))
@@ -55,9 +55,8 @@ class AssetIntegrityTest {
         games.remove("name")
         transformers.remove("name")
         transformers.put("emulator", games.getString("emulator"))
-        // WFC raised R6025 and intermittently froze with the aggressive
-        // BIGBLOCK/CALLRET profile. It intentionally uses WEMU's proven
-        // compatibility settings; all unrelated game defaults still match.
+        // WFC uses the requested Box64 performance profile. All unrelated
+        // game defaults still match the captured WEMU container.
         transformers.put("box64Preset", games.getString("box64Preset"))
         transformers.put("wincomponents", games.getString("wincomponents"))
         transformers.getJSONObject("extraData").remove("wemuPinnedBox64Runtime")
