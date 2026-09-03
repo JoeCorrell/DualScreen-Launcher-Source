@@ -1247,12 +1247,14 @@ bool UnrealBridgeReady() {
 }
 
 void UnrealBeginGameThreadPulse() {
-  // VirtualQuery is exceptionally expensive under Wine/Box64. Cache committed
-  // regions only for this bounded game-thread pulse so repeated validation
-  // remains safe across level transitions while avoiding hundreds of
-  // duplicate queries. The caller runs this before native Tick submits the
-  // current frame's render-command queue.
-  g_memory_region_cache_count = 0;
+  // Do not discard committed-region knowledge on every telemetry slice.
+  // VirtualQuery crosses Wine/Box64's thunk boundary and measured 9-19 ms in
+  // individual live-world slices when this cache was reset here. UObject
+  // identity is still checked against GObjects on every read, while
+  // UnrealResetWorldCaches clears these region entries whenever the resolved
+  // world/controller/pawn graph changes. This keeps the safety boundary tied
+  // to the actual UE3 lifetime boundary instead of imposing a render-thread
+  // scheduling hitch on every staged snapshot.
 }
 
 void UnrealResetWorldCaches() {

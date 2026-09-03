@@ -27,9 +27,9 @@ constexpr uint8_t kGameEngineTickPrologue[] = {
 constexpr ULONGLONG kPublishIntervalMs = 1000;
 constexpr ULONGLONG kResolveIntervalMs = 500;
 constexpr ULONGLONG kStableResolveIntervalMs = 10000;
-// Snapshot work runs after the game's native tick.  Never execute the whole
-// reflected-object walk in one frame: on Box64 the old monolithic pass was
-// measured at 19-57 ms and produced the user's periodic FPS spikes.
+// Snapshot work runs immediately before the game's native tick. Never execute
+// the whole reflected-object walk in one frame: on Box64 the old monolithic
+// pass was measured at 19-57 ms and produced periodic FPS spikes.
 constexpr ULONGLONG kSnapshotSliceIntervalMs = 16;
 // Squad membership and objective marker discovery are the expensive portions
 // of a snapshot. They change infrequently and previously caused a visible
@@ -223,19 +223,15 @@ struct CheckpointRestoreJournal {
 };
 CheckpointRestoreJournal g_checkpoint_restore;
 std::atomic<const char*> g_snapshot_stage{"idle"};
-#ifndef NDEBUG
 std::atomic<DWORD> g_tick_started_ms{0};
 volatile LONG g_watchdog_reported_start = 0;
 volatile LONG g_watchdog_stop = 0;
-#endif
 volatile LONG g_last_action_type = 0;
 volatile LONG g_last_action_phase = 0;
 volatile LONG g_last_action_tick = 0;
 volatile LONG g_last_action_request_low = 0;
-#ifndef NDEBUG
 HANDLE g_watchdog_thread = nullptr;
 DWORD g_watchdog_thread_id = 0;
-#endif
 std::array<ULONGLONG, 8> g_last_accepted_action = {};
 ULONGLONG g_last_accepted_native_action = 0;
 
@@ -514,7 +510,6 @@ void RestoreExitDiagnostics() {
   g_original_crt_exit = nullptr;
 }
 
-#ifndef NDEBUG
 DWORD WINAPI TickWatchdog(void*) {
   Log(LogLevel::kInfo, "[Lifecycle] game-tick watchdog ready tid=%lu",
       static_cast<unsigned long>(GetCurrentThreadId()));
@@ -541,7 +536,6 @@ DWORD WINAPI TickWatchdog(void*) {
   }
   return 0;
 }
-#endif
 
 void CopyText(char* destination, size_t capacity, const char* source) {
   if (destination && capacity)
@@ -825,10 +819,11 @@ void ResolveStableObjects(ULONGLONG now) {
     LogResolveWaiting(now, "game engine");
     return;
   }
-  // This resolver runs only after the game's original Tick has returned. It
-  // is therefore the safe lifecycle boundary for retiring a mapping whose
-  // actors have actually been destroyed. Do not retire merely because
-  // GamePlayers is momentarily empty during streaming.
+  // This resolver runs at the outer game-thread Tick boundary, before the
+  // engine submits the current frame. It is therefore the safe lifecycle
+  // boundary for retiring a mapping whose actors have actually been
+  // destroyed. Do not retire merely because GamePlayers is momentarily empty
+  // during streaming.
   if (!RetireInvalidCharacterRoleMapping()) return;
   if (!RetireMappingForNativePlayerPair(g_controller, g_pawn)) return;
 
@@ -6375,9 +6370,7 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
       !g_hook_stopping.load(std::memory_order_acquire)) {
     tick_thread = GetCurrentThreadId();
     g_game_engine = self;
-#ifndef NDEBUG
     g_tick_started_ms.store(GetTickCount(), std::memory_order_release);
-#endif
     // Bottom-screen actions are native input edges. Dispatch them before the
     // world tick so the engine can complete controller, pawn, animation,
     // collision and render-state transitions inside its normal frame. The old
@@ -6526,9 +6519,7 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
   if (outermost &&
       g_hook_stopping.load(std::memory_order_acquire)) {
     SetSnapshotStage("idle");
-#ifndef NDEBUG
     g_tick_started_ms.store(0, std::memory_order_release);
-#endif
     g_tick_in_progress.store(0, std::memory_order_release);
     return;
   }
@@ -6538,9 +6529,7 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
   }
   if (outermost) {
     SetSnapshotStage("idle");
-#ifndef NDEBUG
     g_tick_started_ms.store(0, std::memory_order_release);
-#endif
     g_tick_in_progress.store(0, std::memory_order_release);
   }
 }
@@ -6637,7 +6626,6 @@ bool InitializeGameBridge(HMODULE executable) {
     return false;
   }
   g_tick_slot = slot;
-#ifndef NDEBUG
   InterlockedExchange(&g_watchdog_stop, 0);
   g_watchdog_thread_id = 0;
   g_watchdog_thread = CreateThread(nullptr, 0, TickWatchdog, nullptr, 0,
@@ -6646,7 +6634,6 @@ bool InitializeGameBridge(HMODULE executable) {
     Log(LogLevel::kWarning,
         "[Lifecycle] game-tick watchdog unavailable error=%lu",
         static_cast<unsigned long>(GetLastError()));
-#endif
   Log(LogLevel::kInfo,
       "[Lifecycle] exact-build UGameEngine::Tick vtable hook installed function=%08lX slot=%08lX",
       static_cast<unsigned long>(kGameEngineTickRva),
@@ -6669,7 +6656,6 @@ void ShutdownGameBridge() {
     Sleep(1);
   const bool tick_idle =
       g_tick_in_progress.load(std::memory_order_acquire) == 0;
-#ifndef NDEBUG
   InterlockedExchange(&g_watchdog_stop, 1);
   if (g_watchdog_thread) {
     WaitForSingleObject(g_watchdog_thread, 1000);
@@ -6677,7 +6663,6 @@ void ShutdownGameBridge() {
     g_watchdog_thread = nullptr;
   }
   g_watchdog_thread_id = 0;
-#endif
   if (!tick_idle) {
     Log(LogLevel::kWarning,
         "[Lifecycle] bridge teardown deferred: hooked game tick is still active stage=%s",
@@ -6706,10 +6691,8 @@ void ShutdownGameBridge() {
   g_purecall_logged = 0;
   g_tick_in_progress.store(0, std::memory_order_relaxed);
   g_hook_stopping.store(false, std::memory_order_relaxed);
-#ifndef NDEBUG
   g_tick_started_ms.store(0, std::memory_order_relaxed);
   g_watchdog_reported_start = 0;
-#endif
   g_last_action_type = 0;
   g_last_action_phase = 0;
   g_last_action_tick = 0;
