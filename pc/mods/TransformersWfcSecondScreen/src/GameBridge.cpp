@@ -6501,6 +6501,19 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
         bridge_work_before_tick = true;
       }
     }
+    // Keep all reflection and telemetry work on the safe side of WFC's
+    // native frame submission. UGameEngine::Tick queues polymorphic render
+    // commands which the RenderingThread starts consuming immediately. The
+    // previous post-Tick pulse delayed this hook's return while that queue was
+    // already live; in the failing build the render worker eventually invoked
+    // a command whose vtable had reached __purecall (TWFC+0x00C44809), even
+    // when no bottom-screen action was pending. Collecting the previous
+    // frame's state here avoids racing the queue created by this Tick. It also
+    // keeps native input/role mutations and reflection out of the same frame.
+    if (!bridge_work_before_tick) {
+      SetSnapshotStage("bridge-pulse");
+      GameThreadPulse(tick_thread);
+    }
     SetSnapshotStage("original-tick");
   }
   if (!g_tick_entry_logged.load(std::memory_order_relaxed)) {
@@ -6519,15 +6532,11 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
     g_tick_in_progress.store(0, std::memory_order_release);
     return;
   }
-  if (outermost) SetSnapshotStage("bridge-pulse");
   if (!g_tick_return_logged.load(std::memory_order_relaxed)) {
     g_tick_return_logged.store(true, std::memory_order_relaxed);
     Log(LogLevel::kInfo, "[Lifecycle] first original game tick returned");
   }
   if (outermost) {
-    // Never cluster the 250ms role proxy or a native input mutation with a
-    // telemetry/reflection slice in the same rendered frame.
-    if (!bridge_work_before_tick) GameThreadPulse(tick_thread);
     SetSnapshotStage("idle");
 #ifndef NDEBUG
     g_tick_started_ms.store(0, std::memory_order_release);

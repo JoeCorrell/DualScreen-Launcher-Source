@@ -1248,8 +1248,10 @@ bool UnrealBridgeReady() {
 
 void UnrealBeginGameThreadPulse() {
   // VirtualQuery is exceptionally expensive under Wine/Box64. Cache committed
-  // regions only for this post-Tick pulse so repeated validation remains safe
-  // across level transitions while avoiding hundreds of duplicate queries.
+  // regions only for this bounded game-thread pulse so repeated validation
+  // remains safe across level transitions while avoiding hundreds of
+  // duplicate queries. The caller runs this before native Tick submits the
+  // current frame's render-command queue.
   g_memory_region_cache_count = 0;
 }
 
