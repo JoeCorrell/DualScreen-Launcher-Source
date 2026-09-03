@@ -1,9 +1,9 @@
 {
-    "version":  "wfc-ee59fb0e1fdd-c152d1b70ed3-5a1b8e3f9fef",
+    "version":  "wfc-disabled-performance-baseline-20260903",
     "files":  [
                   {
                       "source":  "dinput8.dll",
-                      "target":  "Binaries/dinput8.dll",
+                      "target":  "Binaries/SecondScreenDisabled/dinput8.dll",
                       "sha256":  "ee59fb0e1fdd5b327eea51a055f7eed20ad1ea476a5ddacb19cecf2c12fc92ee"
                   },
                   {
@@ -1361,5 +1361,8 @@
                       "target":  "Binaries/SecondScreenPrerequisites/redist/vcredist_x86_2005sp1/vcredist_x86.exe",
                       "sha256":  "d6832398e3bc9156a660745f427dc1c2392ce4e9a872e04f41f62d0c6bae07a8"
                   }
-              ]
+              ],
+    "remove":  [
+                   "Binaries/dinput8.dll"
+               ]
 }
