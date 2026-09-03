@@ -72,9 +72,15 @@ export async function fetchPatreonIdentity(
 ): Promise<PatreonMembership> {
   const url = new URL(PATREON_IDENTITY_URL);
   // Patreon returns the user's membership to the OAuth client's own campaign
-  // when `memberships` is requested. We deliberately do not request
-  // identity.memberships, which would expose memberships to unrelated creators.
-  url.searchParams.set("include", "memberships");
+  // when `memberships` is requested. Explicitly include the relationships the
+  // verifier relies on: sparse member fields otherwise omit both relationship
+  // objects and make a valid patron look like they have no membership.
+  // We deliberately do not request the identity.memberships OAuth scope, which
+  // would expose memberships to unrelated creators.
+  url.searchParams.set(
+    "include",
+    "memberships.campaign,memberships.currently_entitled_tiers",
+  );
   url.searchParams.set("fields[user]", "full_name");
   url.searchParams.set(
     "fields[member]",
