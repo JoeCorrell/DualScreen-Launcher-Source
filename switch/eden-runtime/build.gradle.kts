@@ -6,6 +6,24 @@ plugins {
     id("androidx.navigation.safeargs.kotlin") version "2.8.9"
 }
 
+val botwBasePlayerAssetNames = listOf(
+    "Link.glb",
+    "Armor_Default_Head.glb",
+    "Armor_Default_Upper.glb",
+    "Armor_Default_Lower.glb",
+)
+val botwPlayerAssetsDirectory = providers.gradleProperty("botwPlayerAssetsDir")
+val generatedBotwPlayerAssets = layout.buildDirectory.dir("generated/botwPlayerAssets")
+val prepareBotwBasePlayerAssets by tasks.registering(Sync::class) {
+    botwPlayerAssetsDirectory.orNull?.let { sourceDirectory ->
+        from(sourceDirectory) {
+            include(botwBasePlayerAssetNames)
+            into("botw/player")
+        }
+    }
+    into(generatedBotwPlayerAssets)
+}
+
 android {
     namespace = "org.yuzu.yuzu_emu"
     compileSdk = 36
@@ -40,6 +58,10 @@ android {
         // Eden DS keeps the companion artwork/data in its dualscreen flavor. The embedded
         // runtime has no Android flavor of its own, so include that source set explicitly.
         assets.srcDir("../eden-upstream/src/android/app/src/dualscreen/assets")
+        // BOTW models are generated from the builder's own RomFS and must not live in source
+        // control. Supplying -PbotwPlayerAssetsDir packages the four base models needed by a
+        // clean install; the renderer still prefers a user's richer external equipment cache.
+        assets.srcDir(generatedBotwPlayerAssets)
     }
 
 }
@@ -49,6 +71,7 @@ val verifyDualScreenAssets by tasks.registering {
         "../eden-upstream/src/android/app/src/dualscreen/assets"
     )
     inputs.dir(dualScreenAssets)
+    dependsOn(prepareBotwBasePlayerAssets)
     doLast {
         val required = listOf(
             "botw/player/index.json",
@@ -70,8 +93,31 @@ val verifyDualScreenAssets by tasks.registering {
     }
 }
 
+val verifyBotwBasePlayerAssets by tasks.registering {
+    val dualScreenAssets = layout.projectDirectory.dir(
+        "../eden-upstream/src/android/app/src/dualscreen/assets"
+    )
+    dependsOn(prepareBotwBasePlayerAssets)
+    doLast {
+        val generatedRoot = generatedBotwPlayerAssets.get().dir("botw/player")
+        val missing = botwBasePlayerAssetNames.filterNot { name ->
+            dualScreenAssets.file("botw/player/$name").asFile.isFile ||
+                generatedRoot.file(name).asFile.isFile
+        }
+        check(missing.isEmpty()) {
+            "A release without BOTW's base player GLBs leaves the bottom-screen Link preview " +
+                "blank. Supply the generated model directory with " +
+                "-PbotwPlayerAssetsDir=<directory>: ${missing.joinToString()}"
+        }
+    }
+}
+
 tasks.named("preBuild").configure {
     dependsOn(verifyDualScreenAssets)
+}
+
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyBotwBasePlayerAssets)
 }
 
 dependencies {

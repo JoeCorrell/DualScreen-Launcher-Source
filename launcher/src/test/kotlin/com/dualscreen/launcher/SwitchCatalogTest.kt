@@ -160,11 +160,18 @@ class SwitchCatalogTest {
         ).readText()
 
         assertThat(renderer).contains("DirectoryInitialization.userDirectory")
-        assertThat(renderer).contains("File(root, \"${'$'}playerCacheDirectory/${'$'}name\")")
+        assertThat(renderer).contains("File(root, \"${'$'}playerCacheDirectory/${'$'}file\")")
         assertThat(renderer).contains("BOTW_PLAYER_CACHE_DIRECTORY")
         assertThat(renderer).contains("SSHD_PLAYER_CACHE_DIRECTORY")
+        assertThat(renderer).contains("using ${'$'}{fallback.actor}")
+        assertThat(renderer).contains("defaultActors.getValue(slot)")
         assertThat(renderer).doesNotContain(
             "val source = context.getExternalFilesDir(null)?.let",
         )
+
+        val runtimeBuild = File("../switch/eden-runtime/build.gradle.kts").readText()
+        assertThat(runtimeBuild).contains("botwPlayerAssetsDir")
+        assertThat(runtimeBuild).contains("verifyBotwBasePlayerAssets")
+        assertThat(runtimeBuild).contains("Armor_Default_Upper.glb")
     }
 }

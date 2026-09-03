@@ -186,12 +186,13 @@ constexpr VAddr EatScreenRegistryOffset = 0x01E374B8;
 constexpr VAddr HoldControllerGotOffset = 0x01D6A550;
 constexpr VAddr PlayerInfoStorageOffset = 0x01E13ED0;
 constexpr VAddr PlayerInfoActorOffset = 0x60;
-constexpr VAddr HoldControllerPlayerLinkOffset = 0x150;
-// Actor::mMsgTransceiver is registered for Link throughout gameplay. The vanilla pause sender
-// carries this same player identity; using a generic sender spawns the item but leaves CarryBox
-// attached to that stationary sender instead of Link.
-constexpr VAddr PlayerMessageSenderOffset = 0x5E0;
-constexpr VAddr PlayerMessageDispatcherOffset = PlayerMessageSenderOffset + sizeof(u64);
+constexpr VAddr HoldControllerMessageSenderOffset = 0x150;
+constexpr VAddr HoldControllerMessageDispatcherOffset =
+    HoldControllerMessageSenderOffset + sizeof(u64);
+constexpr VAddr CarryBoxManagerOffset = 0x01E0C828;
+constexpr VAddr CarryBoxRootMatrixOffset = 0xD8;
+constexpr VAddr CarryBoxAnchorOffset = 0x310;
+constexpr VAddr CarryBoxFlagsOffset = 0xA78;
 
 constexpr bool IsEquipMailboxBusy(u32 state) {
     return state == EquipMailboxQueued || state == EquipMailboxRunning ||
@@ -875,6 +876,25 @@ std::optional<PlayerMapSnapshot> ReadPlayerMap(Core::Memory::Memory& memory, VAd
     return PlayerMapSnapshot{x, y, z, heading};
 }
 
+std::optional<std::array<float, 3>> ReadMatrixTranslation(Core::Memory::Memory& memory,
+                                                          VAddr matrix_address) {
+    std::array<u8, 12 * sizeof(float)> matrix{};
+    if (!ReadBytes(memory, matrix_address, matrix)) {
+        return std::nullopt;
+    }
+    std::array<float, 3> position{
+        DecodeScalar<float>(matrix, 3 * sizeof(float)),
+        DecodeScalar<float>(matrix, 7 * sizeof(float)),
+        DecodeScalar<float>(matrix, 11 * sizeof(float)),
+    };
+    if (!std::all_of(position.begin(), position.end(), [](float value) {
+            return std::isfinite(value) && std::abs(value) <= HyruleWorldLimit;
+        })) {
+        return std::nullopt;
+    }
+    return position;
+}
+
 std::vector<ActiveEffectSnapshot> ReadActiveCookEffects(Core::Memory::Memory& memory,
                                                         VAddr player_actor) {
     std::vector<ActiveEffectSnapshot> effects;
@@ -1400,6 +1420,16 @@ void AppendChampionPowerJson(std::ostringstream& out, const ChampionPowerSnapsho
 void AppendPlayerMapJson(std::ostringstream& out, const PlayerMapSnapshot& map) {
     out << R"({"x":)" << map.x << R"(,"y":)" << map.y << R"(,"z":)" << map.z
         << R"(,"heading":)" << map.heading << '}';
+}
+
+void AppendPositionJson(std::ostringstream& out,
+                        const std::optional<std::array<float, 3>>& position) {
+    if (!position) {
+        out << "null";
+        return;
+    }
+    out << R"({"x":)" << position->at(0) << R"(,"y":)" << position->at(1)
+        << R"(,"z":)" << position->at(2) << '}';
 }
 
 void AppendQuestJson(std::ostringstream& out, const QuestSnapshot& quest) {
@@ -1928,6 +1958,18 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     const auto grabbed_item_count = pouch_manager && *pouch_manager
                                         ? ReadGrabbedItemCount(memory, *pouch_manager)
                                         : std::nullopt;
+    const auto carry_box_manager = Read<u64>(memory, main_base + CarryBoxManagerOffset);
+    const auto carry_box_anchor = carry_box_manager && *carry_box_manager
+                                      ? Read<u64>(memory, *carry_box_manager + CarryBoxAnchorOffset)
+                                      : std::nullopt;
+    const auto carry_box_flags = carry_box_manager && *carry_box_manager
+                                     ? Read<u32>(memory, *carry_box_manager + CarryBoxFlagsOffset)
+                                     : std::nullopt;
+    const auto carry_box_position = carry_box_manager && *carry_box_manager
+                                        ? ReadMatrixTranslation(
+                                              memory, *carry_box_manager +
+                                                          CarryBoxRootMatrixOffset)
+                                        : std::nullopt;
     const VAddr action_mailbox = system.GetApplicationProcessCompanionMailbox();
     const bool action_bridge = IsEquipMailboxAvailable(system, action_mailbox);
     const u32 action_state =
@@ -2003,7 +2045,15 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
             << R"(,"actionRequest":)" << JsonString(HexAddress(action_request))
             << R"(,"actionCompleted":)" << JsonString(HexAddress(action_completed))
             << R"(,"actionType":)" << action_type
-            << R"(,"actionStage":)" << action_stage;
+            << R"(,"actionStage":)" << action_stage
+            << R"(,"carryBoxManager":)"
+            << JsonString(HexAddress(carry_box_manager.value_or(0)))
+            << R"(,"carryBoxAnchor":)"
+            << JsonString(HexAddress(carry_box_anchor.value_or(0)))
+            << R"(,"carryBoxFlags":)"
+            << (carry_box_flags ? std::to_string(*carry_box_flags) : "null")
+            << R"(,"carryBoxPosition":)";
+        AppendPositionJson(out, carry_box_position);
         AppendActionDiagnosticJson(out, action_diagnostic, std::nullopt, std::nullopt,
                                    grabbed_item_count);
         out << "}}";
@@ -2031,16 +2081,21 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     const VAddr equip_mailbox = action_mailbox;
     const bool equip_bridge = pouch_items && action_bridge;
     const bool player_alive = valid_health && *health > 0;
-    const auto player_message_dispatcher =
-        component && *component
-            ? Read<u64>(memory, *component + PlayerMessageDispatcherOffset)
+    const auto hold_controller_storage = Read<u64>(memory, main_base + HoldControllerGotOffset);
+    const auto hold_controller = hold_controller_storage && *hold_controller_storage
+                                     ? Read<u64>(memory, *hold_controller_storage)
+                                     : std::nullopt;
+    const auto hold_sender_vtable =
+        hold_controller && *hold_controller
+            ? Read<u64>(memory, *hold_controller + HoldControllerMessageSenderOffset)
             : std::nullopt;
-    const auto player_message_vtable = player_message_dispatcher && *player_message_dispatcher
-                                           ? Read<u64>(memory, *player_message_dispatcher)
-                                           : std::nullopt;
-    const bool hold_bridge = equip_bridge && player_alive && player_message_dispatcher &&
-                             *player_message_dispatcher && player_message_vtable &&
-                             *player_message_vtable;
+    const auto hold_message_dispatcher =
+        hold_controller && *hold_controller
+            ? Read<u64>(memory, *hold_controller + HoldControllerMessageDispatcherOffset)
+            : std::nullopt;
+    const bool hold_bridge = equip_bridge && player_alive && hold_controller &&
+                             *hold_controller && hold_sender_vtable && *hold_sender_vtable &&
+                             hold_message_dispatcher && *hold_message_dispatcher;
     const auto eat_screen_registry = Read<u64>(memory, main_base + EatScreenRegistryOffset);
     const auto eat_screen_count = eat_screen_registry && *eat_screen_registry
                                       ? Read<u32>(memory, *eat_screen_registry + 0x28)
@@ -2322,6 +2377,15 @@ std::string GetSnapshot(EmulationSession& session, bool lightweight) {
         << R"(,"actionCompleted":)" << JsonString(HexAddress(action_completed))
         << R"(,"actionType":)" << action_type
         << R"(,"actionStage":)" << action_stage
+        << R"(,"carryBoxManager":)"
+        << JsonString(HexAddress(carry_box_manager.value_or(0)))
+        << R"(,"carryBoxAnchor":)"
+        << JsonString(HexAddress(carry_box_anchor.value_or(0)))
+        << R"(,"carryBoxFlags":)"
+        << (carry_box_flags ? std::to_string(*carry_box_flags) : "null")
+        << R"(,"carryBoxPosition":)";
+    AppendPositionJson(out, carry_box_position);
+    out
         << R"(,"selectedRune":)" << (selected_rune ? std::to_string(*selected_rune) : "null");
     AppendActionDiagnosticJson(out, action_diagnostic, diagnostic_quantity_after,
                                diagnostic_in_inventory_after, grabbed_item_count);
@@ -2592,26 +2656,11 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
         const auto player_actor = player_info && *player_info
                                       ? Read<u64>(memory, *player_info + PlayerInfoActorOffset)
                                       : std::nullopt;
-        const auto player_message_dispatcher =
-            player_actor && *player_actor
-                ? Read<u64>(memory, *player_actor + PlayerMessageDispatcherOffset)
-                : std::nullopt;
-        const auto player_message_vtable =
-            player_message_dispatcher && *player_message_dispatcher
-                ? Read<u64>(memory, *player_message_dispatcher)
-                : std::nullopt;
-        if (!player_info || !*player_info || !player_actor || !*player_actor ||
-            !player_message_dispatcher || !*player_message_dispatcher ||
-            !player_message_vtable || !*player_message_vtable) {
-            LOG_WARNING(
-                Frontend,
-                "[BOTW-HOLD] rejected reason=native-context-unavailable "
-                "playerInfo={:016X} player={:016X} messageSender={:016X} "
-                "messageDispatcher={:016X} "
-                "messageVtable={:016X}",
-                player_info.value_or(0), player_actor.value_or(0),
-                player_actor.value_or(0) + PlayerMessageSenderOffset,
-                player_message_dispatcher.value_or(0), player_message_vtable.value_or(0));
+        if (!player_info || !*player_info || !player_actor || !*player_actor) {
+            LOG_WARNING(Frontend,
+                        "[BOTW-HOLD] rejected reason=player-context-unavailable "
+                        "playerInfo={:016X} player={:016X}",
+                        player_info.value_or(0), player_actor.value_or(0));
             return false;
         }
         const auto controller_storage = Read<u64>(memory, main_base + HoldControllerGotOffset);
@@ -2631,22 +2680,33 @@ bool PerformAction(EmulationSession& session, int action, long long argument) {
             controller && *controller ? Read<u64>(memory, *controller + 0xA8) : std::nullopt;
         const auto controller_link_first =
             controller && *controller
-                ? Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset)
+                ? Read<u64>(memory, *controller + HoldControllerMessageSenderOffset)
                 : std::nullopt;
         const auto controller_link_second =
             controller && *controller
-                ? Read<u64>(memory, *controller + HoldControllerPlayerLinkOffset + sizeof(u64))
+                ? Read<u64>(memory, *controller + HoldControllerMessageDispatcherOffset)
                 : std::nullopt;
+        if (!controller || !*controller || !controller_link_first || !*controller_link_first ||
+            !controller_link_second || !*controller_link_second) {
+            LOG_WARNING(Frontend,
+                        "[BOTW-HOLD] rejected reason=controller-sender-unavailable "
+                        "controllerStorage={:016X} controller={:016X} sender={:016X} "
+                        "senderVtable={:016X} dispatcher={:016X}",
+                        controller_storage.value_or(0), controller.value_or(0),
+                        controller.value_or(0) + HoldControllerMessageSenderOffset,
+                        controller_link_first.value_or(0), controller_link_second.value_or(0));
+            return false;
+        }
         LOG_INFO(Frontend,
                  "[BOTW-HOLD] validated playerInfo={:016X} player={:016X} "
-                 "messageSender={:016X} messageDispatcher={:016X} "
-                 "messageVtable={:016X} senderIdentity=player "
+                 "controller={:016X} messageSender={:016X} senderVtable={:016X} "
+                 "messageDispatcher={:016X} senderIdentity=pause-controller "
                  "heldBefore={}/{} nativeMutation=main+00D9F0E8 "
                  "nativeCapture=main+00CC12F0 nativeAttachMessage=08000003 "
                  "menuControllerRequired=false gameThreadDispatch=guest-hook",
-                 *player_info, *player_actor, *player_actor + PlayerMessageSenderOffset,
-                 *player_message_dispatcher, *player_message_vtable, *held_count,
-                 PouchGrabbedItemCapacity);
+                 *player_info, *player_actor, *controller,
+                 *controller + HoldControllerMessageSenderOffset, *controller_link_first,
+                 *controller_link_second, *held_count, PouchGrabbedItemCapacity);
         hold_controller_address = controller.value_or(0);
         hold_active_flag_pointer_address = active_flag_pointer.value_or(0);
         hold_controller_target_before = controller_target.value_or(0);

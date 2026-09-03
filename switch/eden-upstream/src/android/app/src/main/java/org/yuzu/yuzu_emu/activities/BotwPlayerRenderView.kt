@@ -79,7 +79,11 @@ internal class BotwPlayerRenderView(
 
     private data class LoadedSlot(val actor: String, val asset: FilamentAsset)
 
-    private data class AssetBytes(val actor: String, val bytes: ByteArray)
+    private data class AssetBytes(
+        val actor: String,
+        val bytes: ByteArray,
+        val sourceActor: String = actor
+    )
 
     private data class AttachmentSpec(
         val bone: String,
@@ -1034,7 +1038,6 @@ internal class BotwPlayerRenderView(
 
         pendingSlots.add(slot)
         ioExecutor?.execute {
-            val file = indexedAssets[requestedActor]?.file
             // Embedded Eden stores its configured user directory below .../Switch/Eden.
             // Search that location first so both BOTW and SSHD generated player assets are
             // found, while retaining the external-files and internal-files fallbacks.
@@ -1042,55 +1045,74 @@ internal class BotwPlayerRenderView(
                 .getOrNull()
                 ?.let(::File)
             val externalDirectory = context.getExternalFilesDir(null)
-            val source = file?.let { name ->
-                listOfNotNull(configuredDirectory, externalDirectory, context.filesDir)
+            fun loadActor(actor: String): AssetBytes? {
+                val file = indexedAssets[actor]?.file ?: return null
+                val source = listOfNotNull(
+                    configuredDirectory,
+                    externalDirectory,
+                    context.filesDir
+                )
                     .distinctBy(File::getAbsolutePath)
                     .asSequence()
-                    .map { root -> File(root, "$playerCacheDirectory/$name") }
+                    .map { root -> File(root, "$playerCacheDirectory/$file") }
                     .firstOrNull { candidate ->
                         candidate.isFile && candidate.length() in 1..MAX_PLAYER_ASSET_BYTES
                     }
-            }
-            val loadedFromFile = if (
-                source != null && source.isFile && source.length() in 1..MAX_PLAYER_ASSET_BYTES
-            ) {
-                try {
-                    AssetBytes(requestedActor, source.readBytes())
-                } catch (exception: Exception) {
-                    Log.warning(
-                        "[BOTW Companion] Player model $requestedActor could not be read: " +
-                            exception.message
-                    )
+                val loadedFromFile = if (
+                    source != null && source.length() in 1..MAX_PLAYER_ASSET_BYTES
+                ) {
+                    try {
+                        AssetBytes(actor, source.readBytes())
+                    } catch (exception: Exception) {
+                        Log.warning(
+                            "[$logName Companion] Player model $actor could not be read: " +
+                                exception.message
+                        )
+                        null
+                    }
+                } else {
                     null
                 }
-            } else {
-                null
-            }
-            val loadedFromPackage = file?.let { name ->
-                try {
+                val loadedFromPackage = try {
                     val assetDirectory = assetIndex.substringBeforeLast('/')
-                    val bytes = context.assets.open("$assetDirectory/$name").use { stream ->
+                    val bytes = context.assets.open("$assetDirectory/$file").use { stream ->
                         stream.readBytes()
                     }
                     if (bytes.size.toLong() in 1..MAX_PLAYER_ASSET_BYTES) {
-                        AssetBytes(requestedActor, bytes)
+                        AssetBytes(actor, bytes)
                     } else {
                         null
                     }
                 } catch (_: Exception) {
                     null
                 }
+                // SSHD's preview assets are versioned with the app. An older externally
+                // generated GLB can restore its raw bind pose, so its package wins. BOTW keeps
+                // user-generated equipment overrides authoritative.
+                return if (profile == PlayerRenderProfile.Sshd) {
+                    loadedFromPackage ?: loadedFromFile
+                } else {
+                    loadedFromFile ?: loadedFromPackage
+                }
             }
-            // SSHD's preview assets are versioned with the app. An older
-            // externally generated GLB can still exist in Eden's user folder;
-            // preferring it silently restores the raw bind pose and drops the
-            // packaged waitS animation. Keep external overrides for BOTW, but
-            // make the corrected, verified APK model authoritative for SSHD.
-            val loaded = if (profile == PlayerRenderProfile.Sshd) {
-                loadedFromPackage ?: loadedFromFile
+            val fallbackActor = if (profile == PlayerRenderProfile.Botw) {
+                when (slot) {
+                    SLOT_HEAD, SLOT_CHEST, SLOT_LEGS -> defaultActors.getValue(slot)
+                    else -> null
+                }
             } else {
-                loadedFromFile ?: loadedFromPackage
+                null
             }
+            val loaded = loadActor(requestedActor) ?: fallbackActor
+                ?.takeUnless { it == requestedActor }
+                ?.let(::loadActor)
+                ?.let { fallback ->
+                    Log.warning(
+                        "[BOTW Companion] Player model $requestedActor is unavailable; " +
+                            "using ${fallback.actor}"
+                    )
+                    AssetBytes(requestedActor, fallback.bytes, fallback.actor)
+                }
             post {
                 if (released || releasing || requestGenerations[slot] != generation) return@post
                 pendingSlots.remove(slot)
@@ -1133,7 +1155,7 @@ internal class BotwPlayerRenderView(
             asset.releaseSourceData()
             val animator = asset.instance.animator
             Log.info(
-                "[$logName Companion] ${model.actor} animation count=${animator.animationCount}"
+                "[$logName Companion] ${model.sourceActor} animation count=${animator.animationCount}"
             )
             if (animator.animationCount > 0) {
                 val idle = (0 until animator.animationCount).firstOrNull { index ->
@@ -1152,15 +1174,15 @@ internal class BotwPlayerRenderView(
                 animator.applyAnimation(idle, poseTime)
                 Log.info(
                     "[$logName Companion] Applied ${animator.getAnimationName(idle)} " +
-                        "idle pose at ${"%.3f".format(poseTime)}s to ${model.actor}"
+                        "idle pose at ${"%.3f".format(poseTime)}s to ${model.sourceActor}"
                 )
             }
 
 
             animator.updateBoneMatrices()
-            if (!applySlotTransform(slot, model.actor, asset)) {
+            if (!applySlotTransform(slot, model.sourceActor, asset)) {
                 Log.warning(
-                    "[BOTW Companion] Player equipment ${model.actor} has no valid attachment"
+                    "[BOTW Companion] Player equipment ${model.sourceActor} has no valid attachment"
                 )
                 loader.destroyAsset(asset)
                 createdAsset = null

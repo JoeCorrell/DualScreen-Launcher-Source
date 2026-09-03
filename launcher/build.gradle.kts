@@ -22,8 +22,8 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 22
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.10"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 25
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         // Both values are safe to ship: the URL identifies the service and the
