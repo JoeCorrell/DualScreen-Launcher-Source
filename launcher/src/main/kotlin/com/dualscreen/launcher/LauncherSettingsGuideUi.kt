@@ -77,6 +77,7 @@ internal fun SettingsPage(
     onResolution: (GameResolution) -> Unit,
     onGpuDriver: (String) -> Unit,
     onImportGpuDriver: () -> Unit,
+    onOpenPcDriverDownloader: () -> Unit,
     onAddSwitchKeys: () -> Unit,
     onAddSwitchFirmware: () -> Unit,
     onAddSwitchGpuDriver: () -> Unit,
@@ -214,22 +215,35 @@ internal fun SettingsPage(
                             }
                         }
                     }
-                    OutlinedButton(
-                        onClick = onImportGpuDriver,
-                        enabled = gpuDriverImportState !is GpuDriverImportState.Importing,
-                        modifier = Modifier.fillMaxWidth().height(39.dp),
-                        shape = RectangleShape,
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
                     ) {
-                        Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text(
-                            if (gpuDriverImportState is GpuDriverImportState.Importing) {
-                                "Validating driver…"
-                            } else {
-                                "Upload GPU driver ZIP"
-                            },
-                            fontSize = 11.sp,
+                        PrimaryAction(
+                            label = "Download drivers",
+                            icon = Icons.Default.CloudDownload,
+                            onClick = onOpenPcDriverDownloader,
+                            enabled = gpuDriverImportState !is GpuDriverImportState.Importing,
+                            primary = true,
+                            modifier = Modifier.weight(1f),
                         )
+                        OutlinedButton(
+                            onClick = onImportGpuDriver,
+                            enabled = gpuDriverImportState !is GpuDriverImportState.Importing,
+                            modifier = Modifier.weight(1f).height(39.dp),
+                            shape = RectangleShape,
+                        ) {
+                            Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text(
+                                if (gpuDriverImportState is GpuDriverImportState.Importing) {
+                                    "Validating…"
+                                } else {
+                                    "Upload ZIP"
+                                },
+                                fontSize = 11.sp,
+                            )
+                        }
                     }
                     DriverMessage(gpuDriverImportState, gpuDriverMessage)
                 }

@@ -63,6 +63,24 @@ if ($LASTEXITCODE -ne 0) { throw 'IatHookTests compilation failed' }
 & $iatHookTest
 if ($LASTEXITCODE -ne 0) { throw 'IatHookTests failed' }
 
+$characterSwapTest = Join-Path $testRoot 'CharacterSwapTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\CharacterSwapTests.cpp'),
+    (Join-Path $sourceRoot 'CharacterSwap.cpp'), '-o', $characterSwapTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'CharacterSwapTests compilation failed' }
+& $characterSwapTest
+if ($LASTEXITCODE -ne 0) { throw 'CharacterSwapTests failed' }
+
+$checkpointGateTest = Join-Path $testRoot 'CheckpointGateTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\CheckpointGateTests.cpp'),
+    (Join-Path $sourceRoot 'CheckpointGate.cpp'), '-o', $checkpointGateTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'CheckpointGateTests compilation failed' }
+& $checkpointGateTest
+if ($LASTEXITCODE -ne 0) { throw 'CheckpointGateTests failed' }
+
 $sources = @(
     (Join-Path $sourceRoot 'Proxy.cpp'),
     (Join-Path $sourceRoot 'Mod.cpp'),
@@ -72,6 +90,9 @@ $sources = @(
     (Join-Path $sourceRoot 'Hook.cpp'),
     (Join-Path $sourceRoot 'IatHook.cpp'),
     (Join-Path $sourceRoot 'StateStore.cpp'),
+    (Join-Path $sourceRoot 'CharacterSwap.cpp'),
+    (Join-Path $sourceRoot 'CheckpointGate.cpp'),
+    (Join-Path $sourceRoot 'CharacterRoleAdapter.cpp'),
     (Join-Path $sourceRoot 'PanelInput.cpp'),
     (Join-Path $sourceRoot 'Panel.cpp'),
     (Join-Path $sourceRoot 'AssetCache.cpp'),

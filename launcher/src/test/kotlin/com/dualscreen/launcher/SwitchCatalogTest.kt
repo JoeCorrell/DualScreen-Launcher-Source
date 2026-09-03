@@ -163,7 +163,9 @@ class SwitchCatalogTest {
         assertThat(renderer).contains("File(root, \"${'$'}playerCacheDirectory/${'$'}file\")")
         assertThat(renderer).contains("BOTW_PLAYER_CACHE_DIRECTORY")
         assertThat(renderer).contains("SSHD_PLAYER_CACHE_DIRECTORY")
-        assertThat(renderer).contains("using ${'$'}{fallback.actor}")
+        assertThat(renderer).contains("loadActorCandidates")
+        assertThat(renderer).contains("keeping the current ${'$'}slot model")
+        assertThat(renderer).contains("using ${'$'}{model.sourceActor}")
         assertThat(renderer).contains("defaultActors.getValue(slot)")
         assertThat(renderer).doesNotContain(
             "val source = context.getExternalFilesDir(null)?.let",
@@ -173,5 +175,6 @@ class SwitchCatalogTest {
         assertThat(runtimeBuild).contains("botwPlayerAssetsDir")
         assertThat(runtimeBuild).contains("verifyBotwBasePlayerAssets")
         assertThat(runtimeBuild).contains("Armor_Default_Upper.glb")
+        assertThat(runtimeBuild).contains("include(\"Armor_*.glb\")")
     }
 }

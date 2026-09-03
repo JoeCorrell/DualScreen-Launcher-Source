@@ -13,13 +13,23 @@ namespace {
 SRWLOCK g_snapshot_lock = SRWLOCK_INIT;
 Snapshot g_snapshot = {};
 bool g_have_snapshot = false;
+std::atomic<uint64_t> g_latest_sequence{0};
+std::atomic<uint8_t> g_requested_panel_page{
+    static_cast<uint8_t>(PanelPage::kCombat)};
+std::atomic<void*> g_snapshot_notification_window{nullptr};
+std::atomic<uint32_t> g_snapshot_notification_message{0};
 
-constexpr uint32_t kCommandCapacity = 32;
+// Native gameplay actions are state transitions, not buffered text input.
+// Keeping more than one request queued lets a burst of stale touches execute
+// over several consecutive engine frames after the initiating state changed.
+constexpr uint32_t kCommandCapacity = 1;
 SRWLOCK g_command_lock = SRWLOCK_INIT;
 Command g_commands[kCommandCapacity] = {};
 uint32_t g_read = 0;
 uint32_t g_write = 0;
 uint32_t g_count = 0;
+std::atomic<uint32_t> g_pending_command_count{0};
+bool g_accepting_commands = true;
 std::atomic<uint64_t> g_next_request{1};
 
 template <size_t N>
@@ -98,6 +108,37 @@ bool SameObjective(const ObjectiveState& left, const ObjectiveState& right) {
          SameText(left.image_key, right.image_key);
 }
 
+bool SameVisibleObjective(const ObjectiveState& left,
+                          const ObjectiveState& right) {
+  const bool same_distance =
+      (left.distance_meters < 0.0f && right.distance_meters < 0.0f) ||
+      (left.distance_meters >= 0.0f && right.distance_meters >= 0.0f &&
+       std::nearbyint(left.distance_meters) ==
+           std::nearbyint(right.distance_meters));
+  return same_distance && SameText(left.chapter, right.chapter) &&
+         SameText(left.mission, right.mission) &&
+         SameText(left.text, right.text) &&
+         SameText(left.image_key, right.image_key);
+}
+
+bool SamePanelStatus(const Snapshot& left, const Snapshot& right) {
+  return left.world_epoch == right.world_epoch &&
+         left.lifecycle == right.lifecycle && left.faction == right.faction &&
+         left.mode == right.mode && left.health == right.health &&
+         left.max_health == right.max_health &&
+         SameText(left.character_name, right.character_name) &&
+         SameText(left.portrait_key, right.portrait_key);
+}
+
+void NotifySnapshotChanged() {
+  void* target =
+      g_snapshot_notification_window.load(std::memory_order_acquire);
+  const uint32_t message =
+      g_snapshot_notification_message.load(std::memory_order_relaxed);
+  if (target && message)
+    PostMessageW(static_cast<HWND>(target), message, 0, 0);
+}
+
 bool ValidCommand(CommandType type) {
   return type >= CommandType::kTransform &&
          type <= CommandType::kSwitchSquadMember;
@@ -156,8 +197,10 @@ void ResetState(Lifecycle lifecycle, const char* build_label,
   g_snapshot.supported_build = supported_build ? 1u : 0u;
   CopyText(g_snapshot.build_label, sizeof(g_snapshot.build_label), build_label);
   g_have_snapshot = true;
+  g_latest_sequence.store(sequence, std::memory_order_release);
   ReleaseSRWLockExclusive(&g_snapshot_lock);
   RejectStaleCommands(epoch);
+  NotifySnapshotChanged();
 }
 
 bool PublishSnapshot(const Snapshot& snapshot) {
@@ -169,9 +212,11 @@ bool PublishSnapshot(const Snapshot& snapshot) {
        snapshot.sequence > g_snapshot.sequence)) {
     g_snapshot = snapshot;
     g_have_snapshot = true;
+    g_latest_sequence.store(snapshot.sequence, std::memory_order_release);
     accepted = true;
   }
   ReleaseSRWLockExclusive(&g_snapshot_lock);
+  if (accepted) NotifySnapshotChanged();
   return accepted;
 }
 
@@ -182,6 +227,42 @@ bool CopyLatestSnapshot(Snapshot* output) {
   if (available) *output = g_snapshot;
   ReleaseSRWLockShared(&g_snapshot_lock);
   return available;
+}
+
+uint64_t LatestSequence() {
+  return g_latest_sequence.load(std::memory_order_acquire);
+}
+
+void SetSnapshotNotificationTarget(void* native_window, uint32_t message) {
+  if (!native_window || !message) {
+    g_snapshot_notification_window.store(nullptr, std::memory_order_release);
+    g_snapshot_notification_message.store(0, std::memory_order_relaxed);
+    return;
+  }
+  g_snapshot_notification_message.store(message, std::memory_order_relaxed);
+  g_snapshot_notification_window.store(native_window,
+                                       std::memory_order_release);
+}
+
+void SetRequestedPanelPage(PanelPage page) {
+  switch (page) {
+    case PanelPage::kCombat:
+    case PanelPage::kSquad:
+    case PanelPage::kObjectives:
+      g_requested_panel_page.store(static_cast<uint8_t>(page),
+                                   std::memory_order_release);
+      return;
+  }
+  g_requested_panel_page.store(static_cast<uint8_t>(PanelPage::kCombat),
+                               std::memory_order_release);
+}
+
+PanelPage RequestedPanelPage() {
+  const uint8_t page =
+      g_requested_panel_page.load(std::memory_order_acquire);
+  if (page <= static_cast<uint8_t>(PanelPage::kObjectives))
+    return static_cast<PanelPage>(page);
+  return PanelPage::kCombat;
 }
 
 bool SnapshotContentEqual(const Snapshot& left, const Snapshot& right) {
@@ -227,6 +308,51 @@ bool SnapshotContentEqual(const Snapshot& left, const Snapshot& right) {
   return SameObjective(left.objective, right.objective);
 }
 
+bool SnapshotCombatNonAbilityContentEqual(const Snapshot& left,
+                                          const Snapshot& right) {
+  constexpr uint64_t kVisibleCombatCapabilities =
+      kCapTransformAction | kCapReloadAction | kCapSwapAction |
+      kCapGrenadeAction;
+  if (!SamePanelStatus(left, right)) return false;
+  if (left.lifecycle != Lifecycle::kLive &&
+      left.lifecycle != Lifecycle::kDead)
+    return true;
+  return (left.capabilities & kVisibleCombatCapabilities) ==
+             (right.capabilities & kVisibleCombatCapabilities) &&
+         left.grenade_count == right.grenade_count &&
+         SameText(left.grenade_name, right.grenade_name) &&
+         SameText(left.grenade_icon_key, right.grenade_icon_key) &&
+         SameWeapon(left.weapons[0], right.weapons[0]) &&
+         SameWeapon(left.weapons[1], right.weapons[1]) &&
+         SameVisibleObjective(left.objective, right.objective);
+}
+
+bool SnapshotPanelContentEqual(const Snapshot& left, const Snapshot& right,
+                               PanelPage page) {
+  if (!SamePanelStatus(left, right)) return false;
+  if (left.lifecycle != Lifecycle::kLive &&
+      left.lifecycle != Lifecycle::kDead)
+    return true;
+  switch (page) {
+    case PanelPage::kCombat:
+      return SnapshotCombatNonAbilityContentEqual(left, right) &&
+             SameAbility(left.abilities[0], right.abilities[0]) &&
+             SameAbility(left.abilities[1], right.abilities[1]);
+    case PanelPage::kSquad:
+      if ((left.capabilities & kCapSquadSwitchAction) !=
+              (right.capabilities & kCapSquadSwitchAction) ||
+          left.squad_count != right.squad_count)
+        return false;
+      for (size_t index = 0; index < left.squad_count; ++index)
+        if (!SameSquadMember(left.squad[index], right.squad[index]))
+          return false;
+      return true;
+    case PanelPage::kObjectives:
+      return SameVisibleObjective(left.objective, right.objective);
+  }
+  return false;
+}
+
 bool QueueCommand(const Command& input, uint64_t* request_id) {
   if (!ValidCommand(input.type) || !input.world_epoch ||
       !input.queued_at_millis ||
@@ -242,6 +368,10 @@ bool QueueCommand(const Command& input, uint64_t* request_id) {
   if (!command.request_id)
     command.request_id = g_next_request.fetch_add(1, std::memory_order_relaxed);
   AcquireSRWLockExclusive(&g_command_lock);
+  if (!g_accepting_commands) {
+    ReleaseSRWLockExclusive(&g_command_lock);
+    return false;
+  }
   if (g_count == kCommandCapacity) {
     ReleaseSRWLockExclusive(&g_command_lock);
     return false;
@@ -267,9 +397,33 @@ bool QueueCommand(const Command& input, uint64_t* request_id) {
   g_commands[g_write] = command;
   g_write = (g_write + 1) % kCommandCapacity;
   ++g_count;
+  g_pending_command_count.store(g_count, std::memory_order_release);
   ReleaseSRWLockExclusive(&g_command_lock);
   if (request_id) *request_id = command.request_id;
   return true;
+}
+
+void DiscardAllCommands() {
+  AcquireSRWLockExclusive(&g_command_lock);
+  for (Command& command : g_commands) command = {};
+  g_read = 0;
+  g_write = 0;
+  g_count = 0;
+  g_pending_command_count.store(g_count, std::memory_order_release);
+  ReleaseSRWLockExclusive(&g_command_lock);
+}
+
+void SetCommandAcceptance(bool accepting) {
+  AcquireSRWLockExclusive(&g_command_lock);
+  g_accepting_commands = accepting;
+  if (!accepting) {
+    for (Command& command : g_commands) command = {};
+    g_read = 0;
+    g_write = 0;
+    g_count = 0;
+  }
+  g_pending_command_count.store(g_count, std::memory_order_release);
+  ReleaseSRWLockExclusive(&g_command_lock);
 }
 
 bool PollCommand(Command* output) {
@@ -281,6 +435,7 @@ bool PollCommand(Command* output) {
     g_commands[g_read] = {};
     g_read = (g_read + 1) % kCommandCapacity;
     --g_count;
+    g_pending_command_count.store(g_count, std::memory_order_release);
   }
   ReleaseSRWLockExclusive(&g_command_lock);
   return available;
@@ -300,14 +455,12 @@ void RejectStaleCommands(uint64_t world_epoch) {
   g_read = 0;
   g_count = retained_count;
   g_write = retained_count % kCommandCapacity;
+  g_pending_command_count.store(g_count, std::memory_order_release);
   ReleaseSRWLockExclusive(&g_command_lock);
 }
 
 uint32_t PendingCommandCount() {
-  AcquireSRWLockShared(&g_command_lock);
-  const uint32_t count = g_count;
-  ReleaseSRWLockShared(&g_command_lock);
-  return count;
+  return g_pending_command_count.load(std::memory_order_acquire);
 }
 
 }  // namespace wfcds

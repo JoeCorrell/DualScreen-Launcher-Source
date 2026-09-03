@@ -234,7 +234,22 @@ public final class FrameGeneration {
 
     /** Whether this container asked for frame generation. */
     public static boolean isEnabled(Container container) {
-        return "1".equals(container.getExtra("frameGeneration"));
+        return isRequested(container.getExtra("frameGeneration"), false);
+    }
+
+    /**
+     * Whether the guest Vulkan layer belongs in this launch.
+     *
+     * <p>The diagnostic marker is the one deliberate exception to the
+     * container switch: it exists specifically to reproduce layer failures on
+     * a device without changing the saved container.</p>
+     */
+    public static boolean isRequested(Container container, boolean diagnostic) {
+        return isRequested(container.getExtra("frameGeneration"), diagnostic);
+    }
+
+    static boolean isRequested(String configuredValue, boolean diagnostic) {
+        return diagnostic || "1".equals(configuredValue);
     }
 
     /**
@@ -261,8 +276,15 @@ public final class FrameGeneration {
          * each of them cost.
          */
         boolean diagnostic = isDiagnostic(context);
-        if (DISABLED) {
+        if (DISABLED && !diagnostic) {
             uninstall(rootDir);
+            return false;
+        }
+
+        // Defense in depth: preparing this implicit layer is a launch-time
+        // activation decision, not harmless asset maintenance. Never let a
+        // future caller bypass the saved off state by calling prepare directly.
+        if (!isRequested(container, diagnostic)) {
             return false;
         }
 
@@ -357,6 +379,16 @@ public final class FrameGeneration {
          * nothing left to select and nothing left to get wrong.
          */
         Log.d(TAG, "Layer requested: " + LAYER_NAME);
+    }
+
+    /**
+     * Makes an off container authoritative after its stored environment has
+     * been merged into the session. Old diagnostic builds and manually edited
+     * containers may retain the enable variable, and the implicit-layer
+     * manifest treats its presence as permission to load.
+     */
+    public static void clearEnvVars(EnvVars envVars) {
+        envVars.remove(ENABLE_VAR);
     }
 
     /**

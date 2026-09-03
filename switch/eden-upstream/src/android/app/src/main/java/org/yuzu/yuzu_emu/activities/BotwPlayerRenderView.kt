@@ -1045,8 +1045,8 @@ internal class BotwPlayerRenderView(
                 .getOrNull()
                 ?.let(::File)
             val externalDirectory = context.getExternalFilesDir(null)
-            fun loadActor(actor: String): AssetBytes? {
-                val file = indexedAssets[actor]?.file ?: return null
+            fun loadActorCandidates(actor: String): List<AssetBytes> {
+                val file = indexedAssets[actor]?.file ?: return emptyList()
                 val source = listOfNotNull(
                     configuredDirectory,
                     externalDirectory,
@@ -1090,9 +1090,9 @@ internal class BotwPlayerRenderView(
                 // generated GLB can restore its raw bind pose, so its package wins. BOTW keeps
                 // user-generated equipment overrides authoritative.
                 return if (profile == PlayerRenderProfile.Sshd) {
-                    loadedFromPackage ?: loadedFromFile
+                    listOfNotNull(loadedFromPackage, loadedFromFile)
                 } else {
-                    loadedFromFile ?: loadedFromPackage
+                    listOfNotNull(loadedFromFile, loadedFromPackage)
                 }
             }
             val fallbackActor = if (profile == PlayerRenderProfile.Botw) {
@@ -1103,33 +1103,34 @@ internal class BotwPlayerRenderView(
             } else {
                 null
             }
-            val loaded = loadActor(requestedActor) ?: fallbackActor
+            val requestedModels = loadActorCandidates(requestedActor)
+            val fallbackModels = fallbackActor
                 ?.takeUnless { it == requestedActor }
-                ?.let(::loadActor)
-                ?.let { fallback ->
-                    Log.warning(
-                        "[BOTW Companion] Player model $requestedActor is unavailable; " +
-                            "using ${fallback.actor}"
-                    )
-                    AssetBytes(requestedActor, fallback.bytes, fallback.actor)
+                ?.let(::loadActorCandidates)
+                .orEmpty()
+                .map { fallback ->
+                    AssetBytes(requestedActor, fallback.bytes, fallback.sourceActor)
                 }
+            val candidates = requestedModels + fallbackModels
             post {
                 if (released || releasing || requestGenerations[slot] != generation) return@post
                 pendingSlots.remove(slot)
-                if (loaded == null) {
-                    removeSlot(slot)
+                if (candidates.isEmpty()) {
                     if (missingActors.add(requestedActor)) {
-                        Log.warning("[BOTW Companion] No player model for $requestedActor")
+                        Log.warning(
+                            "[BOTW Companion] No player model for $requestedActor; " +
+                                "keeping the current $slot model"
+                        )
                     }
                     updateReadiness()
                 } else {
-                    installSlot(slot, loaded)
+                    installSlot(slot, candidates)
                 }
             }
         }
     }
 
-    private fun installSlot(slot: String, model: AssetBytes) {
+    private fun installSlot(slot: String, models: List<AssetBytes>) {
         val loader = assetLoader
         val resources = resourceLoader
         val targetScene = scene
@@ -1137,6 +1138,30 @@ internal class BotwPlayerRenderView(
             updateReadiness()
             return
         }
+        if (models.any { model ->
+                installSlotCandidate(slot, model, loader, resources, targetScene)
+            }
+        ) {
+            updateReadiness()
+            return
+        }
+        val actor = models.first().actor
+        if (missingActors.add(actor)) {
+            Log.warning(
+                "[BOTW Companion] Every player model candidate for $actor failed; " +
+                    "keeping the current $slot model"
+            )
+        }
+        updateReadiness()
+    }
+
+    private fun installSlotCandidate(
+        slot: String,
+        model: AssetBytes,
+        loader: AssetLoader,
+        resources: ResourceLoader,
+        targetScene: Scene
+    ): Boolean {
         var createdAsset: FilamentAsset? = null
         var addedToScene = false
         try {
@@ -1146,9 +1171,10 @@ internal class BotwPlayerRenderView(
             buffer.flip()
             val asset = loader.createAsset(buffer)
             if (asset == null) {
-                Log.warning("[BOTW Companion] Invalid player model ${model.actor}")
-                updateReadiness()
-                return
+                Log.warning(
+                    "[BOTW Companion] Invalid player model candidate ${model.sourceActor}"
+                )
+                return false
             }
             createdAsset = asset
             resources.loadResources(asset)
@@ -1186,8 +1212,7 @@ internal class BotwPlayerRenderView(
                 )
                 loader.destroyAsset(asset)
                 createdAsset = null
-                updateReadiness()
-                return
+                return false
             }
             targetScene.addEntities(asset.entities)
             addedToScene = true
@@ -1195,14 +1220,23 @@ internal class BotwPlayerRenderView(
             loadedSlots[slot] = LoadedSlot(model.actor, asset)
             missingActors.remove(model.actor)
             createdAsset = null
-            updateReadiness()
+            if (model.sourceActor != model.actor) {
+                Log.warning(
+                    "[BOTW Companion] Player model ${model.actor} is unavailable; " +
+                        "using ${model.sourceActor}"
+                )
+            }
+            return true
         } catch (exception: Exception) {
             createdAsset?.let { asset ->
                 if (addedToScene) targetScene.removeEntities(asset.entities)
                 loader.destroyAsset(asset)
             }
-            Log.error("[BOTW Companion] Player model ${model.actor} failed: ${exception.message}")
-            updateReadiness()
+            Log.error(
+                "[BOTW Companion] Player model candidate ${model.sourceActor} failed: " +
+                    exception.message
+            )
+            return false
         }
     }
 

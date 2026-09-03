@@ -5,9 +5,22 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.InputStream
 
-/** Resolves a payload from first-boot storage, with bundled assets as a migration fallback. */
+/**
+ * Resolves payload assets from either the APK or first-boot storage.
+ *
+ * A locally-built APK can contain mod files newer than the last published
+ * payload pack. In that case the downloaded store must not shadow the APK:
+ * doing so made a new mod manifest and DLL look successfully installed while
+ * the old downloaded copies were actually being read. A genuinely newer
+ * remote payload catalog still takes precedence over the APK.
+ */
 internal object PayloadAssetStore {
     private const val DIRECTORY = "payload-assets/current"
+    private const val VERSION_FILE = ".version"
+    private const val BOOTSTRAP_MANIFEST = "payload-bootstrap.json"
+
+    @Volatile
+    private var embeddedCatalogVersion: String? = null
 
     fun root(context: Context): File = File(context.filesDir, DIRECTORY)
 
@@ -18,6 +31,16 @@ internal object PayloadAssetStore {
         check(downloaded.path.startsWith(root.path + File.separator)) {
             "Payload path escapes the payload store"
         }
+        if (shouldPreferBundledModAsset(
+                normalized,
+                File(root, VERSION_FILE).readTextOrNull(),
+                readEmbeddedCatalogVersion(context),
+            )
+        ) {
+            runCatching { context.assets.open(normalized) }
+                .getOrNull()
+                ?.let { return it }
+        }
         if (downloaded.isFile) return downloaded.inputStream().buffered()
         return runCatching { context.assets.open(normalized) }.getOrElse {
             throw FileNotFoundException(
@@ -26,6 +49,20 @@ internal object PayloadAssetStore {
             )
         }
     }
+
+    private fun readEmbeddedCatalogVersion(context: Context): String {
+        embeddedCatalogVersion?.let { return it }
+        return synchronized(this) {
+            embeddedCatalogVersion ?: context.assets.open(BOOTSTRAP_MANIFEST)
+                .bufferedReader()
+                .use { PayloadBootstrapManifest.parse(it.readText()).version }
+                .also { embeddedCatalogVersion = it }
+        }
+    }
+
+    private fun File.readTextOrNull(): String? = runCatching {
+        takeIf(File::isFile)?.readText()?.trim()?.takeIf(String::isNotBlank)
+    }.getOrNull()
 
     internal fun normalize(relativePath: String): String {
         val normalized = relativePath.replace('\\', '/').trimStart('/')
@@ -39,3 +76,12 @@ internal object PayloadAssetStore {
         return normalized
     }
 }
+
+/** Visible for the payload precedence regression tests. */
+internal fun shouldPreferBundledModAsset(
+    normalizedPath: String,
+    storedCatalogVersion: String?,
+    embeddedCatalogVersion: String,
+): Boolean = normalizedPath.startsWith("mods/") &&
+    (storedCatalogVersion == null ||
+        !isNewerVersion(storedCatalogVersion, embeddedCatalogVersion))

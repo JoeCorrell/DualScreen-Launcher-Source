@@ -114,12 +114,10 @@ constexpr u32 BotwActorMessageSendOffset = 0x0154C61C;
 constexpr u32 BotwCaptureSpawnedActorOffset = 0x00CC12F0;
 constexpr u32 BotwGetActorMessageIdOffset = 0x01070E58;
 constexpr u32 BotwReleaseCapturedActorOffset = 0x01126464;
-// Pause return advances the CarryBox manager to its gameplay-active state after the selected
-// ingredients have adopted the CarryBox actor. Without this transition the ingredients are real
-// held pouch entries, but the CarryBox anchor remains at its spawn transform and does not follow
-// Link. Calling the manager directly keeps the companion independent of PauseMenuDataMgr.
+// PlayerGrab normally updates this manager's root transform while gameplay is active. Companion
+// Hold runs outside that PlayerGrab state transition, so the bridge mirrors the same root matrix
+// update without invoking CarryBox's state-transition dispatcher.
 constexpr u32 BotwCarryBoxManagerOffset = 0x01E0C828;
-constexpr u32 BotwCarryBoxResumeOffset = 0x00B229BC;
 constexpr u32 BotwCarryBoxRootMatrixOffset = 0xD8;
 constexpr u32 BotwCarryBoxAnchorOffset = 0x310;
 constexpr u32 BotwCarryBoxFlagsOffset = 0xA78;
@@ -1233,13 +1231,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit_page_address(0, mailbox_main_offset);
     emit(EncodeAddImmediate64(0, 0, BotwHoldCaptureScratchOffset));
     emit_call(BotwReleaseCapturedActorOffset);
-    emit_load_address(0, BotwCarryBoxManagerOffset);
-    emit(0xF9400000U);
-    const auto branch_hold_no_carry_box_manager = emit(0);
-    emit(0x2A1F03E1U);
-    emit(0xAA1F03E2U);
-    emit_call(BotwCarryBoxResumeOffset);
-    const auto hold_carry_box_resumed = code.size();
     emit_page_address(14, mailbox_main_offset);
     emit(0x52800028U);
     emit(EncodeStoreUnsigned32(8, 14, BotwActionDiagnosticNativeResultOffset));
@@ -1648,8 +1639,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         EncodeCompareBranchZero(true, 8, branch_hold_no_captured_actor, hold_no_captured_actor);
     code[branch_hold_no_sender_after_mutation] = EncodeCompareBranchZero(
         true, 0, branch_hold_no_sender_after_mutation, hold_no_captured_actor);
-    code[branch_hold_no_carry_box_manager] = EncodeCompareBranchZero(
-        true, 0, branch_hold_no_carry_box_manager, hold_carry_box_resumed);
     code[branch_hold_success] = EncodeLocalBranch(branch_hold_success, success_stack);
     code[branch_hold_no_captured_actor_success] =
         EncodeLocalBranch(branch_hold_no_captured_actor_success, success_stack);
@@ -1822,7 +1811,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwCaptureSpawnedActorOffset, 0xD0008A88U, "spawned actor capture"},
         {BotwGetActorMessageIdOffset, 0xA9BE7BFDU, "actor message id"},
         {BotwReleaseCapturedActorOffset, 0xA9BE7BFDU, "captured actor release"},
-        {BotwCarryBoxResumeOffset, 0xFC1A0FEAU, "CarryBox gameplay resume"},
         {BotwHoldMessageTypeOffset, 0x08000003U, "hold message type"},
         {BotwHoldCallerCapturePointerOffset, 0xF9400BE8U, "hold capture pointer"},
         {BotwHoldCallerSenderOffset, 0x91054276U, "hold sender"},

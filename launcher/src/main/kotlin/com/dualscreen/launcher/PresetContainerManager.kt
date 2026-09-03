@@ -37,8 +37,8 @@ class PresetContainerManager(private val context: Context) {
         prepareRuntime(reporter)
         val specification = presetFor(game)
         val baseProfile = loadPreset(specification)
-        val selectedDriver = selectedDriver(baseProfile, specification)
-        val profile = profileWithDriver(baseProfile, selectedDriver)
+        val initialDriver = selectedDriver(baseProfile, specification)
+        val profile = profileWithDriver(baseProfile, initialDriver)
         ComponentProvisioner(context).ensure(profile, reporter)
 
         val manager = withContext(Dispatchers.IO) { ContainerManager(context) }
@@ -52,7 +52,25 @@ class PresetContainerManager(private val context: Context) {
                 manager.getContainerById(storedId)
             }
             if (existing != null && existing.configFile.isFile) {
-                synchronizePresetConfiguration(existing, baseProfile, selectedDriver, specification)
+                val selectedDriver = selectedDriver(baseProfile, specification, existing)
+                val configurationChanged = synchronizePresetConfiguration(
+                    existing,
+                    baseProfile,
+                    selectedDriver,
+                    specification,
+                )
+                if (configurationChanged) {
+                    // prepare() runs before prepareForLaunch(). If the updated
+                    // preset is saved while the old materialization receipt is
+                    // left current, prepareForLaunch() sees no remaining JSON
+                    // delta and skips rebuilding runtime files. In particular,
+                    // that preserved WFC's DXVK cache from the unsafe settings
+                    // the preset just replaced.
+                    invalidateRuntimeMaterialization(existing)
+                    check(existing.saveData()) {
+                        "Could not invalidate the changed ${specification.expectedName} runtime"
+                    }
+                }
                 preferences.edit().putString(fingerprintKey(specification), fingerprint).apply()
                 sharedStorage.exportContainerSnapshot(existing)
                 reporter(InstallStage.CONTAINER, 1f, "Using tested container ${existing.name}")
@@ -82,11 +100,24 @@ class PresetContainerManager(private val context: Context) {
     /** Applies a validated global driver selection to the existing preset. */
     suspend fun applyGpuDriver(driverId: String): Boolean = withContext(Dispatchers.IO) {
         val selected = driverId.ifBlank { DEFAULT_CAPTURED_GPU_DRIVER }
-        val storedId = preferences.getInt(containerIdKey(DEFAULT_PRESET), -1)
-        if (storedId <= 0) return@withContext true
         val manager = ContainerManager(context).apply { reload() }
-        val container = manager.getContainerById(storedId) ?: return@withContext true
-        updateContainerDriver(container, selected)
+        val specifications = buildList {
+            add(DEFAULT_PRESET)
+            // The vendor/system Vulkan path is known to black-screen WFC on
+            // this device. Custom and bundled AdrenoTools choices are explicit
+            // user selections and may replace its safe captured Turnip default.
+            if (!selected.equals(DefaultVersion.WRAPPER, ignoreCase = true)) {
+                add(TRANSFORMERS_WFC_PRESET)
+            }
+        }
+        specifications.all { specification ->
+            val storedId = preferences.getInt(containerIdKey(specification), -1)
+            if (storedId <= 0) return@all true
+            val container = manager.getContainerById(storedId) ?: return@all true
+            updateContainerDriver(container, selected).also { updated ->
+                if (updated) sharedStorage.exportContainerSnapshot(container)
+            }
+        }
     }
 
     private fun updateContainerDriver(container: Container, selected: String): Boolean {
@@ -132,7 +163,7 @@ class PresetContainerManager(private val context: Context) {
                 "${game.title} is assigned to the wrong predefined container"
             }
             val baseProfile = loadPreset(specification)
-            val selectedDriver = selectedDriver(baseProfile, specification)
+            val selectedDriver = selectedDriver(baseProfile, specification, container)
             ensureSelectedDriverAvailable(selectedDriver)
             val configurationChanged = synchronizePresetConfiguration(
                 container,
@@ -140,13 +171,18 @@ class PresetContainerManager(private val context: Context) {
                 selectedDriver,
                 specification,
             )
-            if (container.getExtra(KEY_MATERIALIZATION_REVISION) == MATERIALIZATION_REVISION &&
-                !configurationChanged
+            if (!shouldInvalidateRuntimeMaterialization(
+                    configurationChanged,
+                    container.getExtra(KEY_MATERIALIZATION_REVISION),
+                )
             ) {
                 return@withContext false
             }
 
-            RUNTIME_RECEIPT_KEYS.forEach { key -> container.putExtra(key, null) }
+            // Clear the revision itself as well as the individual receipts. If
+            // the process is interrupted before markLaunchMaterialized(), the
+            // next launch must retry instead of trusting a stale revision.
+            invalidateRuntimeMaterialization(container)
             check(container.saveData()) { "Could not stage the copied container runtime" }
             reporter(
                 if (configurationChanged) {
@@ -256,13 +292,21 @@ class PresetContainerManager(private val context: Context) {
         }
     }
 
-    private fun selectedDriver(base: JSONObject, specification: PresetSpecification): String =
-        if (specification.allowGpuOverride) {
+    private fun selectedDriver(
+        base: JSONObject,
+        specification: PresetSpecification,
+        existing: Container? = null,
+    ): String = when {
+        specification.allowGpuOverride ->
             LauncherSettingsStore(context).settings.value.gpuDriverId
                 .ifBlank { DEFAULT_CAPTURED_GPU_DRIVER }
-        } else {
-            base.getString("rendererDriverId")
-        }
+        specification.preserveExistingGpuSelection && existing != null ->
+            existing.rendererDriverId.takeIf(String::isNotBlank)
+                ?: GraphicsDriverConfig.parse(existing.graphicsDriverConfig)["version"]
+                    ?.takeIf(String::isNotBlank)
+                ?: base.getString("rendererDriverId")
+        else -> base.getString("rendererDriverId")
+    }
 
     private fun profileWithDriver(base: JSONObject, selected: String): JSONObject =
         JSONObject(base.toString()).also { profile ->
@@ -361,7 +405,12 @@ class PresetContainerManager(private val context: Context) {
             key = "transformers-wfc",
             asset = "presets/transformers-wfc.json",
             expectedName = "Transformers WFC",
-            allowGpuOverride = true,
+            // WFC's captured WEMU configuration requires Turnip 26.2.0. The
+            // device system driver rejects DXVK's Vulkan feature chain and
+            // leaves the game on a black screen. Start safely, then preserve a
+            // compatible AdrenoTools driver the user explicitly selects.
+            allowGpuOverride = false,
+            preserveExistingGpuSelection = true,
         )
         private const val KEY_CONTAINER_ID = "containerId"
         private const val KEY_FINGERPRINT = "fingerprint"
@@ -400,6 +449,22 @@ class PresetContainerManager(private val context: Context) {
             "dpi",
             "startupSelection",
         )
+
+        internal fun shouldInvalidateRuntimeMaterialization(
+            configurationChanged: Boolean,
+            materializationRevision: String,
+        ): Boolean = configurationChanged || materializationRevision != MATERIALIZATION_REVISION
+
+        private fun invalidateRuntimeMaterialization(container: Container) {
+            val extras = container.extraDataCopy
+            removeRuntimeMaterializationReceipts(extras)
+            container.setExtraData(extras)
+        }
+
+        internal fun removeRuntimeMaterializationReceipts(extras: JSONObject) {
+            RUNTIME_RECEIPT_KEYS.forEach(extras::remove)
+            extras.remove(KEY_MATERIALIZATION_REVISION)
+        }
     }
 }
 
@@ -422,6 +487,7 @@ private data class PresetSpecification(
     val asset: String,
     val expectedName: String,
     val allowGpuOverride: Boolean,
+    val preserveExistingGpuSelection: Boolean = false,
 )
 
 /**

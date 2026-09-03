@@ -38,6 +38,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val switchSystemState = app.switchBackend.systemState
     val gpuDrivers = app.gpuDrivers.drivers
     val gpuDriverImportState = app.gpuDrivers.importState
+    val pcGpuDriverOperation = app.gpuDrivers.operation
     internal val payloadState = app.payloads.state
     internal val updateState = app.updates.state
     private var synchronizedPayloadVersion: String? = null
@@ -200,6 +201,16 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val driverId = app.gpuDrivers.install(uri) ?: return@launch
             setGpuDriver(driverId)
+        }
+    }
+
+    suspend fun fetchPcGpuDrivers(): Result<List<SwitchDriverRelease>> =
+        app.gpuDrivers.fetchReleases()
+
+    fun downloadPcGpuDriver(artifact: SwitchDriverArtifact) {
+        viewModelScope.launch {
+            app.gpuDrivers.downloadAndInstall(artifact)
+                .onSuccess(::setGpuDriver)
         }
     }
 

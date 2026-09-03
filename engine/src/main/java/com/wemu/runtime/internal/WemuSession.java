@@ -718,30 +718,33 @@ public class WemuSession implements RuntimeSession {
         }
 
         /*
-         * Frame generation, only once its layer has somewhere to get shaders.
-         *
-         * `prepare` installs the layer and finds the user's Lossless Scaling
-         * DLL, and returns false if either is missing. That return value is
-         * load-bearing: a layer named in VK_INSTANCE_LAYERS that then cannot
-         * find its shaders aborts the application rather than declining, so a
-         * container with the switch on and no DLL would simply refuse to start.
+         * Frame generation is an implicit Vulkan layer. Its files can exist in
+         * the shared image without affecting a game, but ENABLE_VAR causes the
+         * loader to insert it into this session's Vulkan device. Gate both
+         * preparation and that variable on the container's actual setting.
          */
-        if (FrameGeneration.prepare(context, container)) {
+        boolean frameGenerationDiagnostic = FrameGeneration.isDiagnostic(context);
+        boolean frameGenerationRequested =
+                FrameGeneration.isRequested(container, frameGenerationDiagnostic);
+        if (frameGenerationRequested && FrameGeneration.prepare(context, container)) {
             FrameGeneration.applyEnvVars(envVars);
             // The loader says nothing about a layer it declined to load unless
             // asked, so a container already collecting logs collects those too
             // — and a diagnostic run always does, since the whole reason it is
             // running is to read what the loader saw.
-            boolean diagnostic = FrameGeneration.isDiagnostic(context);
-            if (enableWineDebug || diagnostic) FrameGeneration.applyDebugEnvVars(envVars, diagnostic);
+            if (enableWineDebug || frameGenerationDiagnostic) {
+                FrameGeneration.applyDebugEnvVars(envVars, frameGenerationDiagnostic);
+            }
             Log.d(TAG, "Frame generation enabled");
-        } else if (FrameGeneration.isEnabled(container)) {
-            // Not a warning any more, and it must not read like one. Frame
-            // generation runs in this app's compositor now; what failed here is
-            // only the guest-side layer, which is disabled on purpose. Left
-            // saying so because two of these lines together previously looked
-            // exactly like the feature refusing to start.
-            Log.d(TAG, "Frame generation is handled by the compositor; the guest layer stays out");
+        } else {
+            // Container and shortcut environment is merged above. Remove a
+            // stale/manual copy as well as declining to add a new one.
+            FrameGeneration.clearEnvVars(envVars);
+            if (frameGenerationRequested) {
+                Log.w(TAG, "Frame generation was requested but its layer could not be prepared");
+            } else {
+                Log.d(TAG, "Frame generation disabled; guest Vulkan layer not requested");
+            }
         }
 
         ArrayList<String> bindingPaths = new ArrayList<>();

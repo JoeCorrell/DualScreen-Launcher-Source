@@ -22,9 +22,17 @@ namespace {
 
 constexpr int kWidth = kPanelWidth;
 constexpr int kHeight = kPanelHeight;
-constexpr UINT_PTR kRenderTimer = 1;
+constexpr UINT_PTR kUiTimer = 1;
 constexpr UINT kShutdownMessage = WM_APP + 0x5746;
+constexpr UINT kSnapshotMessage = WM_APP + 0x5747;
+constexpr UINT kSocketMessage = WM_APP + 0x5748;
 constexpr unsigned short kInputPort = 7788;
+// CPU/GDI panels are copied into an AHardwareBuffer before scanout. Animating
+// at 15 fps copied roughly 80 MiB/s for this 1240x1080 surface and competed
+// with the game for memory bandwidth. Eight frames per second remains smooth
+// for a cooldown fill without continuously pressuring the primary renderer.
+constexpr ULONGLONG kCooldownFrameIntervalMs = 125;
+constexpr ULONGLONG kNavigationIntervalMs = 140;
 
 constexpr COLORREF kBackground = RGB(1, 8, 13);
 constexpr COLORREF kPanel = RGB(4, 17, 25);
@@ -41,6 +49,7 @@ DWORD g_thread_id = 0;
 HWND g_window = nullptr;
 HDC g_memory_dc = nullptr;
 HBITMAP g_bitmap = nullptr;
+void* g_bitmap_bits = nullptr;
 HGDIOBJ g_old_bitmap = nullptr;
 HFONT g_font_label = nullptr;
 HFONT g_font_body = nullptr;
@@ -54,9 +63,23 @@ HitTarget g_pressed = HitTarget::kNone;
 HitTarget g_focus = HitTarget::kTransform;
 ULONGLONG g_pressed_until = 0;
 std::array<ULONGLONG, 16> g_last_action_by_target = {};
+ULONGLONG g_input_locked_until = 0;
+ULONGLONG g_last_navigation_at = 0;
+ULONGLONG g_last_cooldown_frame = 0;
+bool g_ui_timer_armed = false;
+bool g_cooldown_animation_scheduled = false;
 uint64_t g_drawn_sequence = 0;
 Snapshot g_drawn_snapshot = {};
 bool g_have_drawn_snapshot = false;
+
+struct LocalCooldown {
+  uint64_t world_epoch = 0;
+  uint32_t ability_object_index = 0;
+  ULONGLONG used_at = 0;
+  float duration = 0.0f;
+};
+
+std::array<LocalCooldown, 2> g_local_cooldowns = {};
 
 RECT Rect(int left, int top, int right, int bottom) {
   RECT value = {left, top, right, bottom};
@@ -68,19 +91,21 @@ RECT Rect(const PanelPixelRect& source) {
 }
 
 void Fill(HDC dc, const RECT& rect, COLORREF color) {
-  HBRUSH brush = CreateSolidBrush(color);
-  FillRect(dc, &rect, brush);
-  DeleteObject(brush);
+  const COLORREF previous = SetDCBrushColor(dc, color);
+  FillRect(dc, &rect, static_cast<HBRUSH>(GetStockObject(DC_BRUSH)));
+  if (previous != CLR_INVALID) SetDCBrushColor(dc, previous);
 }
 
 void Frame(HDC dc, const RECT& rect, COLORREF color, int width = 2) {
-  HPEN pen = CreatePen(PS_SOLID, width, color);
-  HGDIOBJ old_pen = SelectObject(dc, pen);
-  HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-  Rectangle(dc, rect.left, rect.top, rect.right, rect.bottom);
-  SelectObject(dc, old_brush);
-  SelectObject(dc, old_pen);
-  DeleteObject(pen);
+  const COLORREF previous = SetDCBrushColor(dc, color);
+  HBRUSH brush = static_cast<HBRUSH>(GetStockObject(DC_BRUSH));
+  for (int inset = 0; inset < width; ++inset) {
+    RECT edge = Rect(rect.left + inset, rect.top + inset,
+                     rect.right - inset, rect.bottom - inset);
+    if (edge.left >= edge.right || edge.top >= edge.bottom) break;
+    FrameRect(dc, &edge, brush);
+  }
+  if (previous != CLR_INVALID) SetDCBrushColor(dc, previous);
 }
 
 std::wstring Wide(const char* text) {
@@ -148,6 +173,47 @@ void Segments(HDC dc, RECT rect, float current, float maximum,
   }
 }
 
+float DisplayCooldownRemaining(const Snapshot& state, size_t slot,
+                               ULONGLONG now) {
+  if (slot >= g_local_cooldowns.size()) return 0.0f;
+  const AbilityState& ability = state.abilities[slot];
+  LocalCooldown& local = g_local_cooldowns[slot];
+  if (local.used_at &&
+      (local.world_epoch != state.world_epoch ||
+       local.ability_object_index != ability.object_index))
+    local = {};
+
+  const ULONGLONG sampled_at = state.captured_at_millis;
+  float remaining = ability.cooldown_remaining;
+  if (remaining > 0.0f && sampled_at && now > sampled_at)
+    remaining = std::max(0.0f, remaining -
+        static_cast<float>(now - sampled_at) / 1000.0f);
+
+  if (local.used_at) {
+    const float elapsed = now > local.used_at
+                              ? static_cast<float>(now - local.used_at) /
+                                    1000.0f
+                              : 0.0f;
+    const float predicted = std::max(0.0f, local.duration - elapsed);
+    // Reset immediately when the tap is accepted locally, then hand back to
+    // the native counter as soon as a post-use sample reports it.
+    if (!sampled_at || sampled_at <= local.used_at ||
+        ability.cooldown_pending ||
+        (ability.cooldown_remaining <= 0.0f && elapsed < 0.25f))
+      remaining = std::max(remaining, predicted);
+    else if (ability.cooldown_remaining > 0.0f || ability.available)
+      local = {};
+  }
+  return std::isfinite(remaining) ? std::max(0.0f, remaining) : 0.0f;
+}
+
+bool CooldownAnimationActive(const Snapshot& state, ULONGLONG now) {
+  for (size_t slot = 0; slot < 2; ++slot)
+    if (DisplayCooldownRemaining(state, slot, now) > 0.01f)
+      return true;
+  return false;
+}
+
 bool Pressed(HitTarget target) {
   return g_pressed == target && GetTickCount64() < g_pressed_until;
 }
@@ -160,13 +226,19 @@ void DrawArrow(HDC dc, RECT rect, bool right, bool pressed) {
   PanelBox(dc, rect, pressed);
   const int cy = (rect.top + rect.bottom) / 2;
   const int cx = (rect.left + rect.right) / 2;
-  HPEN pen = CreatePen(PS_SOLID, 6, kWhite);
-  HGDIOBJ old = SelectObject(dc, pen);
-  MoveToEx(dc, right ? cx - 18 : cx + 18, cy - 20, nullptr);
-  LineTo(dc, right ? cx + 6 : cx - 6, cy);
-  LineTo(dc, right ? cx - 18 : cx + 18, cy + 20);
-  SelectObject(dc, old);
-  DeleteObject(pen);
+  POINT points[] = {{right ? cx - 18 : cx + 18, cy - 20},
+                    {right ? cx + 6 : cx - 6, cy},
+                    {right ? cx - 18 : cx + 18, cy + 20}};
+  const COLORREF previous_pen = SetDCPenColor(dc, kWhite);
+  HGDIOBJ old_pen = SelectObject(dc, GetStockObject(DC_PEN));
+  for (int offset = -2; offset <= 3; ++offset) {
+    POINT stroke[] = {{points[0].x + offset, points[0].y},
+                      {points[1].x + offset, points[1].y},
+                      {points[2].x + offset, points[2].y}};
+    Polyline(dc, stroke, 3);
+  }
+  SelectObject(dc, old_pen);
+  if (previous_pen != CLR_INVALID) SetDCPenColor(dc, previous_pen);
 }
 
 void DrawNavigation(HDC dc) {
@@ -271,8 +343,59 @@ void DrawWeapon(HDC dc, RECT rect, const wchar_t* label,
            capacity_current, capacity_maximum, kOrange);
 }
 
+float CooldownProgress(const AbilityState& ability, float remaining) {
+  const bool assigned = ability.object_index != 0;
+  const float duration = std::max(ability.cooldown_duration, remaining);
+  if (!assigned || (ability.cooldown_pending && remaining <= 0.01f))
+    return 0.0f;
+  if (remaining <= 0.01f) return 1.0f;
+  return duration > 0.0f
+             ? std::clamp(1.0f - remaining / duration, 0.0f, 1.0f)
+             : 0.0f;
+}
+
+void DrawAbilityCooldownParts(HDC dc, RECT rect,
+                              const AbilityState& ability,
+                              HitTarget target, const Snapshot& state,
+                              size_t slot, ULONGLONG now) {
+  const bool active = Pressed(target) || Focused(target);
+  const bool assigned = ability.object_index != 0;
+  const float remaining = DisplayCooldownRemaining(state, slot, now);
+  const float progress = CooldownProgress(ability, remaining);
+  const RECT icon = Rect(rect.left + 60, rect.top + 54, rect.right - 60,
+                         rect.bottom - 100);
+  RECT cooldown_track = Rect(icon.right - 13, icon.top + 5,
+                             icon.right - 5, icon.bottom - 5);
+  Fill(dc, cooldown_track, RGB(10, 50, 64));
+  RECT cooldown_fill = cooldown_track;
+  cooldown_fill.top = cooldown_fill.bottom - static_cast<int>(
+      (cooldown_fill.bottom - cooldown_fill.top) * progress);
+  if (cooldown_fill.top < cooldown_fill.bottom)
+    Fill(dc, cooldown_fill, kCyan);
+  Frame(dc, cooldown_track, kCyanDim, 1);
+
+  const RECT status_rect = Rect(rect.left + 15, rect.bottom - 51,
+                                rect.right - 15, rect.bottom - 12);
+  Fill(dc, status_rect, active ? RGB(8, 27, 35) : kPanel);
+  wchar_t status[96] = L"UNAVAILABLE";
+  if (assigned && ability.cooldown_pending)
+    std::swprintf(status, 96, L"NOT READY");
+  else if (assigned && remaining > 0.01f)
+    std::swprintf(status, 96, L"COOLDOWN  %.1f SEC", remaining);
+  else if (assigned && ability.resource_cost > 0.0f)
+    std::swprintf(status, 96, L"ENERGY COST  %.0f", ability.resource_cost);
+  else if (ability.available)
+    std::swprintf(status, 96, L"READY");
+  else if (assigned)
+    std::swprintf(status, 96, L"NOT READY");
+  Text(dc, status, status_rect, g_font_body,
+       ability.available ? kCyan : kMuted,
+       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
 void DrawAbility(HDC dc, RECT rect, const wchar_t* label,
-                 const AbilityState& ability, HitTarget target) {
+                 const AbilityState& ability, HitTarget target,
+                 const Snapshot& state, size_t slot, ULONGLONG now) {
   const bool active = Pressed(target) || Focused(target);
   const bool assigned = ability.object_index != 0;
   PanelBox(dc, rect, active);
@@ -290,25 +413,12 @@ void DrawAbility(HDC dc, RECT rect, const wchar_t* label,
   TextUtf8(dc, ability.name,
            Rect(rect.left + 12, rect.bottom - 94, rect.right - 12,
                 rect.bottom - 53), g_font_title,
-           assigned ? kWhite : kMuted,
-           DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-  wchar_t status[96] = L"UNAVAILABLE";
-  if (assigned && ability.cooldown_pending)
-    std::swprintf(status, 96, L"NOT READY");
-  else if (assigned && ability.cooldown_remaining > 0.01f)
-    std::swprintf(status, 96, L"COOLDOWN  %.1f SEC",
-                  ability.cooldown_remaining);
-  else if (assigned && ability.resource_cost > 0.0f)
-    std::swprintf(status, 96, L"ENERGY COST  %.0f", ability.resource_cost);
-  else if (ability.available)
-    std::swprintf(status, 96, L"READY");
-  else if (assigned)
-    std::swprintf(status, 96, L"NOT READY");
-  Text(dc, status,
-       Rect(rect.left + 15, rect.bottom - 51, rect.right - 15,
-            rect.bottom - 12), g_font_body,
-       ability.available ? kCyan : kMuted,
-       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            assigned ? kWhite : kMuted,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+  // A bottom-up native-cooldown fill stays visible over both transparent and
+  // opaque ability artwork. It starts empty on use and reaches the top when
+  // the ability becomes ready.
+  DrawAbilityCooldownParts(dc, rect, ability, target, state, slot, now);
 }
 
 void DrawAction(HDC dc, RECT rect, const wchar_t* label, const char* icon_key,
@@ -360,14 +470,15 @@ void DrawObjectivePanel(HDC dc, RECT rect, const Snapshot& state) {
 }
 
 void DrawCombat(HDC dc, const Snapshot& state) {
+  const ULONGLONG now = GetTickCount64();
   DrawWeapon(dc, Rect(14, 220, 475, 520), L"PRIMARY WEAPON",
              state.weapons[0]);
   DrawWeapon(dc, Rect(14, 532, 475, 832), L"SECONDARY WEAPON",
              state.weapons[1]);
   DrawAbility(dc, Rect(kAbility1Rect), L"ABILITY 1",
-              state.abilities[0], HitTarget::kAbility1);
+              state.abilities[0], HitTarget::kAbility1, state, 0, now);
   DrawAbility(dc, Rect(kAbility2Rect), L"ABILITY 2",
-              state.abilities[1], HitTarget::kAbility2);
+              state.abilities[1], HitTarget::kAbility2, state, 1, now);
   DrawObjectivePanel(dc, Rect(798, 220, 1226, 832), state);
 
   const bool grenade_enabled = (state.capabilities & kCapGrenadeAction) &&
@@ -413,6 +524,26 @@ void DrawCombat(HDC dc, const Snapshot& state) {
              (state.capabilities & kCapReloadAction) != 0);
   DrawAction(dc, Rect(kSwapRect), L"SWAP", "Swap", HitTarget::kSwap,
              (state.capabilities & kCapSwapAction) != 0);
+}
+
+void DrawCooldownFrames(HDC dc, const Snapshot& state, ULONGLONG now) {
+  // A changed ability sample may alter artwork/name/availability, so redraw
+  // both self-contained cards without repainting the full 1240x1080 surface.
+  DrawAbility(dc, Rect(kAbility1Rect), L"ABILITY 1", state.abilities[0],
+              HitTarget::kAbility1, state, 0, now);
+  DrawAbility(dc, Rect(kAbility2Rect), L"ABILITY 2", state.abilities[1],
+              HitTarget::kAbility2, state, 1, now);
+}
+
+void DrawCooldownAnimationFrame(HDC dc, const Snapshot& state,
+                                ULONGLONG now) {
+  // Timer frames change only the narrow meter and status line. Avoid decoding,
+  // scaling and compositing both large cached ability images eight times per
+  // second while a cooldown is active.
+  DrawAbilityCooldownParts(dc, Rect(kAbility1Rect), state.abilities[0],
+                           HitTarget::kAbility1, state, 0, now);
+  DrawAbilityCooldownParts(dc, Rect(kAbility2Rect), state.abilities[1],
+                           HitTarget::kAbility2, state, 1, now);
 }
 
 void DrawSquadCard(HDC dc, RECT rect, const SquadMemberState& member,
@@ -521,19 +652,16 @@ const wchar_t* LifecycleText(Lifecycle lifecycle) {
   return L"WAITING FOR GAME";
 }
 
-void Render() {
+void RenderDrawnSnapshot() {
   if (!g_memory_dc) return;
   Fill(g_memory_dc, Rect(0, 0, kWidth, kHeight), kBackground);
   DrawNavigation(g_memory_dc);
-  Snapshot state;
-  if (!CopyLatestSnapshot(&state)) {
+  if (!g_have_drawn_snapshot) {
     Text(g_memory_dc, L"WAITING FOR GAME", Rect(0, 100, kWidth, kHeight),
          g_font_action, kWhite, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     return;
   }
-  g_drawn_sequence = state.sequence;
-  g_drawn_snapshot = state;
-  g_have_drawn_snapshot = true;
+  const Snapshot& state = g_drawn_snapshot;
   if (state.lifecycle != Lifecycle::kLive && state.lifecycle != Lifecycle::kDead) {
     Text(g_memory_dc, LifecycleText(state.lifecycle),
          Rect(0, 100, kWidth, kHeight), g_font_action,
@@ -547,16 +675,38 @@ void Render() {
   else DrawObjectives(g_memory_dc, state);
 }
 
+void AdoptSnapshot(const Snapshot& state) {
+  g_drawn_sequence = state.sequence;
+  g_drawn_snapshot = state;
+  g_have_drawn_snapshot = true;
+}
+
+void RenderLatestSnapshot() {
+  Snapshot state = {};
+  if (CopyLatestSnapshot(&state)) AdoptSnapshot(state);
+  RenderDrawnSnapshot();
+}
+
+void ScheduleUiTimer(ULONGLONG now);
+
 void SetPage(PanelPage page) {
+  const ULONGLONG now = GetTickCount64();
+  if (page == g_page ||
+      (g_last_navigation_at &&
+       now - g_last_navigation_at < kNavigationIntervalMs))
+    return;
+  g_last_navigation_at = now;
   g_page = page;
+  SetRequestedPanelPage(page);
   if (page == PanelPage::kCombat)
     g_focus = HitTarget::kTransform;
   else if (page == PanelPage::kSquad)
     g_focus = HitTarget::kSquad0;
   else
     g_focus = HitTarget::kNone;
-  Render();
+  RenderDrawnSnapshot();
   InvalidateRect(g_window, nullptr, FALSE);
+  ScheduleUiTimer(now);
 }
 
 void ChangePage(int delta) {
@@ -632,25 +782,85 @@ bool QueueAction(HitTarget target, const Snapshot& state) {
   return QueueCommand(command);
 }
 
+ULONGLONG PanelActionInterval(HitTarget target) {
+  switch (target) {
+    case HitTarget::kTransform: return 1250;
+    case HitTarget::kReload: return 500;
+    case HitTarget::kSwap: return 600;
+    case HitTarget::kAbility1:
+    case HitTarget::kAbility2: return 400;
+    case HitTarget::kGrenade: return 600;
+    case HitTarget::kSquad0:
+    case HitTarget::kSquad1:
+    case HitTarget::kSquad2: return 3000;
+    default: return 0;
+  }
+}
+
+void ScheduleUiTimer(ULONGLONG now) {
+  if (!g_window) return;
+  ULONGLONG due = 0;
+  g_cooldown_animation_scheduled = false;
+  if (g_pressed != HitTarget::kNone && now < g_pressed_until)
+    due = g_pressed_until;
+  if (g_page == PanelPage::kCombat && g_have_drawn_snapshot &&
+      g_drawn_snapshot.lifecycle == Lifecycle::kLive &&
+      CooldownAnimationActive(g_drawn_snapshot, now)) {
+    g_cooldown_animation_scheduled = true;
+    const ULONGLONG cooldown_due =
+        g_last_cooldown_frame + kCooldownFrameIntervalMs > now
+            ? g_last_cooldown_frame + kCooldownFrameIntervalMs
+            : now + 1;
+    if (!due || cooldown_due < due) due = cooldown_due;
+  }
+  if (g_ui_timer_armed) {
+    KillTimer(g_window, kUiTimer);
+    g_ui_timer_armed = false;
+  }
+  if (!due) return;
+  const ULONGLONG delay64 = due > now ? due - now : 1;
+  const UINT delay = static_cast<UINT>(
+      std::clamp<ULONGLONG>(delay64, 1, USER_TIMER_MAXIMUM));
+  g_ui_timer_armed = SetTimer(g_window, kUiTimer, delay, nullptr) != 0;
+}
+
 bool QueueTargetWithFeedback(HitTarget target, const Snapshot& state) {
   const ULONGLONG now = GetTickCount64();
   const size_t target_index = static_cast<size_t>(target);
   if (target_index >= g_last_action_by_target.size() ||
+      now < g_input_locked_until ||
       (g_last_action_by_target[target_index] &&
-       now - g_last_action_by_target[target_index] < 650))
+       now - g_last_action_by_target[target_index] <
+           PanelActionInterval(target)))
     return false;
   if (!QueueAction(target, state)) return false;
   g_last_action_by_target[target_index] = now;
+  // Separate physical touch routes can report different controls in one
+  // burst. Allow at most one native action into the queue during that burst;
+  // the game thread repeats this protection authoritatively.
+  g_input_locked_until = now + 300;
+  if (target == HitTarget::kAbility1 || target == HitTarget::kAbility2) {
+    const size_t slot = target == HitTarget::kAbility1 ? 0 : 1;
+    const float duration = state.abilities[slot].cooldown_duration;
+    if (std::isfinite(duration) && duration > 0.0f) {
+      g_local_cooldowns[slot].world_epoch = state.world_epoch;
+      g_local_cooldowns[slot].ability_object_index =
+          state.abilities[slot].object_index;
+      g_local_cooldowns[slot].used_at = now;
+      g_local_cooldowns[slot].duration = duration;
+    }
+  }
   g_pressed = target;
   g_pressed_until = now + 140;
-  Render();
+  RenderDrawnSnapshot();
   InvalidateRect(g_window, nullptr, FALSE);
+  ScheduleUiTimer(now);
   return true;
 }
 
 void ChangeFocus(int delta) {
-  Snapshot state;
-  if (!CopyLatestSnapshot(&state)) return;
+  if (!g_have_drawn_snapshot) return;
+  const Snapshot& state = g_drawn_snapshot;
   constexpr HitTarget combat_targets[] = {
       HitTarget::kAbility1, HitTarget::kAbility2, HitTarget::kGrenade,
       HitTarget::kTransform, HitTarget::kReload, HitTarget::kSwap};
@@ -678,20 +888,18 @@ void ChangeFocus(int delta) {
                         static_cast<int64_t>(count)) %
                        static_cast<int64_t>(count);
   g_focus = begin[next];
-  Render();
+  RenderDrawnSnapshot();
   InvalidateRect(g_window, nullptr, FALSE);
 }
 
 void ActivateFocus() {
-  if (g_focus == HitTarget::kNone) return;
-  Snapshot state;
-  if (!CopyLatestSnapshot(&state)) return;
-  QueueTargetWithFeedback(g_focus, state);
+  if (g_focus == HitTarget::kNone || !g_have_drawn_snapshot) return;
+  QueueTargetWithFeedback(g_focus, g_drawn_snapshot);
 }
 
 void HandleTap(float x, float y) {
-  Snapshot state;
-  if (!CopyLatestSnapshot(&state)) return;
+  if (!g_have_drawn_snapshot) return;
+  const Snapshot& state = g_drawn_snapshot;
   const HitTarget target = HitTestPanel(g_page, x, y, state.squad_count);
   if (target == HitTarget::kNone) return;
   switch (target) {
@@ -734,7 +942,10 @@ void HandleInput(const PanelInput& input) {
 
 void PollSocket() {
   if (g_socket == INVALID_SOCKET) return;
-  for (;;) {
+  // Bound work per UI timer tick. A burst of duplicated touch datagrams must
+  // not monopolize the panel thread or trigger unbounded feedback redraws.
+  constexpr uint32_t kPacketsPerTick = 32;
+  for (uint32_t packet = 0; packet < kPacketsPerTick; ++packet) {
     char bytes[256] = {};
     sockaddr_in sender = {};
     int sender_size = sizeof(sender);
@@ -771,7 +982,102 @@ bool OpenSocket() {
     g_socket = INVALID_SOCKET;
     return false;
   }
+  // Deliver input only when the socket is readable. The previous 33 ms poll
+  // woke the panel thread about thirty times per second even when untouched.
+  if (!g_window ||
+      WSAAsyncSelect(g_socket, g_window, kSocketMessage,
+                     FD_READ | FD_CLOSE) == SOCKET_ERROR) {
+    closesocket(g_socket);
+    g_socket = INVALID_SOCKET;
+    return false;
+  }
   return true;
+}
+
+bool ExpirePressedFeedback(ULONGLONG now) {
+  if (g_pressed == HitTarget::kNone || now < g_pressed_until) return false;
+  g_pressed = HitTarget::kNone;
+  return true;
+}
+
+void InvalidateAbilityCards(HWND window) {
+  RECT ability1 = Rect(kAbility1Rect);
+  RECT ability2 = Rect(kAbility2Rect);
+  InvalidateRect(window, &ability1, FALSE);
+  InvalidateRect(window, &ability2, FALSE);
+}
+
+void InvalidateCooldownAnimation(HWND window) {
+  const PanelPixelRect cards[] = {kAbility1Rect, kAbility2Rect};
+  for (const PanelPixelRect& card_source : cards) {
+    const RECT card = Rect(card_source);
+    const RECT icon = Rect(card.left + 60, card.top + 54, card.right - 60,
+                           card.bottom - 100);
+    RECT track = Rect(icon.right - 13, icon.top + 5,
+                      icon.right - 5, icon.bottom - 5);
+    RECT status = Rect(card.left + 15, card.bottom - 51,
+                       card.right - 15, card.bottom - 12);
+    InvalidateRect(window, &track, FALSE);
+    InvalidateRect(window, &status, FALSE);
+  }
+}
+
+void ProcessLatestSnapshot(HWND window) {
+  const uint64_t latest_sequence = LatestSequence();
+  if (!latest_sequence || latest_sequence == g_drawn_sequence) return;
+
+  Snapshot state = {};
+  if (!CopyLatestSnapshot(&state) || state.sequence == g_drawn_sequence) return;
+  const ULONGLONG now = GetTickCount64();
+  const bool feedback_expired = ExpirePressedFeedback(now);
+  const bool content_changed =
+      !g_have_drawn_snapshot ||
+      !SnapshotPanelContentEqual(state, g_drawn_snapshot, g_page);
+  const bool ability_only =
+      content_changed && !feedback_expired && g_have_drawn_snapshot &&
+      g_page == PanelPage::kCombat &&
+      SnapshotCombatNonAbilityContentEqual(state, g_drawn_snapshot);
+
+  // Always adopt the newest accepted snapshot, even when the current page
+  // does not render its changed domain. A later page switch then needs no
+  // StateStore lock or additional full-struct copy.
+  AdoptSnapshot(state);
+  if (ability_only) {
+    DrawCooldownFrames(g_memory_dc, g_drawn_snapshot, now);
+    g_last_cooldown_frame = now;
+    InvalidateAbilityCards(window);
+  } else if (content_changed || feedback_expired) {
+    RenderDrawnSnapshot();
+    if (g_page == PanelPage::kCombat) g_last_cooldown_frame = now;
+    InvalidateRect(window, nullptr, FALSE);
+  }
+  ScheduleUiTimer(now);
+}
+
+void ProcessUiTimer(HWND window) {
+  const bool cooldown_was_active = g_cooldown_animation_scheduled;
+  if (g_ui_timer_armed) {
+    KillTimer(window, kUiTimer);
+    g_ui_timer_armed = false;
+  }
+  const ULONGLONG now = GetTickCount64();
+  const bool feedback_expired = ExpirePressedFeedback(now);
+  const bool cooldown_frame =
+      g_page == PanelPage::kCombat && g_have_drawn_snapshot &&
+      g_drawn_snapshot.lifecycle == Lifecycle::kLive &&
+      now - g_last_cooldown_frame >= kCooldownFrameIntervalMs &&
+      (CooldownAnimationActive(g_drawn_snapshot, now) ||
+       cooldown_was_active);
+  if (feedback_expired) {
+    RenderDrawnSnapshot();
+    if (cooldown_frame) g_last_cooldown_frame = now;
+    InvalidateRect(window, nullptr, FALSE);
+  } else if (cooldown_frame) {
+    DrawCooldownAnimationFrame(g_memory_dc, g_drawn_snapshot, now);
+    g_last_cooldown_frame = now;
+    InvalidateCooldownAnimation(window);
+  }
+  ScheduleUiTimer(now);
 }
 
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
@@ -785,32 +1091,33 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
                 static_cast<float>(GET_Y_LPARAM(lparam)) / kHeight);
       return 0;
     case WM_TIMER:
-      PollSocket();
-      {
-        Snapshot state;
-        const ULONGLONG now = GetTickCount64();
-        bool feedback_expired = false;
-        if (g_pressed != HitTarget::kNone && now >= g_pressed_until) {
-          g_pressed = HitTarget::kNone;
-          feedback_expired = true;
-        }
-        bool state_changed = false;
-        if (CopyLatestSnapshot(&state) &&
-            state.sequence != g_drawn_sequence) {
-          state_changed = !g_have_drawn_snapshot ||
-                          !SnapshotContentEqual(state, g_drawn_snapshot);
-          if (!state_changed) g_drawn_sequence = state.sequence;
-        }
-        if (state_changed || feedback_expired) {
-          Render();
-          InvalidateRect(window, nullptr, FALSE);
-        }
+      if (wparam == kUiTimer) ProcessUiTimer(window);
+      return 0;
+    case kSnapshotMessage:
+      ProcessLatestSnapshot(window);
+      return 0;
+    case kSocketMessage:
+      if (WSAGETSELECTERROR(lparam) != 0) {
+        LogRateLimited("touch-async", 5000, LogLevel::kWarning,
+                       "[Touch] UDP async error=%d",
+                       WSAGETSELECTERROR(lparam));
+        return 0;
+      }
+      if (WSAGETSELECTEVENT(lparam) == FD_READ)
+        PollSocket();
+      else if (WSAGETSELECTEVENT(lparam) == FD_CLOSE) {
+        closesocket(g_socket);
+        g_socket = INVALID_SOCKET;
       }
       return 0;
     case WM_PAINT: {
       PAINTSTRUCT paint = {};
       HDC dc = BeginPaint(window, &paint);
-      BitBlt(dc, 0, 0, kWidth, kHeight, g_memory_dc, 0, 0, SRCCOPY);
+      const int width = paint.rcPaint.right - paint.rcPaint.left;
+      const int height = paint.rcPaint.bottom - paint.rcPaint.top;
+      if (width > 0 && height > 0)
+        BitBlt(dc, paint.rcPaint.left, paint.rcPaint.top, width, height,
+               g_memory_dc, paint.rcPaint.left, paint.rcPaint.top, SRCCOPY);
       EndPaint(window, &paint);
       return 0;
     }
@@ -818,9 +1125,11 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
       ShowWindow(window, SW_HIDE);
       return 0;
     case kShutdownMessage:
+      SetSnapshotNotificationTarget(nullptr, 0);
       DestroyWindow(window);
       return 0;
     case WM_DESTROY:
+      SetSnapshotNotificationTarget(nullptr, 0);
       PostQuitMessage(0);
       return 0;
     default: return DefWindowProcW(window, message, wparam, lparam);
@@ -851,7 +1160,26 @@ DWORD WINAPI PanelThread(void*) {
   if (!g_window) return 2;
   HDC window_dc = GetDC(g_window);
   g_memory_dc = CreateCompatibleDC(window_dc);
-  g_bitmap = CreateCompatibleBitmap(window_dc, kWidth, kHeight);
+  BITMAPINFO bitmap_info = {};
+  bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bitmap_info.bmiHeader.biWidth = kWidth;
+  // A top-down 32-bit DIB avoids the device-dependent bitmap conversion that
+  // Wine otherwise repeats when the second-screen window is copied.
+  bitmap_info.bmiHeader.biHeight = -kHeight;
+  bitmap_info.bmiHeader.biPlanes = 1;
+  bitmap_info.bmiHeader.biBitCount = 32;
+  bitmap_info.bmiHeader.biCompression = BI_RGB;
+  g_bitmap = CreateDIBSection(window_dc, &bitmap_info, DIB_RGB_COLORS,
+                              &g_bitmap_bits, nullptr, 0);
+  if (!g_memory_dc || !g_bitmap) {
+    ReleaseDC(g_window, window_dc);
+    if (g_bitmap) DeleteObject(g_bitmap);
+    if (g_memory_dc) DeleteDC(g_memory_dc);
+    g_bitmap = nullptr;
+    g_memory_dc = nullptr;
+    DestroyWindow(g_window);
+    return 3;
+  }
   g_old_bitmap = SelectObject(g_memory_dc, g_bitmap);
   ReleaseDC(g_window, window_dc);
   g_font_label = Font(25, FW_SEMIBOLD);
@@ -865,8 +1193,10 @@ DWORD WINAPI PanelThread(void*) {
   if (!OpenSocket())
     Log(LogLevel::kWarning,
         "[Touch] UDP listener unavailable port=%u", kInputPort);
-  SetTimer(g_window, kRenderTimer, 33, nullptr);
-  Render();
+  SetRequestedPanelPage(g_page);
+  SetSnapshotNotificationTarget(g_window, kSnapshotMessage);
+  RenderLatestSnapshot();
+  ScheduleUiTimer(GetTickCount64());
   ShowWindow(g_window, SW_SHOWNOACTIVATE);
   SetWindowPos(g_window, HWND_TOPMOST, 0, 1080, kWidth, kHeight,
                SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -878,11 +1208,14 @@ DWORD WINAPI PanelThread(void*) {
     TranslateMessage(&message);
     DispatchMessageW(&message);
   }
-  KillTimer(g_window, kRenderTimer);
+  SetSnapshotNotificationTarget(nullptr, 0);
+  if (g_ui_timer_armed) KillTimer(g_window, kUiTimer);
+  g_ui_timer_armed = false;
   if (g_socket != INVALID_SOCKET) closesocket(g_socket);
   if (g_winsock) WSACleanup();
   if (g_memory_dc && g_old_bitmap) SelectObject(g_memory_dc, g_old_bitmap);
   if (g_bitmap) DeleteObject(g_bitmap);
+  g_bitmap_bits = nullptr;
   if (g_memory_dc) DeleteDC(g_memory_dc);
   if (g_font_label) DeleteObject(g_font_label);
   if (g_font_body) DeleteObject(g_font_body);
@@ -901,6 +1234,7 @@ bool StartPanel(HMODULE module) {
   if (g_thread || !module) return g_thread != nullptr;
   g_module = module;
   g_thread = CreateThread(nullptr, 0, PanelThread, nullptr, 0, &g_thread_id);
+  if (g_thread) SetThreadPriority(g_thread, THREAD_PRIORITY_BELOW_NORMAL);
   return g_thread != nullptr;
 }
 

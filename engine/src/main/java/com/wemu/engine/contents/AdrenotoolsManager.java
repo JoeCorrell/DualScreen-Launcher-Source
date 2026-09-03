@@ -39,6 +39,7 @@ public class AdrenotoolsManager {
     
     private File adrenotoolsContentDir;
     private Context mContext;
+    private volatile String lastInstallError = "";
     
     public AdrenotoolsManager(Context context) {
         this.mContext = context;
@@ -241,8 +242,14 @@ public class AdrenotoolsManager {
      */
     public String installDriver(Uri driverUri) {
         synchronized (DRIVER_INSTALL_LOCK) {
+            lastInstallError = "";
             return installDriverLocked(driverUri);
         }
+    }
+
+    /** Human-readable reason returned by the most recent failed import. */
+    public String getLastInstallError() {
+        return lastInstallError;
     }
 
     private String installDriverLocked(Uri driverUri) {
@@ -301,38 +308,77 @@ public class AdrenotoolsManager {
                 }
             }
 
-            if (new File(tmpDir, "meta.json").exists()) {
-                name = getDriverName(tmpDir.getName());
-                String libraryName = getLibraryName(tmpDir.getName());
-                if (!ArchivePathPolicy.isSafePathComponent(name)
-                        || name.equals("tmp") || name.equals("tmp-inner")
-                        || !ArchivePathPolicy.isSafePathComponent(libraryName)
-                        || !new File(tmpDir, libraryName).isFile()) {
-                    Log.w("AdrenotoolsManager",
-                            "Driver metadata has an unsafe name or missing library");
+            File metadataFile = new File(tmpDir, "meta.json");
+            if (metadataFile.exists()) {
+                JSONObject metadata = new JSONObject(FileUtils.readString(metadataFile));
+                String displayName = metadata.optString("name").trim();
+                String libraryName = metadata.optString("libraryName").trim();
+                String packageVersion = metadata.optString("packageVersion").trim();
+                String driverVersion = metadata.optString("driverVersion").trim();
+                name = safeDriverId(!packageVersion.isEmpty() ? packageVersion
+                        : !driverVersion.isEmpty() ? driverVersion : displayName);
+                if (name.isEmpty()) {
+                    lastInstallError = "The driver metadata has no usable package or driver name.";
+                } else if (!ArchivePathPolicy.isSafePathComponent(libraryName)) {
+                    lastInstallError = "The driver metadata contains an invalid libraryName.";
                     name = "";
+                } else if (!new File(tmpDir, libraryName).isFile()) {
+                    lastInstallError = "The ZIP does not contain the library named by meta.json: "
+                            + libraryName;
+                    name = "";
+                }
+                if (name.isEmpty()) {
+                    Log.w("AdrenotoolsManager", lastInstallError);
                     FileUtils.delete(tmpDir);
                 } else {
                     File dst = ArchivePathPolicy.resolveEntry(adrenotoolsContentDir, name);
-                    if (dst.exists() || !tmpDir.renameTo(dst)) {
-                        name = "";
+                    if (dst.exists() && isDriverComplete(name)) {
+                        // Selecting an already-installed release is still a
+                        // successful import and should select that driver.
                         FileUtils.delete(tmpDir);
+                    } else {
+                        if (dst.exists() && !FileUtils.delete(dst)) {
+                            lastInstallError = "An incomplete driver with the same id could not be replaced.";
+                            name = "";
+                        } else if (!tmpDir.renameTo(dst)) {
+                            lastInstallError = "The validated driver could not be published.";
+                            name = "";
+                        }
+                        if (name.isEmpty()) FileUtils.delete(tmpDir);
                     }
                 }
             }
             else {
-                Log.d("AdrenotoolsManager",
-                        "No meta.json in the package; this is not an AdrenoTools driver");
+                lastInstallError = "No meta.json was found in the driver ZIP.";
+                Log.d("AdrenotoolsManager", lastInstallError);
                 FileUtils.delete(tmpDir);
             }
         }
-        catch (IOException | RuntimeException e) {
+        catch (IOException | JSONException | RuntimeException e) {
+            lastInstallError = e.getMessage() != null
+                    ? e.getMessage() : "The driver ZIP could not be unpacked.";
             Log.w("AdrenotoolsManager", "Could not unpack the driver package", e);
             FileUtils.delete(tmpDir);
         }
         FileUtils.delete(hoisted);
 
         return name;
+    }
+
+    /**
+     * Produces a stable storage id without treating the human-readable
+     * metadata name as a path. Friendly names commonly contain slashes (for
+     * example "Mesa / Adreno"), which are valid display text but not a safe
+     * child-directory name.
+     */
+    static String safeDriverId(String value) {
+        if (value == null) return "";
+        String id = value.trim().replaceAll("[^A-Za-z0-9._-]+", "-")
+                .replaceAll("^-+|-+$", "");
+        if (id.length() > 120) id = id.substring(0, 120);
+        if (id.isEmpty() || id.equals(".") || id.equals("..")
+                || id.equals("tmp") || id.equals("tmp-inner")) return "";
+        return id;
     }
 
     /**

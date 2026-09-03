@@ -18,6 +18,7 @@ val prepareBotwBasePlayerAssets by tasks.registering(Sync::class) {
     botwPlayerAssetsDirectory.orNull?.let { sourceDirectory ->
         from(sourceDirectory) {
             include(botwBasePlayerAssetNames)
+            include("Armor_*.glb")
             into("botw/player")
         }
     }
@@ -59,8 +60,8 @@ android {
         // runtime has no Android flavor of its own, so include that source set explicitly.
         assets.srcDir("../eden-upstream/src/android/app/src/dualscreen/assets")
         // BOTW models are generated from the builder's own RomFS and must not live in source
-        // control. Supplying -PbotwPlayerAssetsDir packages the four base models needed by a
-        // clean install; the renderer still prefers a user's richer external equipment cache.
+        // control. Supplying -PbotwPlayerAssetsDir packages Link plus every armor model so clean
+        // installs can render equipped armor; external caches can still override these assets.
         assets.srcDir(generatedBotwPlayerAssets)
     }
 

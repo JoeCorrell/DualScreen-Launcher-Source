@@ -53,20 +53,75 @@ internal fun SwitchDriverDownloaderPage(
     onInstall: (SwitchDriverArtifact) -> Unit,
     onBack: () -> Unit,
 ) {
+    DriverDownloaderPage(
+        operationRunning = operation.running,
+        operationError = operation.error,
+        operationDetail = operation.detail,
+        operationFraction = operation.fraction,
+        installedCount = (systemState.gpuDrivers.size - 1).coerceAtLeast(0),
+        platformLabel = "EDEN DS",
+        sourceDescription = "Eden's built-in Turnip and Freedreno repositories - choose a source, then a ZIP",
+        loadingLabel = "Loading Eden's GPU driver catalog...",
+        loadFailureLabel = "Could not load Eden's driver catalog.",
+        loader = loader,
+        onInstall = onInstall,
+        onBack = onBack,
+    )
+}
+
+@Composable
+internal fun PcDriverDownloaderPage(
+    operation: PcGpuDriverOperationState,
+    installedCount: Int,
+    loader: suspend () -> Result<List<SwitchDriverRelease>>,
+    onInstall: (SwitchDriverArtifact) -> Unit,
+    onBack: () -> Unit,
+) {
+    DriverDownloaderPage(
+        operationRunning = operation.running,
+        operationError = operation.error,
+        operationDetail = operation.detail,
+        operationFraction = operation.fraction,
+        installedCount = installedCount,
+        platformLabel = "PC GAMES",
+        sourceDescription = "AdrenoTools Turnip and Freedreno repositories - choose a source, then a ZIP",
+        loadingLabel = "Loading the PC GPU driver catalog...",
+        loadFailureLabel = "Could not load the PC driver catalog.",
+        loader = loader,
+        onInstall = onInstall,
+        onBack = onBack,
+    )
+}
+
+@Composable
+private fun DriverDownloaderPage(
+    operationRunning: Boolean,
+    operationError: String?,
+    operationDetail: String,
+    operationFraction: Float,
+    installedCount: Int,
+    platformLabel: String,
+    sourceDescription: String,
+    loadingLabel: String,
+    loadFailureLabel: String,
+    loader: suspend () -> Result<List<SwitchDriverRelease>>,
+    onInstall: (SwitchDriverArtifact) -> Unit,
+    onBack: () -> Unit,
+) {
     var refreshKey by remember { mutableIntStateOf(0) }
     var releases by remember { mutableStateOf<List<SwitchDriverRelease>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(true) }
     var selectedSource by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(refreshKey, operation.running) {
-        if (operation.running) return@LaunchedEffect
+    LaunchedEffect(refreshKey, operationRunning) {
+        if (operationRunning) return@LaunchedEffect
         loading = true
         loader().onSuccess { loaded ->
             releases = loaded
             error = null
             if (selectedSource !in loaded.map { it.source }) selectedSource = loaded.firstOrNull()?.source
-        }.onFailure { error = it.message ?: "Could not load Eden's driver catalog." }
+        }.onFailure { error = it.message ?: loadFailureLabel }
         loading = false
     }
 
@@ -88,7 +143,7 @@ internal fun SwitchDriverDownloaderPage(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "EDEN DS  •  VERIFIED DRIVER SOURCES",
+                        "$platformLabel  •  VERIFIED DRIVER SOURCES",
                         color = LauncherAccent,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -97,14 +152,14 @@ internal fun SwitchDriverDownloaderPage(
                     Text("GPU Driver Downloader", fontSize = 23.sp, fontWeight = FontWeight.Bold)
                 }
                 Text(
-                    "${systemState.gpuDrivers.size - 1} INSTALLED",
+                    "$installedCount INSTALLED",
                     color = LauncherAccent,
                     fontFamily = FontFamily.Monospace,
                     fontSize = 9.sp,
                 )
                 Spacer(Modifier.width(10.dp))
                 IconButton(
-                    enabled = !loading && !operation.running,
+                    enabled = !loading && !operationRunning,
                     onClick = { refreshKey++ },
                     modifier = Modifier.size(38.dp).border(1.dp, LauncherOutline, RectangleShape),
                 ) {
@@ -113,17 +168,17 @@ internal fun SwitchDriverDownloaderPage(
             }
         }
 
-        if (operation.running || operation.error != null) {
+        if (operationRunning || operationError != null) {
             item {
                 LauncherCard(compact = true) {
                     Text(
-                        operation.error ?: operation.detail,
-                        color = if (operation.error == null) LauncherAccent else LauncherDanger,
+                        operationError ?: operationDetail,
+                        color = if (operationError == null) LauncherAccent else LauncherDanger,
                         fontSize = 10.sp,
                     )
-                    if (operation.running) {
+                    if (operationRunning) {
                         Spacer(Modifier.height(5.dp))
-                        LauncherProgress(operation.fraction, Modifier.fillMaxWidth().height(5.dp))
+                        LauncherProgress(operationFraction, Modifier.fillMaxWidth().height(5.dp))
                     }
                 }
             }
@@ -133,7 +188,7 @@ internal fun SwitchDriverDownloaderPage(
             LauncherCard(compact = true) {
                 SectionTitle(
                     "Driver sources",
-                    "Eden's built-in Turnip and Freedreno repositories • choose a source, then a ZIP",
+                    sourceDescription,
                 )
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     items(sources, key = { it }) { source ->
@@ -149,7 +204,7 @@ internal fun SwitchDriverDownloaderPage(
 
         when {
             loading -> item {
-                LauncherCard { Text("Loading Eden's GPU driver catalog…", color = LauncherTextMuted) }
+                LauncherCard { Text(loadingLabel, color = LauncherTextMuted) }
             }
             error != null -> item {
                 LauncherCard {
@@ -226,7 +281,7 @@ internal fun SwitchDriverDownloaderPage(
                                     },
                                     icon = if (artifact.installed) Icons.Default.Check else Icons.Default.Download,
                                     onClick = { onInstall(artifact) },
-                                    enabled = !artifact.installed && !operation.running,
+                                    enabled = !artifact.installed && !operationRunning,
                                     primary = !artifact.installed,
                                     modifier = Modifier.fillMaxWidth(),
                                 )

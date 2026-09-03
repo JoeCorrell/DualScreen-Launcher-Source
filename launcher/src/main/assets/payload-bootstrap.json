@@ -1,6 +1,6 @@
 {
     "schema":  1,
-    "version":  "2026.09.02.11",
+    "version":  "2026.09.02.12",
     "repository":  "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads",
     "tag":  "launcher-payloads-v1",
     "packs":  [
@@ -12,11 +12,11 @@
                       "url":  "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/launcher-payloads-v1/runtime-components-2026.08.30.1.zip"
                   },
                   {
-                      "name":  "game-mods-2026.09.02.11.zip",
+                      "name":  "game-mods-2026.09.02.12.zip",
                       "root":  "mods",
-                      "bytes":  175826318,
-                      "sha256":  "a67309d9227a279eba33399342d2c817aa0519ce03d5efae6a180ddf588e55b0",
-                      "url":  "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/launcher-payloads-v1/game-mods-2026.09.02.11.zip"
+                      "bytes":  175826776,
+                      "sha256":  "00296b00defe40d949cfaa7b8fb944c69e24b114915b9139db25989e6ef80616",
+                      "url":  "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads/releases/download/launcher-payloads-v1/game-mods-2026.09.02.12.zip"
                   }
               ]
 }

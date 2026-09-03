@@ -49,6 +49,7 @@ private sealed interface LauncherPage {
     data class SwitchGameDetails(val gameId: String) : LauncherPage
     data class SwitchGameSettings(val gameId: String) : LauncherPage
     data object SwitchGlobalSettings : LauncherPage
+    data object PcDriverDownloader : LauncherPage
     data class SwitchDriverDownloader(
         val returnGameId: String? = null,
         val returnToGlobalSettings: Boolean = false,
@@ -73,6 +74,7 @@ internal fun LauncherScreen(
     val gpuDrivers by model.gpuDrivers.collectAsStateWithLifecycle()
     val gpuDriverImportState by model.gpuDriverImportState.collectAsStateWithLifecycle()
     val gpuDriverMessage by model.gpuDriverMessage.collectAsStateWithLifecycle()
+    val pcGpuDriverOperation by model.pcGpuDriverOperation.collectAsStateWithLifecycle()
     val payloadState by model.payloadState.collectAsStateWithLifecycle()
     val updateState by model.updateState.collectAsStateWithLifecycle()
     val archiveReview by model.archiveReview.collectAsStateWithLifecycle()
@@ -195,6 +197,7 @@ internal fun LauncherScreen(
         }
         LauncherPage.Guide -> LauncherNavItem.GUIDE
         LauncherPage.Settings,
+        LauncherPage.PcDriverDownloader,
         LauncherPage.SwitchGlobalSettings,
         -> LauncherNavItem.SETTINGS
     }
@@ -385,6 +388,16 @@ internal fun LauncherScreen(
                         },
                     )
 
+                    LauncherPage.PcDriverDownloader -> PcDriverDownloaderPage(
+                        operation = pcGpuDriverOperation,
+                        installedCount = gpuDrivers.count {
+                            it.source != LauncherGpuDriver.Source.SYSTEM
+                        },
+                        loader = model::fetchPcGpuDrivers,
+                        onInstall = model::downloadPcGpuDriver,
+                        onBack = { page = LauncherPage.Settings },
+                    )
+
                     LauncherPage.Guide -> GuidePage(
                         onBrowseGames = { page = LauncherPage.PcGames },
                     )
@@ -404,6 +417,9 @@ internal fun LauncherScreen(
                             gpuDriverPicker.launch(
                                 arrayOf("application/zip", "application/x-zip-compressed"),
                             )
+                        },
+                        onOpenPcDriverDownloader = {
+                            page = LauncherPage.PcDriverDownloader
                         },
                         onAddSwitchKeys = { switchKeysPicker.launch(arrayOf("*/*")) },
                         onAddSwitchFirmware = {
@@ -442,8 +458,9 @@ private fun launcherPageRank(page: LauncherPage): Int = when (page) {
     is LauncherPage.SwitchGameSettings -> 4
     LauncherPage.SwitchGlobalSettings -> 5
     is LauncherPage.SwitchDriverDownloader -> 6
-    LauncherPage.Guide -> 7
-    LauncherPage.Settings -> 8
+    LauncherPage.PcDriverDownloader -> 7
+    LauncherPage.Guide -> 8
+    LauncherPage.Settings -> 9
 }
 
 @Composable

@@ -1,7 +1,11 @@
 package com.dualscreen.launcher
 
+import android.app.Application
 import android.content.Context
 import android.net.Uri
+import com.dualscreen.launcher.switch.EdenDriverRepository
+import com.dualscreen.launcher.switch.SwitchDriverArtifact
+import com.dualscreen.launcher.switch.SwitchDriverRelease
 import com.thor.core.common.log.ThorLog
 import com.wemu.engine.contents.AdrenotoolsManager
 import com.wemu.engine.contents.BundledContents
@@ -11,6 +15,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** A Vulkan driver the Launcher can safely place in its tested container preset. */
@@ -30,6 +36,14 @@ sealed interface GpuDriverImportState {
     data class Failed(val message: String) : GpuDriverImportState
 }
 
+/** Progress for a PC driver downloaded from the shared AdrenoTools catalog. */
+data class PcGpuDriverOperationState(
+    val running: Boolean = false,
+    val fraction: Float = 0f,
+    val detail: String = "",
+    val error: String? = null,
+)
+
 /**
  * The Launcher's small, safe view over the engine's AdrenoTools driver manager.
  *
@@ -44,12 +58,19 @@ class LauncherGpuDrivers(
 ) {
     private val appContext = context.applicationContext
     private val manager = AdrenotoolsManager(appContext)
+    private val repository = EdenDriverRepository(appContext as Application)
+    private val repositoryPreferences =
+        appContext.getSharedPreferences("pc_gpu_driver_catalog", Context.MODE_PRIVATE)
+    private val repositoryLock = Mutex()
 
     private val _drivers = MutableStateFlow<List<LauncherGpuDriver>>(emptyList())
     val drivers: StateFlow<List<LauncherGpuDriver>> = _drivers.asStateFlow()
 
     private val _importState = MutableStateFlow<GpuDriverImportState>(GpuDriverImportState.Idle)
     val importState: StateFlow<GpuDriverImportState> = _importState.asStateFlow()
+
+    private val _operation = MutableStateFlow(PcGpuDriverOperationState())
+    val operation: StateFlow<PcGpuDriverOperationState> = _operation.asStateFlow()
 
     suspend fun refresh() {
         _drivers.value = withContext(io) { readInstalled() }
@@ -71,7 +92,9 @@ class LauncherGpuDrivers(
             id
         } else {
             _importState.value = GpuDriverImportState.Failed(
-                "That file is not a valid AdrenoTools driver ZIP, or it is already installed.",
+                manager.lastInstallError.ifBlank {
+                    "That file is not a valid AdrenoTools driver ZIP."
+                },
             )
             null
         }
@@ -82,6 +105,71 @@ class LauncherGpuDrivers(
             _importState.value = GpuDriverImportState.Idle
         }
     }
+
+    suspend fun fetchReleases(): Result<List<SwitchDriverRelease>> = runCatching {
+        repositoryLock.withLock {
+            repository.fetch(installedRepositoryArtifacts())
+        }
+    }
+
+    /** Downloads, validates, installs, and returns the selected PC driver id. */
+    suspend fun downloadAndInstall(artifact: SwitchDriverArtifact): Result<String> =
+        repositoryLock.withLock {
+            _operation.value = PcGpuDriverOperationState(
+                running = true,
+                detail = "Downloading ${artifact.name}",
+            )
+            var installedId = ""
+            runCatching {
+                repository.downloadAndInstall(
+                    artifact = artifact,
+                    onProgress = { progress ->
+                        _operation.value = _operation.value.copy(
+                            running = true,
+                            fraction = (progress * 0.85f).coerceIn(0f, 0.85f),
+                            detail = "Downloading ${artifact.name}",
+                            error = null,
+                        )
+                    },
+                    installer = { uri ->
+                        _operation.value = _operation.value.copy(
+                            fraction = 0.9f,
+                            detail = "Validating PC GPU driver",
+                        )
+                        installedId = install(uri).orEmpty()
+                        require(installedId.isNotBlank()) {
+                            (importState.value as? GpuDriverImportState.Failed)?.message
+                                ?: "The downloaded ZIP is not a valid PC GPU driver."
+                        }
+                    },
+                )
+                val artifacts = installedRepositoryArtifacts() + artifact.name.lowercase()
+                check(
+                    repositoryPreferences.edit()
+                        .putStringSet(KEY_INSTALLED_ARTIFACTS, artifacts)
+                        .commit(),
+                ) { "The installed driver could not be recorded." }
+                refresh()
+                _operation.value = PcGpuDriverOperationState(
+                    running = false,
+                    fraction = 1f,
+                    detail = "PC GPU driver installed",
+                )
+                installedId
+            }.onFailure { failure ->
+                _operation.value = PcGpuDriverOperationState(
+                    running = false,
+                    detail = "Driver installation failed",
+                    error = failure.message ?: "Could not install the PC GPU driver.",
+                )
+            }
+        }
+
+    private fun installedRepositoryArtifacts(): Set<String> =
+        repositoryPreferences.getStringSet(KEY_INSTALLED_ARTIFACTS, emptySet())
+            ?.map(String::lowercase)
+            ?.toSet()
+            .orEmpty()
 
     private fun readInstalled(): List<LauncherGpuDriver> {
         val bundled = runCatching { BundledContents.drivers(appContext) }
@@ -120,5 +208,6 @@ class LauncherGpuDrivers(
 
     private companion object {
         const val TAG = "LauncherGpuDrivers"
+        const val KEY_INSTALLED_ARTIFACTS = "installedArtifacts"
     }
 }

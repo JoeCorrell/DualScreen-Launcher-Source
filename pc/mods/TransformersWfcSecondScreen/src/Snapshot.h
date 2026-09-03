@@ -5,7 +5,7 @@
 
 namespace wfcds {
 
-constexpr uint32_t kSnapshotVersion = 0x00010003u;
+constexpr uint32_t kSnapshotVersion = 0x00010004u;
 constexpr uint32_t kSquadCapacity = 3;
 
 enum class Lifecycle : uint32_t {
@@ -112,6 +112,10 @@ struct Snapshot {
   uint32_t size = 0;
   uint64_t sequence = 0;
   uint64_t world_epoch = 0;
+  // GetTickCount64() on the game thread when the live values were sampled.
+  // The panel uses this only for display interpolation; command validation
+  // always reads authoritative game state again.
+  uint64_t captured_at_millis = 0;
   uint64_t capabilities = 0;
   Lifecycle lifecycle = Lifecycle::kBoot;
   uint32_t supported_build = 0;

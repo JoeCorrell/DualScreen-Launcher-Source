@@ -86,7 +86,10 @@ DWORD WINAPI LogWorker(void*) {
   Log(LogLevel::kInfo, "[Lifecycle] log worker ready tid=%lu",
       static_cast<unsigned long>(GetCurrentThreadId()));
   for (;;) {
-    if (g_event) WaitForSingleObject(g_event, 1000);
+    // Producers and shutdown both signal this auto-reset event. There is no
+    // periodic maintenance, so a timeout only woke an otherwise idle Box64
+    // thread once per second and then took the queue lock to discover no work.
+    if (g_event) WaitForSingleObject(g_event, INFINITE);
     if (QueueEmpty()) {
       if (InterlockedCompareExchange(&g_stopping, 0, 0) != 0) break;
       continue;
@@ -134,6 +137,8 @@ void InitializeLog(HMODULE module) {
   if (!g_thread) {
     CloseHandle(g_event);
     g_event = nullptr;
+  } else {
+    SetThreadPriority(g_thread, THREAD_PRIORITY_BELOW_NORMAL);
   }
 }
 

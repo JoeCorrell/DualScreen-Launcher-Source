@@ -75,6 +75,39 @@ class PayloadBootstrapTest {
     }
 
     @Test
+    fun bundledModOverridesStoreFromTheSamePayloadCatalog() {
+        assertThat(
+            shouldPreferBundledModAsset(
+                normalizedPath = "mods/transformers-wfc/payload/dinput8.dll",
+                storedCatalogVersion = "2026.09.02.12",
+                embeddedCatalogVersion = "2026.09.02.12",
+            ),
+        ).isTrue()
+    }
+
+    @Test
+    fun newerRemoteCatalogStillOverridesBundledMod() {
+        assertThat(
+            shouldPreferBundledModAsset(
+                normalizedPath = "mods/transformers-wfc/payload/dinput8.dll",
+                storedCatalogVersion = "2026.09.03.1",
+                embeddedCatalogVersion = "2026.09.02.12",
+            ),
+        ).isFalse()
+    }
+
+    @Test
+    fun bundledOverrideDoesNotAffectRuntimeComponents() {
+        assertThat(
+            shouldPreferBundledModAsset(
+                normalizedPath = "components/wowbox64-0.4.2.tzst",
+                storedCatalogVersion = "2026.09.02.12",
+                embeddedCatalogVersion = "2026.09.02.12",
+            ),
+        ).isFalse()
+    }
+
+    @Test
     fun setupProgressMovesContinuouslyThroughDownloadVerifyAndInstall() {
         val checkpoints = listOf(
             payloadOverallFraction(0, 100, 80, PayloadBootstrapPhase.DOWNLOAD, 0.0),

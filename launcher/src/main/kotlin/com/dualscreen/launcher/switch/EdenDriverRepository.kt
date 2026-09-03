@@ -16,8 +16,10 @@ import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 
 /** Launcher-native frontend for the same driver repositories exposed by Eden's fetcher. */
 internal class EdenDriverRepository(private val application: Application) {
-    suspend fun fetch(): List<SwitchDriverRelease> = withContext(Dispatchers.IO) {
-        val installedNames = GpuDriverHelper.getDrivers()
+    suspend fun fetch(
+        installedArtifactNames: Set<String>? = null,
+    ): List<SwitchDriverRelease> = withContext(Dispatchers.IO) {
+        val installedNames = installedArtifactNames ?: GpuDriverHelper.getDrivers()
             .map { (path, _) -> File(path).name.lowercase() }
             .toSet()
         coroutineScope {
@@ -25,7 +27,7 @@ internal class EdenDriverRepository(private val application: Application) {
                 async { runCatching { fetchSource(source, installedNames) }.getOrDefault(emptyList()) }
             }.awaitAll().flatten()
             require(releases.isNotEmpty()) {
-                "Eden's driver sources are currently unavailable. Check the network and try again."
+                "GPU driver sources are currently unavailable. Check the network and try again."
             }
             releases
                 .sortedWith(
@@ -39,7 +41,7 @@ internal class EdenDriverRepository(private val application: Application) {
     suspend fun downloadAndInstall(
         artifact: SwitchDriverArtifact,
         onProgress: (Float) -> Unit,
-        installer: (Uri) -> Unit,
+        installer: suspend (Uri) -> Unit,
     ): Unit = withContext(Dispatchers.IO) {
         val sourceUrl = URL(artifact.downloadUrl)
         require(sourceUrl.protocol == "https" && sourceUrl.host in ALLOWED_DOWNLOAD_HOSTS) {

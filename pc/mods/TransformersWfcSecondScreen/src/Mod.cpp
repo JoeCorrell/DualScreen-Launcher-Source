@@ -12,6 +12,7 @@ namespace {
 HMODULE g_module = nullptr;
 HANDLE g_worker = nullptr;
 volatile LONG g_stopping = 0;
+HANDLE g_stop_event = nullptr;
 
 DWORD WINAPI Worker(void*) {
   Log(LogLevel::kInfo, "[Lifecycle] mod worker ready tid=%lu",
@@ -33,7 +34,9 @@ DWORD WINAPI Worker(void*) {
   if (build.supported && !InitializeGameBridge(GetModuleHandleW(nullptr))) {
     ResetState(Lifecycle::kBridgeError, build.label, true);
   }
-  while (InterlockedCompareExchange(&g_stopping, 0, 0) == 0) Sleep(250);
+  // This thread only owns orderly teardown after initialization. Keep it
+  // completely asleep during gameplay instead of polling four times a second.
+  if (g_stop_event) WaitForSingleObject(g_stop_event, INFINITE);
   ShutdownGameBridge();
   StopPanel();
   ShutdownLog();
@@ -46,13 +49,20 @@ bool StartMod(HMODULE module) {
   if (!module || g_worker) return g_worker != nullptr;
   g_module = module;
   InitializeLog(module);
+  g_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  if (!g_stop_event) return false;
   DWORD thread_id = 0;
   g_worker = CreateThread(nullptr, 0, Worker, nullptr, 0, &thread_id);
+  if (!g_worker) {
+    CloseHandle(g_stop_event);
+    g_stop_event = nullptr;
+  }
   return g_worker != nullptr;
 }
 
 void NotifyProcessDetach() {
   InterlockedExchange(&g_stopping, 1);
+  if (g_stop_event) SetEvent(g_stop_event);
 }
 
 }  // namespace wfcds

@@ -46,11 +46,23 @@ class AssetIntegrityTest {
         assertThat(transformers.getString("emulator")).isEqualTo("box64")
         assertThat(transformers.getString("box64Version")).isEqualTo("0.4.2")
         assertThat(transformers.getString("box64Preset")).isEqualTo("PERFORMANCE")
+        assertThat(transformers.getString("rendererDriverId")).isEqualTo("turnip26.2.0")
+        assertThat(transformers.getString("graphicsDriverConfig"))
+            .contains("version=turnip26.2.0")
         assertThat(transformers.getJSONObject("extraData").getString("box64Version"))
             .isEqualTo("0.4.2")
         assertThat(transformers.getJSONObject("extraData").getString("wemuPinnedBox64Runtime"))
             .isEqualTo("transformers-wfc-0.4.2")
         assertThat(transformers.getString("wincomponents")).contains("xaudio=1")
+
+        // Preserve WEMU's known-launching WFC graphics and DXVK values. The
+        // system Vulkan driver rejects DXVK's queried feature structures and
+        // never produces a usable game frame on the target device.
+        val dxvk = transformers.getString("dxwrapperConfig")
+        assertThat(dxvk).contains("async=0")
+        assertThat(dxvk).contains("asyncCache=1")
+        assertThat(dxvk).contains("mobileTuning=1")
+        assertThat(dxvk).contains("relaxedBarriers=1")
 
         games.remove("name")
         transformers.remove("name")
@@ -59,6 +71,8 @@ class AssetIntegrityTest {
         // game defaults still match the captured WEMU container.
         transformers.put("box64Preset", games.getString("box64Preset"))
         transformers.put("wincomponents", games.getString("wincomponents"))
+        transformers.put("rendererDriverId", games.getString("rendererDriverId"))
+        transformers.put("graphicsDriverConfig", games.getString("graphicsDriverConfig"))
         transformers.getJSONObject("extraData").remove("wemuPinnedBox64Runtime")
         assertThat(transformers.toString()).isEqualTo(games.toString())
 
