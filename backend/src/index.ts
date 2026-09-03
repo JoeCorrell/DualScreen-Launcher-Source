@@ -573,12 +573,23 @@ async function codeEntitlement(
   session: InstallationSession,
 ): Promise<{ id: string } | null> {
   return env.DB.prepare(`
-      SELECT id FROM entitlements
-      WHERE kind = 'code' AND revoked_at IS NULL
-        AND ((user_id IS NOT NULL AND user_id = ?)
-          OR (installation_id IS NOT NULL AND installation_id = ?))
-      ORDER BY granted_at ASC LIMIT 1
-    `).bind(session.userId, session.installationId).first<{ id: string }>();
+      SELECT id FROM (
+        SELECT id, granted_at FROM entitlements
+        WHERE kind = 'code' AND revoked_at IS NULL
+          AND ((user_id IS NOT NULL AND user_id = ?)
+            OR (installation_id IS NOT NULL AND installation_id = ?))
+        UNION ALL
+        SELECT id, granted_at FROM reusable_entitlements
+        WHERE revoked_at IS NULL
+          AND ((user_id IS NOT NULL AND user_id = ?)
+            OR (installation_id IS NOT NULL AND installation_id = ?))
+      ) ORDER BY granted_at ASC LIMIT 1
+    `).bind(
+      session.userId,
+      session.installationId,
+      session.userId,
+      session.installationId,
+    ).first<{ id: string }>();
 }
 
 async function grantedResponse(
@@ -703,12 +714,67 @@ async function redeemAccessCode(request: Request, env: Env): Promise<Response> {
   ]);
   const consumed = (results[0]?.meta.changes ?? 0) === 1;
   const granted = (results[1]?.meta.changes ?? 0) === 1;
-  if (!consumed || !granted) {
-    await audit(env, "code_redeem_failed", session, null, "invalid_or_used");
-    return error("invalid_or_used_code", "That access code is invalid, expired, revoked, or already redeemed.", 400);
+  if (consumed && granted) {
+    await audit(env, "code_redeemed", session, entitlementId, targetUser ? "user" : "installation");
+    return grantedResponse(env, session, "code", entitlementId);
   }
-  await audit(env, "code_redeemed", session, entitlementId, targetUser ? "user" : "installation");
-  return grantedResponse(env, session, "code", entitlementId);
+
+  // Reusable owner codes are held in separate tables so ordinary access codes
+  // retain their strict one-redemption guarantees and schema constraints.
+  const reusableEntitlementId = randomToken("ent_", 18);
+  const reusableResults = await env.DB.batch([
+    env.DB.prepare(`
+        INSERT OR IGNORE INTO reusable_entitlements(
+          id, source_code_id, user_id, installation_id, granted_at
+        )
+        SELECT ?, id, ?, ?, ? FROM reusable_access_codes
+        WHERE code_hash = ? AND revoked_at IS NULL
+          AND (expires_at IS NULL OR expires_at > ?)
+      `).bind(
+        reusableEntitlementId,
+        targetUser,
+        targetInstallation,
+        now,
+        codeHash,
+        now,
+      ),
+    env.DB.prepare(`
+        UPDATE reusable_access_codes SET redemption_count = redemption_count + 1
+        WHERE code_hash = ? AND EXISTS (
+          SELECT 1 FROM reusable_entitlements WHERE id = ?
+        )
+      `).bind(codeHash, reusableEntitlementId),
+  ]);
+  if ((reusableResults[0]?.meta.changes ?? 0) === 1 &&
+      (reusableResults[1]?.meta.changes ?? 0) === 1) {
+    await audit(
+      env,
+      "reusable_code_redeemed",
+      session,
+      reusableEntitlementId,
+      targetUser ? "user" : "installation",
+    );
+    return grantedResponse(env, session, "code", reusableEntitlementId);
+  }
+
+  // Idempotently return an entitlement already granted to this same account or
+  // installation. A revoked entitlement cannot be recreated by entering the
+  // reusable code again.
+  const existing = await env.DB.prepare(`
+      SELECT e.id FROM reusable_entitlements e
+      JOIN reusable_access_codes c ON c.id = e.source_code_id
+      WHERE c.code_hash = ? AND c.revoked_at IS NULL
+        AND (c.expires_at IS NULL OR c.expires_at > ?)
+        AND e.revoked_at IS NULL
+        AND ((e.user_id IS NOT NULL AND e.user_id = ?)
+          OR (e.installation_id IS NOT NULL AND e.installation_id = ?))
+      LIMIT 1
+    `).bind(codeHash, now, targetUser, session.installationId)
+    .first<{ id: string }>();
+  if (existing) return grantedResponse(env, session, "code", existing.id);
+
+  await audit(env, "code_redeem_failed", session, null, "invalid_or_used");
+  return error("invalid_or_used_code", "That access code is invalid, expired, revoked, or already redeemed.", 400);
 }
 
 async function signOut(request: Request, env: Env): Promise<Response> {
@@ -764,6 +830,64 @@ async function createCodes(request: Request, env: Env): Promise<Response> {
   }, 201);
 }
 
+async function createReusableCode(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+  const body = await readJson(request);
+  const normalized = normalizeAccessCode(body.code);
+  if (!normalized) {
+    return error("invalid_code", "Reusable codes must contain 12 to 64 letters or numbers.", 400);
+  }
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 200) || null : null;
+  let expiresAt: number | null = null;
+  if (body.expires_at !== undefined && body.expires_at !== null) {
+    const parsed = Date.parse(String(body.expires_at));
+    if (!Number.isFinite(parsed) || parsed <= Date.now()) {
+      return error("invalid_expiry", "expires_at must be a future ISO-8601 timestamp.", 400);
+    }
+    expiresAt = Math.floor(parsed / 1000);
+  }
+
+  const id = randomToken("rcode_", 18);
+  const now = unixNow();
+  const codeHash = await hmacSha256Hex(env.CODE_PEPPER, normalized);
+  try {
+    const result = await env.DB.prepare(`
+        INSERT INTO reusable_access_codes(
+          id, code_hash, code_hint, note, created_at, expires_at
+        )
+        SELECT ?, ?, ?, ?, ?, ?
+        WHERE NOT EXISTS (SELECT 1 FROM access_codes WHERE code_hash = ?)
+      `).bind(id, codeHash, normalized.slice(-4), note, now, expiresAt, codeHash).run();
+    if ((result.meta.changes ?? 0) !== 1) {
+      return error("code_exists", "That access code already exists.", 409);
+    }
+  } catch (failure) {
+    if (failure instanceof Error && failure.message.toLowerCase().includes("unique")) {
+      return error("code_exists", "That access code already exists.", 409);
+    }
+    throw failure;
+  }
+  await audit(env, "admin_reusable_code_created", null, id);
+  return json({
+    id,
+    code_hint: normalized.slice(-4),
+    created_at: now,
+    expires_at: expiresAt,
+    reusable: true,
+  }, 201);
+}
+
+async function listReusableCodes(request: Request, env: Env): Promise<Response> {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+  const rows = await env.DB.prepare(`
+      SELECT id, code_hint, note, created_at, expires_at, redemption_count, revoked_at
+      FROM reusable_access_codes ORDER BY created_at DESC LIMIT 100
+    `).all();
+  return json({ reusable_codes: rows.results });
+}
+
 async function listCodes(request: Request, env: Env): Promise<Response> {
   const denied = await requireAdmin(request, env);
   if (denied) return denied;
@@ -789,14 +913,49 @@ async function revokeCode(request: Request, env: Env, codeId: string): Promise<R
   return json({ revoked: true, code_id: codeId });
 }
 
+async function revokeReusableCode(request: Request, env: Env, codeId: string): Promise<Response> {
+  const denied = await requireAdmin(request, env);
+  if (denied) return denied;
+  const now = unixNow();
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+        UPDATE reusable_access_codes SET revoked_at = ?
+        WHERE id = ? AND revoked_at IS NULL
+      `).bind(now, codeId),
+    env.DB.prepare(`
+        UPDATE reusable_entitlements
+        SET revoked_at = ?, revoke_reason = 'Source reusable code revoked'
+        WHERE source_code_id = ? AND revoked_at IS NULL
+          AND EXISTS (
+            SELECT 1 FROM reusable_access_codes
+            WHERE id = ? AND revoked_at = ?
+          )
+      `).bind(now, codeId, codeId, now),
+  ]);
+  if ((results[0]?.meta.changes ?? 0) !== 1) {
+    return error("not_found", "Active reusable code not found.", 404);
+  }
+  const revokedEntitlements = results[1]?.meta.changes ?? 0;
+  await audit(env, "admin_reusable_code_revoked", null, codeId, `entitlements=${revokedEntitlements}`);
+  return json({ revoked: true, code_id: codeId, revoked_entitlements: revokedEntitlements });
+}
+
 async function listEntitlements(request: Request, env: Env): Promise<Response> {
   const denied = await requireAdmin(request, env);
   if (denied) return denied;
   const rows = await env.DB.prepare(`
-      SELECT e.id, e.kind, e.source_code_id, e.user_id, e.installation_id,
-             e.granted_at, e.revoked_at, e.revoke_reason, c.code_hint
-      FROM entitlements e JOIN access_codes c ON c.id = e.source_code_id
-      ORDER BY e.granted_at DESC LIMIT 500
+      SELECT * FROM (
+        SELECT e.id, e.kind, e.source_code_id, e.user_id, e.installation_id,
+               e.granted_at, e.revoked_at, e.revoke_reason, c.code_hint,
+               'single_use' AS code_type
+        FROM entitlements e JOIN access_codes c ON c.id = e.source_code_id
+        UNION ALL
+        SELECT e.id, 'code' AS kind, e.source_code_id, e.user_id, e.installation_id,
+               e.granted_at, e.revoked_at, e.revoke_reason, c.code_hint,
+               'reusable' AS code_type
+        FROM reusable_entitlements e
+        JOIN reusable_access_codes c ON c.id = e.source_code_id
+      ) ORDER BY granted_at DESC LIMIT 500
     `).all();
   return json({ entitlements: rows.results });
 }
@@ -806,11 +965,19 @@ async function revokeEntitlement(request: Request, env: Env, entitlementId: stri
   if (denied) return denied;
   const body = await readJson(request);
   const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 300) : "Revoked by administrator";
-  const result = await env.DB.prepare(`
-      UPDATE entitlements SET revoked_at = ?, revoke_reason = ?
-      WHERE id = ? AND revoked_at IS NULL
-    `).bind(unixNow(), reason || "Revoked by administrator", entitlementId).run();
-  if ((result.meta.changes ?? 0) !== 1) return error("not_found", "Active entitlement not found.", 404);
+  const now = unixNow();
+  const results = await env.DB.batch([
+    env.DB.prepare(`
+        UPDATE entitlements SET revoked_at = ?, revoke_reason = ?
+        WHERE id = ? AND revoked_at IS NULL
+      `).bind(now, reason || "Revoked by administrator", entitlementId),
+    env.DB.prepare(`
+        UPDATE reusable_entitlements SET revoked_at = ?, revoke_reason = ?
+        WHERE id = ? AND revoked_at IS NULL
+      `).bind(now, reason || "Revoked by administrator", entitlementId),
+  ]);
+  const changes = results.reduce((total, result) => total + (result.meta.changes ?? 0), 0);
+  if (changes !== 1) return error("not_found", "Active entitlement not found.", 404);
   await audit(env, "admin_entitlement_revoked", null, entitlementId, reason);
   return json({ revoked: true, entitlement_id: entitlementId });
 }
@@ -844,10 +1011,16 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && path === "/v1/session/logout") return signOut(request, env);
   if (request.method === "POST" && path === "/v1/admin/codes") return createCodes(request, env);
   if (request.method === "GET" && path === "/v1/admin/codes") return listCodes(request, env);
+  if (request.method === "POST" && path === "/v1/admin/reusable-codes") return createReusableCode(request, env);
+  if (request.method === "GET" && path === "/v1/admin/reusable-codes") return listReusableCodes(request, env);
   if (request.method === "GET" && path === "/v1/admin/entitlements") return listEntitlements(request, env);
 
   const codeRevoke = path.match(/^\/v1\/admin\/codes\/([A-Za-z0-9_-]+)\/revoke$/);
   if (request.method === "POST" && codeRevoke?.[1]) return revokeCode(request, env, codeRevoke[1]);
+  const reusableCodeRevoke = path.match(/^\/v1\/admin\/reusable-codes\/([A-Za-z0-9_-]+)\/revoke$/);
+  if (request.method === "POST" && reusableCodeRevoke?.[1]) {
+    return revokeReusableCode(request, env, reusableCodeRevoke[1]);
+  }
   const entitlementRevoke = path.match(/^\/v1\/admin\/entitlements\/([A-Za-z0-9_-]+)\/revoke$/);
   if (request.method === "POST" && entitlementRevoke?.[1]) {
     return revokeEntitlement(request, env, entitlementRevoke[1]);

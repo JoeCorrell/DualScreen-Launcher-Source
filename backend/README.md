@@ -147,15 +147,25 @@ their hashes.
 $env:ACCESS_API_BASE_URL = "https://YOUR_ACCESS_DOMAIN"
 $env:ACCESS_ADMIN_TOKEN = "YOUR_ADMIN_TOKEN"
 npm run admin -- create 5 "September supporter codes"
+npm run admin -- create-reusable "OWNER-CODE" "Reusable owner code"
 npm run admin -- codes
+npm run admin -- reusable-codes
 npm run admin -- entitlements
 npm run admin -- revoke-code CODE_ID
+npm run admin -- revoke-reusable-code CODE_ID
 npm run admin -- revoke-entitlement ENTITLEMENT_ID "Refunded"
 npm run admin -- revoke-installation INSTALLATION_UUID
 ```
 
 Revoking an unused code prevents redemption. Once a code has been redeemed,
 revoke the resulting entitlement; the code remains permanently consumed.
+
+Reusable owner codes are a deliberate exception to the normal one-time rule.
+Each successful use grants a separate permanent entitlement, while the code
+remains valid for additional users and devices until the code itself is revoked.
+Treat a reusable code like a password: anyone who obtains it can claim access.
+The service stores only its keyed hash, never its plaintext value. Revoking a
+reusable code is a kill switch that also revokes every entitlement it granted.
 
 On the configured Windows development machine, the deployment setup stores a
 DPAPI-encrypted recovery bundle at

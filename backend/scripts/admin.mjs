@@ -68,12 +68,29 @@ switch (command) {
   case "codes":
     await call("/v1/admin/codes");
     break;
+  case "create-reusable": {
+    const code = args[0];
+    const note = args.slice(1).join(" ") || undefined;
+    if (!code) throw new Error("Usage: admin create-reusable <code> [note]");
+    await call("/v1/admin/reusable-codes", {
+      method: "POST",
+      body: JSON.stringify({ code, note }),
+    });
+    break;
+  }
+  case "reusable-codes":
+    await call("/v1/admin/reusable-codes");
+    break;
   case "entitlements":
     await call("/v1/admin/entitlements");
     break;
   case "revoke-code":
     if (!args[0]) throw new Error("Usage: admin revoke-code <code-id>");
     await call(`/v1/admin/codes/${encodeURIComponent(args[0])}/revoke`, { method: "POST", body: "{}" });
+    break;
+  case "revoke-reusable-code":
+    if (!args[0]) throw new Error("Usage: admin revoke-reusable-code <code-id>");
+    await call(`/v1/admin/reusable-codes/${encodeURIComponent(args[0])}/revoke`, { method: "POST", body: "{}" });
     break;
   case "revoke-entitlement":
     if (!args[0]) throw new Error("Usage: admin revoke-entitlement <entitlement-id> [reason]");
@@ -87,6 +104,6 @@ switch (command) {
     await call(`/v1/admin/installations/${encodeURIComponent(args[0])}/revoke`, { method: "POST", body: "{}" });
     break;
   default:
-    console.error("Commands: create [count] [note], create-file <path> <count> [note], codes, entitlements, revoke-code, revoke-entitlement, revoke-installation");
+    console.error("Commands: create [count] [note], create-file <path> <count> [note], create-reusable <code> [note], codes, reusable-codes, entitlements, revoke-code, revoke-reusable-code, revoke-entitlement, revoke-installation");
     process.exit(2);
 }
