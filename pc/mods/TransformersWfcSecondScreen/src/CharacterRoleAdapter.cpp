@@ -1718,8 +1718,8 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
     g_role_proxy.mapping_generation = published.generation;
     g_role_proxy.next_update_at = now_millis + 250;
   }
-  // Each proxy slice crosses reflected memory on the game thread. Do not
-  // carry VirtualQuery validity from an earlier native frame/streaming tick.
+  // Each proxy slice crosses reflected memory on the game thread. Advance the
+  // bounded region-retirement window before touching the mapped actor graph.
   UnrealBeginGameThreadPulse();
   if (!PublishedPlayerPairLive(published) ||
       !PublishedAiPairLive(published))

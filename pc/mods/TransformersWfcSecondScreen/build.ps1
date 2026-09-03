@@ -1,6 +1,7 @@
 param(
     [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Release'
+    [string]$Configuration = 'Release',
+    [switch]$SkipLauncherPayloadUpdate
 )
 
 $ErrorActionPreference = 'Stop'
@@ -247,6 +248,9 @@ $utf8WithoutBom = [Text.UTF8Encoding]::new($false)
 )
 
 # Keep the launcher's verified install payload in lockstep with this build.
+# Offline validation can deliberately leave the currently published/installed
+# payload state alone (for example, while the mod is disabled for a baseline).
+if (-not $SkipLauncherPayloadUpdate) {
 $launcherModRoot = Join-Path $workspaceRoot 'launcher\src\main\assets\mods\transformers-wfc'
 $launcherPayloadRoot = Join-Path $launcherModRoot 'payload'
 New-Item -ItemType Directory -Force -Path $launcherPayloadRoot | Out-Null
@@ -326,5 +330,6 @@ $launcherManifest = [ordered]@{
     ($launcherManifest | ConvertTo-Json -Depth 5),
     $utf8WithoutBom
 )
+}
 Write-Host "Built $output"
 Write-Host "SHA256 $outputHash"

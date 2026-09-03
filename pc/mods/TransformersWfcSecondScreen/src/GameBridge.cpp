@@ -1489,7 +1489,7 @@ bool WeaponRootsStillCurrent(const SnapshotBuild& build,
 
 void AddWeaponCandidate(SnapshotBuild* build, void* candidate) {
   if (!build || !candidate ||
-      !IsRobotWeapon(candidate, build->weapon_stored_vehicle))
+      !IsCycleableRobotWeapon(candidate, build->weapon_stored_vehicle))
     return;
   for (uint32_t index = 0; index < build->weapon_candidate_count; ++index)
     if (build->weapon_candidates[index] == candidate) return;
@@ -1567,8 +1567,7 @@ DiscoverySliceResult ScanWeaponDiscoverySlice(SnapshotBuild* build) {
   if (!UnrealReadObjectProperty(inventory, L"Inventory", &next))
     return DiscoverySliceResult::kInvalid;
   ++build->weapon_nodes_examined;
-  if (!next || next == inventory || build->weapon_nodes_examined >= 32 ||
-      (build->weapon_candidate_count >= 2 && build->weapon_grenade)) {
+  if (!next || next == inventory || build->weapon_nodes_examined >= 32) {
     build->weapon_discovery_complete = true;
     build->weapon_inventory_cursor = nullptr;
     build->weapon_inventory_cursor_object_index = 0;
@@ -1601,10 +1600,17 @@ bool FinishWeaponDiscovery(SnapshotBuild* build, Snapshot* state,
           ? build->weapon_active
           : build->weapon_stored_robot;
   std::array<void*, 2> weapons = {};
-  uint32_t weapon_count = std::min<uint32_t>(
-      build->weapon_candidate_count, static_cast<uint32_t>(weapons.size()));
-  for (uint32_t index = 0; index < weapon_count; ++index)
-    weapons[index] = build->weapon_candidates[index];
+  uint32_t weapon_count = 0;
+  // InventoryChain also contains ranged utility/vehicle entries which are not
+  // part of the player's two robot-form weapon cycle. Only those accepted by
+  // NextWeapon belong on the two cards.
+  for (uint32_t index = 0;
+       index < build->weapon_candidate_count && weapon_count < weapons.size();
+       ++index) {
+    void* const candidate = build->weapon_candidates[index];
+    if (IsCycleableRobotWeapon(candidate, build->weapon_stored_vehicle))
+      weapons[weapon_count++] = candidate;
+  }
   // In vehicle form CurrentWeapon is the vehicle gun while StoredRobotWeapon
   // is the robot weapon that must return after transforming. A malformed or
   // special chain must never push that actual robot weapon off both cards.
@@ -1618,17 +1624,11 @@ bool FinishWeaponDiscovery(SnapshotBuild* build, Snapshot* state,
         weapons.back() = display_active;
     }
   }
-  if (has_alternate_output && display_active &&
-      IsCycleableRobotWeapon(display_active, build->weapon_stored_vehicle)) {
-    for (uint32_t index = 0; index < build->weapon_candidate_count; ++index) {
-      if (build->weapon_candidates[index] != display_active &&
-          IsCycleableRobotWeapon(build->weapon_candidates[index],
-                                 build->weapon_stored_vehicle)) {
-        *has_alternate_output = true;
-        break;
-      }
-    }
-  }
+  if (has_alternate_output && display_active && weapon_count == weapons.size() &&
+      IsCycleableRobotWeapon(display_active, build->weapon_stored_vehicle))
+    *has_alternate_output = weapons[0] != weapons[1] &&
+                            (weapons[0] == display_active ||
+                             weapons[1] == display_active);
   if (manager_output) *manager_output = build->weapon_manager;
   if (active_output) *active_output = build->weapon_active;
   if (grenade_output) *grenade_output = build->weapon_grenade;
@@ -1791,9 +1791,20 @@ bool ReadAiSquadObject(void* campaign_game, void** output) {
   if (!UnrealObjectValid(campaign_game) || PendingDestroy(campaign_game))
     return false;
   void* squad = nullptr;
-  if (!UnrealReadObjectProperty(campaign_game, L"AiSquad", &squad) &&
-      !UnrealReadObjectProperty(campaign_game, L"_AiSquad", &squad))
-    return true;
+  // TnCampaignGameBase exposes the authoritative squad through native
+  // GetAiSquad/get_AiSquad accessors; AiSquad is not a reflected field on this
+  // build. The field fallbacks are retained for derived/campaign variants.
+  bool resolved = UnrealCallObject(campaign_game, L"GetAiSquad", &squad);
+  if ((!resolved || !squad) &&
+      UnrealCallObject(campaign_game, L"get_AiSquad", &squad))
+    resolved = true;
+  if ((!resolved || !squad) &&
+      UnrealReadObjectProperty(campaign_game, L"AiSquad", &squad))
+    resolved = true;
+  if ((!resolved || !squad) &&
+      UnrealReadObjectProperty(campaign_game, L"_AiSquad", &squad))
+    resolved = true;
+  if (!resolved) return true;
   if (squad && (!UnrealObjectIsA(squad, L"TnAiSquad") ||
                 PendingDestroy(squad)))
     return false;
@@ -2572,7 +2583,11 @@ void PublishSnapshotBuild(ULONGLONG now) {
   SnapshotBuild& build = g_snapshot_build;
   if (build.state.lifecycle == Lifecycle::kLive &&
       !SnapshotBuildStillCurrent(build)) {
+    // A stale staged build must not restart on every following frame merely
+    // because no snapshot was published. Give the native graph one normal
+    // publish interval to settle while the resolver refreshes immediately.
     build = {};
+    g_last_publish = now;
     g_resolve_retry_at = 0;
     return;
   }
@@ -2631,6 +2646,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
   if (build.state.lifecycle == Lifecycle::kLive &&
       !SnapshotBuildStillCurrent(build)) {
     build = {};
+    g_last_publish = now;
     g_resolve_retry_at = 0;
     return;
   }
@@ -2756,6 +2772,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
             ScanWeaponDiscoverySlice(&build);
         if (result == DiscoverySliceResult::kInvalid) {
           build = {};
+          g_last_publish = now;
           break;
         }
         if (result == DiscoverySliceResult::kPending) break;
@@ -2777,6 +2794,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
                                    &active_weapon, &grenade,
                                    &has_alternate)) {
           build = {};
+          g_last_publish = now;
           break;
         }
         candidate.inventory_manager_object_index =
@@ -2857,6 +2875,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
           // Do not publish the partially assembled member list when the user
           // changes pages during a yielded audit.
           build = {};
+          g_last_publish = now;
           break;
         }
         build.phase = SnapshotBuildPhase::kCapabilities;
@@ -2868,6 +2887,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
           build.reuse_squad = false;
           if (!BeginSquadDiscovery(&build)) {
             build = {};
+            g_last_publish = now;
             break;
           }
           break;
@@ -2876,6 +2896,7 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
       } else if (build.squad_discovery_phase == SquadDiscoveryPhase::kIdle) {
         if (!BeginSquadDiscovery(&build)) {
           build = {};
+          g_last_publish = now;
           break;
         }
         break;
@@ -2891,11 +2912,13 @@ void AdvanceSnapshotBuild(ULONGLONG now) {
           result = DiscoverySliceResult::kComplete;
         if (result == DiscoverySliceResult::kInvalid) {
           build = {};
+          g_last_publish = now;
           break;
         }
         if (result == DiscoverySliceResult::kPending) break;
         if (!FinishSquadDiscovery(&build, now)) {
           build = {};
+          g_last_publish = now;
           break;
         }
         build.phase = SnapshotBuildPhase::kCapabilities;
@@ -2964,11 +2987,7 @@ bool ResolveSquadRecord(void* expected_controller, void** squad_output,
   *records_output = {};
   *record_index_output = -1;
   void* squad = nullptr;
-  if (UnrealObjectValid(g_campaign_game) &&
-      !UnrealReadObjectProperty(g_campaign_game, L"AiSquad", &squad))
-    UnrealReadObjectProperty(g_campaign_game, L"_AiSquad", &squad);
-  if (!squad || !UnrealObjectIsA(squad, L"TnAiSquad") ||
-      PendingDestroy(squad))
+  if (!ReadAiSquadObject(g_campaign_game, &squad) || !squad)
     return false;
   UnrealStructArrayView records;
   if (!UnrealReadStructArrayProperty(squad, L"Members", &records) ||
@@ -6321,12 +6340,10 @@ void GameThreadPulse(DWORD tick_thread) {
   if (!resolver_due && !snapshot_due) return;
   if (SwapWorldMutationActive()) return;
   g_last_pulse = now;
-  // A staged snapshot yields to the native engine between slices, so no
-  // VirtualQuery result is safe to carry into the next slice: GC and level
-  // streaming may free or recycle the region while the engine owns the game
-  // thread.  Reset once for every due slice. Reads within this slice still
-  // share the cache, retaining nearly all of its performance benefit without
-  // the multi-tick stale-region crash window.
+  // A staged snapshot yields to the native engine between slices, so cached
+  // regions must age out while GC and streaming own the game thread. Retire a
+  // bounded portion on every due slice; UnrealBridge lazily revalidates those
+  // entries without recreating the old all-at-once VirtualQuery hitch.
   UnrealBeginGameThreadPulse();
   if (!UnrealBridgeReady()) return;
 

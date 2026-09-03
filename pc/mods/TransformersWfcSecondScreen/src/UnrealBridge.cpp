@@ -22,9 +22,12 @@ constexpr size_t kMaxCallParameters = 1024;
 constexpr int32_t kMaxObjects = 500000;
 constexpr int32_t kMaxNames = 262143;
 // A live snapshot touches objects from many UE3 allocations. Keeping enough
-// committed regions for the whole pulse avoids repeating VirtualQuery hundreds
-// of times under Wine/Box64, where it is particularly expensive.
+// committed regions across staged reads avoids repeating VirtualQuery hundreds
+// of times under Wine/Box64, where it is particularly expensive. A small
+// rotating retirement budget keeps those entries from becoming permanent when
+// UE3 streaming or GC releases an allocation between game-thread slices.
 constexpr size_t kMemoryRegionCacheCapacity = 128;
+constexpr size_t kMemoryRegionRetirePerPulse = 8;
 // Snapshot/property vocabulary is a little over 128 names before class names
 // are included.  The old pointer-keyed cache filled during the first live
 // snapshot and then called TWFC's MakeFName for every uncached lookup. Keep a
@@ -122,6 +125,7 @@ struct IsACacheEntry {
 std::array<MemoryRegionCacheEntry, kMemoryRegionCacheCapacity>
     g_memory_region_cache = {};
 size_t g_memory_region_cache_count = 0;
+size_t g_memory_region_cache_retire_cursor = 0;
 std::array<NameCacheEntry, kNameCacheCapacity> g_name_cache = {};
 size_t g_name_cache_count = 0;
 std::array<LookupCacheEntry, kLookupCacheCapacity> g_field_cache = {};
@@ -151,7 +155,9 @@ std::array<ActiveScriptObjectOperandPatch, kMaxScriptObjectOperandPatches>
 size_t g_script_object_operand_patch_count = 0;
 
 void ClearWorldReflectionCaches() {
+  g_memory_region_cache.fill({});
   g_memory_region_cache_count = 0;
+  g_memory_region_cache_retire_cursor = 0;
   g_field_cache.fill({});
   g_field_cache_count = 0;
   g_struct_field_cache.fill({});
@@ -230,7 +236,8 @@ bool Readable(const void* pointer, size_t bytes) {
   const uintptr_t end = start + bytes;
   if (end < start) return false;
   for (size_t index = 0; index < g_memory_region_cache_count; ++index) {
-    if (start >= g_memory_region_cache[index].start &&
+    if (g_memory_region_cache[index].start &&
+        start >= g_memory_region_cache[index].start &&
         end <= g_memory_region_cache[index].end)
       return true;
   }
@@ -244,9 +251,24 @@ bool Readable(const void* pointer, size_t bytes) {
   if (region_end < reinterpret_cast<uintptr_t>(info.BaseAddress) ||
       end > region_end)
     return false;
+  MemoryRegionCacheEntry entry = {
+      reinterpret_cast<uintptr_t>(info.BaseAddress), region_end};
+  for (size_t index = 0; index < g_memory_region_cache_count; ++index) {
+    if (!g_memory_region_cache[index].start) {
+      g_memory_region_cache[index] = entry;
+      return true;
+    }
+  }
   if (g_memory_region_cache_count < g_memory_region_cache.size()) {
-    g_memory_region_cache[g_memory_region_cache_count++] = {
-        reinterpret_cast<uintptr_t>(info.BaseAddress), region_end};
+    g_memory_region_cache[g_memory_region_cache_count++] = entry;
+  } else {
+    // Once the fixed cache fills, keep newly streamed allocations cacheable.
+    // The prior implementation permanently favored the first 128 regions and
+    // paid a VirtualQuery thunk on every later access.
+    g_memory_region_cache[g_memory_region_cache_retire_cursor] = entry;
+    g_memory_region_cache_retire_cursor =
+        (g_memory_region_cache_retire_cursor + 1) %
+        g_memory_region_cache.size();
   }
   return true;
 }
@@ -1247,14 +1269,20 @@ bool UnrealBridgeReady() {
 }
 
 void UnrealBeginGameThreadPulse() {
-  // Do not discard committed-region knowledge on every telemetry slice.
-  // VirtualQuery crosses Wine/Box64's thunk boundary and measured 9-19 ms in
-  // individual live-world slices when this cache was reset here. UObject
-  // identity is still checked against GObjects on every read, while
-  // UnrealResetWorldCaches clears these region entries whenever the resolved
-  // world/controller/pawn graph changes. This keeps the safety boundary tied
-  // to the actual UE3 lifetime boundary instead of imposing a render-thread
-  // scheduling hitch on every staged snapshot.
+  // Full per-slice invalidation measured 9-19 ms under Wine/Box64, while never
+  // invalidating allowed a decommitted UE3 allocation to remain trusted until
+  // the entire world changed. Retire only a bounded portion on each due pulse.
+  // Reused entries are revalidated lazily by Readable, spreading VirtualQuery
+  // work across slices and bounding the lifetime of stale region knowledge.
+  if (!g_memory_region_cache_count) return;
+  const size_t retire_count = std::min(kMemoryRegionRetirePerPulse,
+                                       g_memory_region_cache_count);
+  for (size_t retired = 0; retired < retire_count; ++retired) {
+    g_memory_region_cache[g_memory_region_cache_retire_cursor] = {};
+    g_memory_region_cache_retire_cursor =
+        (g_memory_region_cache_retire_cursor + 1) %
+        g_memory_region_cache_count;
+  }
 }
 
 void UnrealResetWorldCaches() {
