@@ -72,10 +72,9 @@ android {
 
     buildFeatures { buildConfig = true }
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
-    // Most established mod payloads are supplied by the signed first-boot pack.
-    // WFC is deliberately embedded in this APK: its new native proxy and original
-    // offline redistributables must be available before a matching remote pack
-    // exists and independently of the user's game-directory redist folder.
+    // Mod payloads are supplied by the signed, remotely updateable first-boot
+    // pack. Keep them out of the APK so native mod fixes and prerequisites can
+    // be updated without rebuilding the launcher.
     listOf(
         "dead-island-de",
         "deus-ex-hrdc",
@@ -84,6 +83,7 @@ android {
         "grim-dawn",
         "skyrim-se",
         "stardew-valley",
+        "transformers-wfc",
         "valheim",
     ).forEach { gameId ->
         sourceSets["main"].assets.exclude("mods/$gameId/payload/**")
