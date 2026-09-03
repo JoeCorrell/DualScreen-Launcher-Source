@@ -165,9 +165,13 @@ wrapper decrypts the administrator token only for the lifetime of the command:
 
 ```powershell
 .\scripts\admin-local.ps1 create 5 "September supporter codes"
+.\scripts\admin-local.ps1 create-file "C:\secure\new-codes.txt" 50 "September supporter codes"
 .\scripts\admin-local.ps1 codes
 .\scripts\admin-local.ps1 entitlements
 ```
+
+`create-file` writes the one-time plaintext response directly to a new file and
+refuses to overwrite an existing file, keeping code values out of terminal logs.
 
 ## Operational notes
 
