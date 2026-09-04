@@ -72,6 +72,34 @@ uint64_t g_drawn_sequence = 0;
 Snapshot g_drawn_snapshot = {};
 bool g_have_drawn_snapshot = false;
 
+struct MonitorChoice {
+  RECT bounds = {};
+  int score = -1;
+};
+
+BOOL CALLBACK FindSecondary(HMONITOR monitor, HDC, LPRECT, LPARAM parameter) {
+  auto* choice = reinterpret_cast<MonitorChoice*>(parameter);
+  MONITORINFO info = {};
+  info.cbSize = sizeof(info);
+  if (!choice || !GetMonitorInfoW(monitor, &info) ||
+      (info.dwFlags & MONITORINFOF_PRIMARY))
+    return TRUE;
+
+  const int width = info.rcMonitor.right - info.rcMonitor.left;
+  const int height = info.rcMonitor.bottom - info.rcMonitor.top;
+  // Prefer the physical Thor lower panel. The area fallback still makes this
+  // work on a different dual-display device rather than relying on a stale
+  // desktop coordinate.
+  const int score = width == kWidth && height == kHeight
+                        ? 1000000
+                        : std::max(0, width) * std::max(0, height);
+  if (score > choice->score) {
+    choice->bounds = info.rcMonitor;
+    choice->score = score;
+  }
+  return TRUE;
+}
+
 struct LocalCooldown {
   uint64_t world_epoch = 0;
   uint32_t ability_object_index = 0;
@@ -765,9 +793,29 @@ bool QueueAction(HitTarget target, const Snapshot& state) {
     case HitTarget::kSquad2: {
       const uint32_t slot = static_cast<uint32_t>(target) -
                             static_cast<uint32_t>(HitTarget::kSquad0);
-      if (slot >= state.squad_count || !state.squad[slot].switchable ||
-          state.squad[slot].controlled)
+      if (slot >= state.squad_count) {
+        Log(LogLevel::kWarning,
+            "[Touch] squad switch ignored slot=%lu reason=slot-not-present count=%lu",
+            static_cast<unsigned long>(slot),
+            static_cast<unsigned long>(state.squad_count));
         return false;
+      }
+      if (!state.squad[slot].switchable) {
+        Log(LogLevel::kWarning,
+            "[Touch] squad switch ignored slot=%lu reason=not-switchable pawn=%lu identity=%08lX caps=%llX",
+            static_cast<unsigned long>(slot),
+            static_cast<unsigned long>(
+                state.squad[slot].pawn_object_index),
+            static_cast<unsigned long>(state.squad[slot].identity_hash),
+            static_cast<unsigned long long>(state.capabilities));
+        return false;
+      }
+      if (state.squad[slot].controlled) {
+        Log(LogLevel::kWarning,
+            "[Touch] squad switch ignored slot=%lu reason=already-controlled",
+            static_cast<unsigned long>(slot));
+        return false;
+      }
       command.type = CommandType::kSwitchSquadMember;
       command.expected_target_object_index =
           state.squad[slot].pawn_object_index;
@@ -779,7 +827,18 @@ bool QueueAction(HitTarget target, const Snapshot& state) {
     }
     default: return false;
   }
-  return QueueCommand(command);
+  uint64_t request_id = 0;
+  const bool queued = QueueCommand(command, &request_id);
+  if (command.type == CommandType::kSwitchSquadMember) {
+    Log(queued ? LogLevel::kInfo : LogLevel::kWarning,
+        "[Touch] squad switch slot=%lu pawn=%lu identity=%08lX queue=%s request=%llu",
+        static_cast<unsigned long>(command.squad_slot),
+        static_cast<unsigned long>(command.expected_pawn_object_index),
+        static_cast<unsigned long>(command.expected_identity_hash),
+        queued ? "accepted" : "rejected",
+        static_cast<unsigned long long>(request_id));
+  }
+  return queued;
 }
 
 ULONGLONG PanelActionInterval(HitTarget target) {
@@ -1121,6 +1180,11 @@ LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
       EndPaint(window, &paint);
       return 0;
     }
+    case WM_PRINTCLIENT:
+      if (wparam && g_memory_dc)
+        BitBlt(reinterpret_cast<HDC>(wparam), 0, 0, kWidth, kHeight,
+               g_memory_dc, 0, 0, SRCCOPY);
+      return 0;
     case WM_CLOSE:
       ShowWindow(window, SW_HIDE);
       return 0;
@@ -1143,6 +1207,25 @@ HFONT Font(int height, int weight) {
 }
 
 DWORD WINAPI PanelThread(void*) {
+  MonitorChoice monitor;
+  EnumDisplayMonitors(nullptr, nullptr, FindSecondary,
+                      reinterpret_cast<LPARAM>(&monitor));
+  if (monitor.score < 0) {
+    // Wine caches EnumDisplayMonitors before its RandR 1.4 query on this
+    // title. Waiting cannot refresh that process-local cache: WEMU already
+    // exposes THOR-BOTTOM at 0,720, but WFC can finish (or fail) video startup
+    // before the Win32 monitor API ever reflects it. Skyrim's stable panel
+    // takes the same route and falls back to the configured lower rectangle.
+    monitor.bounds.left = 0;
+    monitor.bounds.top = 720;
+    monitor.bounds.right = monitor.bounds.left + kWidth;
+    monitor.bounds.bottom = monitor.bounds.top + kHeight;
+    monitor.score = 0;
+    Log(LogLevel::kInfo,
+        "[DualScreen] Win32 secondary enumeration was stale; using configured lower-panel bounds 0,720 %dx%d",
+        kWidth, kHeight);
+  }
+
   WNDCLASSEXW cls = {};
   cls.cbSize = sizeof(cls);
   cls.lpfnWndProc = WindowProcedure;
@@ -1150,12 +1233,16 @@ DWORD WINAPI PanelThread(void*) {
   cls.hCursor = LoadCursorW(nullptr, IDC_ARROW);
   cls.hbrBackground = nullptr;
   cls.lpszClassName = L"TransformersWfcSecondScreenPanel";
-  if (!RegisterClassExW(&cls)) return 1;
-  g_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE |
-                                 WS_EX_TOPMOST,
+  if (!RegisterClassExW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+    return 1;
+  // Match Skyrim's proven panel ownership model.  TOPMOST is unnecessary for
+  // a window on the dedicated lower monitor and makes Wine reorder WFC's
+  // primary client when the panel maps, which in turn disrupts game focus.
+  g_window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
                              cls.lpszClassName,
                              L"Transformers: War for Cybertron Dual-Screen",
-                             WS_POPUP, 0, 1080, kWidth, kHeight, nullptr,
+                             WS_POPUP, monitor.bounds.left, monitor.bounds.top,
+                             kWidth, kHeight, nullptr,
                              nullptr, g_module, nullptr);
   if (!g_window) return 2;
   HDC window_dc = GetDC(g_window);
@@ -1198,11 +1285,11 @@ DWORD WINAPI PanelThread(void*) {
   RenderLatestSnapshot();
   ScheduleUiTimer(GetTickCount64());
   ShowWindow(g_window, SW_SHOWNOACTIVATE);
-  SetWindowPos(g_window, HWND_TOPMOST, 0, 1080, kWidth, kHeight,
-               SWP_NOACTIVATE | SWP_SHOWWINDOW);
   Log(LogLevel::kInfo,
-      "[DualScreen] panel ready tid=%lu class=TransformersWfcSecondScreenPanel size=1240x1080 port=%u",
-      static_cast<unsigned long>(GetCurrentThreadId()), kInputPort);
+      "[DualScreen] panel ready tid=%lu class=TransformersWfcSecondScreenPanel position=%ld,%ld monitor=%ldx%ld size=%dx%d port=%u",
+      static_cast<unsigned long>(GetCurrentThreadId()), monitor.bounds.left,
+      monitor.bounds.top, monitor.bounds.right - monitor.bounds.left,
+      monitor.bounds.bottom - monitor.bounds.top, kWidth, kHeight, kInputPort);
   MSG message = {};
   while (GetMessageW(&message, nullptr, 0, 0) > 0) {
     TranslateMessage(&message);

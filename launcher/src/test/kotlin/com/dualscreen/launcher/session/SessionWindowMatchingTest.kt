@@ -6,6 +6,7 @@ import org.junit.Test
 
 class SessionWindowMatchingTest {
     private val fallout3 = checkNotNull(GameCatalog.byId("fallout3"))
+    private val transformers = checkNotNull(GameCatalog.byId("transformers-wfc"))
 
     @Test
     fun `steam launcher executable class dismisses configuration launch cover`() {
@@ -49,5 +50,10 @@ class SessionWindowMatchingTest {
                 configurationLauncher = false,
             ),
         ).isTrue()
+    }
+
+    @Test
+    fun `catalog subdirectory does not hide direct WFC executable window`() {
+        assertThat(matchesDirectExecutableWindow(" twfc.exe", transformers)).isTrue()
     }
 }

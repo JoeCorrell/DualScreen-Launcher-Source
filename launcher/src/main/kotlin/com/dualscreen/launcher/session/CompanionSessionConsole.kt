@@ -260,7 +260,7 @@ private fun GuestPanelSurface() {
 
                         attachedWidth = width
                         attachedHeight = height
-                        SecondScreenOutput.attach(holder.surface, width, height)
+                        SecondScreenOutput.requestAttach(holder.surface, width, height)
                     }
 
                     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -281,7 +281,7 @@ private fun GuestPanelSurface() {
                     }
 
                     override fun surfaceDestroyed(holder: SurfaceHolder) {
-                        SecondScreenOutput.detach()
+                        SecondScreenOutput.requestDetach()
                     }
                 })
             }

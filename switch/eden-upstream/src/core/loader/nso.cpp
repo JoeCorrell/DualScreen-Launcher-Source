@@ -215,12 +215,13 @@ constexpr u32 SshdRoDataSize = 0x005010B0;
 constexpr u32 SshdDataLocation = 0x0155F000;
 constexpr u32 SshdDataSize = 0x002BDCE0;
 constexpr u32 SshdBssSize = 0x2B816320;
-// dStage's native local-map capture tick. This path executes whenever the active
-// stage owns a map renderer, immediately before it tests the render-request byte
-// at dStageRoom+0x562. The previous actor-update site at 0xE3E818 stopped running
-// once its actor left the scene, which left host requests permanently queued.
-constexpr u32 SshdMapCaptureHookOffset = 0x00E26E2C;
-constexpr u32 SshdMapCaptureHookInstruction = 0x39558AE8; // ldrb w8, [x23, #0x562]
+// dStage installs main+0xE23900 as its render callback. Hook its prologue after
+// the caller link register has been saved, but before the callback can take any
+// of its many early returns. Hooking the native map block at 0xE26E2C coupled
+// mailbox initialization to that conditional block and left the Android client
+// waiting forever whenever the block was skipped.
+constexpr u32 SshdMapCaptureHookOffset = 0x00E2391C;
+constexpr u32 SshdMapCaptureHookInstruction = 0x910183FD; // add x29, sp, #0x60
 constexpr u32 SshdTelemetryBridgeOffset = SshdTextFileSize;
 constexpr u32 SshdTelemetryBridgeSize = SshdRoDataLocation - SshdTelemetryBridgeOffset;
 constexpr u32 SshdCompanionMailboxPageSize = 0x1000;
@@ -253,10 +254,11 @@ constexpr u32 XcxCompanionBridgePageSize = 0x1000;
 constexpr u32 SshdCurrentStageNameOffset = 0x02BF98D8;
 constexpr u32 SshdStageRoomManagerPointerOffset = 0x02BF9D90;
 constexpr u32 SshdMapGlobalPointerOffset = 0x0183C440;
-// dLytMapGlobal is embedded at dLytMapMain+0x10D38 and dLytMapCapture at
-// dLytMapMain+0x1EE0. Their relative placement lets the capture bridge use
-// the native capture pane dimensions without retaining a stale actor pointer.
-constexpr u32 SshdMapGlobalToCaptureDelta = 0xEE58;
+// The 1.0.1 dLytMap_c owner embeds dLytMapMain at +0x510. Its global is at
+// dLytMapMain+0x10D38 (owner+0x11248), while dLytMapCapture starts at
+// dLytMapMain+0x19E0 (owner+0x1EF0). Keep this as a relative lookup so the
+// bridge does not retain a stale actor pointer across UI lifetimes.
+constexpr u32 SshdMapGlobalToCaptureDelta = 0xF358;
 constexpr u32 SshdMapCaptureWidthOffset = 0xA0;
 constexpr u32 SshdMapCaptureHeightOffset = 0xA8;
 constexpr u32 SshdMapGlobalScrollOffset = 0x00;
@@ -643,7 +645,7 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     emit_load_address(12, SshdMapGlobalPointerOffset);
     const auto branch_request_no_map_global = emit(0);
     emit_move_wide(13, static_cast<u16>(SshdMapGlobalToCaptureDelta), false, false);
-    emit(EncodeSubtractRegisters64(13, 12, 13)); // capture = global - 0xEE58
+    emit(EncodeSubtractRegisters64(13, 12, 13)); // capture = global - 0xF358
     emit(EncodeLoadUnsigned32(17, 12, SshdMapGlobalScaleOffset));
     const auto branch_invalid_map_scale = emit(0);
     emit(EncodeLoadUnsigned32(17, 13, SshdMapCaptureWidthOffset));

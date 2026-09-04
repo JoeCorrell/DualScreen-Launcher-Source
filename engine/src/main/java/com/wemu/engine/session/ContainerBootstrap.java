@@ -937,7 +937,8 @@ public class ContainerBootstrap {
          *
          * Requiring both system32 and syswow64 is intentional: ARM64EC Proton
          * uses the first for its 64-bit side while 32-bit games such as
-         * Transformers WFC load the second through WOWBox64.
+         * Transformers WFC load native components from the second through the
+         * selected HODLL translator.
          */
         static boolean areNativeWinComponentsMaterialized(
                 File imageRoot, String wincomponents) {

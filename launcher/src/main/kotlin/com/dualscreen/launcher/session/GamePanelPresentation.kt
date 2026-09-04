@@ -106,11 +106,11 @@ class GamePanelPresentation(
                 override fun surfaceCreated(holder: SurfaceHolder) = Unit
 
                 override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-                    SecondScreenOutput.attach(holder.surface, width, height)
+                    SecondScreenOutput.requestAttach(holder.surface, width, height)
                 }
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
-                    SecondScreenOutput.detach()
+                    SecondScreenOutput.requestDetach()
                 }
             })
         }
@@ -152,7 +152,7 @@ class GamePanelPresentation(
 
     override fun dismiss() {
         SecondScreenOutput.setOnStateListener(null)
-        SecondScreenOutput.detach()
+        SecondScreenOutput.requestDetach()
         nativeSurface = null
         launchStatusView = null
         SecondScreen.shutdown()

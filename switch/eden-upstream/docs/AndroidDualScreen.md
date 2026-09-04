@@ -41,10 +41,14 @@ The 3D weapon is intentionally omitted from the portrait. Camera framing uses Li
 base-body bounds, so loading a save or changing armor/back gear cannot zoom the model out.
 
 `generate_botw_equipment_manifest.py` resolves and deduplicates the actor packs,
-`export_botw_bfres_models.ps1` performs the sequential BFRES conversion, and
-`pack_gltf_glb.py` normalizes Assimp's joint data into valid self-contained glTF 2.0 files.
-`audit_botw_player_assets.py` verifies index coverage, attachment bones, references, and GLB
-headers before packaging.
+`export_botw_bfres_models.ps1` performs the sequential BFRES conversion. Link and armor are routed
+through the validated player converter and must be baked against `Nml_Wait` from
+`Player_Animation.sbfres`; exporting them as raw bind-pose meshes produces visibly stretched armor.
+`pack_gltf_glb.py` normalizes Assimp's joint data into valid self-contained glTF 2.0 files for rigid
+equipment. `audit_botw_player_assets.py` verifies index coverage, attachment bones, references,
+embedded textures, skins, and the baked player pose before packaging. At runtime, BOTW external
+Link/armor overrides must pass the same baked-pose check; stale raw bind-pose files are skipped in
+favor of the packaged model instead of being allowed to put the preview into a T-pose.
 
 ## Original UI assets
 

@@ -17,13 +17,35 @@ fun gradleBuildConfigString(name: String): String =
         .replace("\\", "\\\\")
         .replace("\"", "\\\"")
 
+val remotelyManagedPayloads = listOf(
+    "dead-island-de",
+    "deus-ex-hrdc",
+    "fallout3",
+    "fallout4",
+    "grim-dawn",
+    "skyrim-se",
+    "stardew-valley",
+    "transformers-wfc",
+    "valheim",
+)
+val filteredLauncherAssets = layout.buildDirectory.dir("generated/filteredLauncherAssets")
+val prepareFilteredLauncherAssets by tasks.registering(Sync::class) {
+    from(layout.projectDirectory.dir("src/main/assets")) {
+        remotelyManagedPayloads.forEach { gameId ->
+            exclude("mods/$gameId/payload/**")
+        }
+        exclude("mods/switch/**/payload/**")
+    }
+    into(filteredLauncherAssets)
+}
+
 android {
     namespace = "com.dualscreen.launcher"
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 25
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.13"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 27
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.15"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         // Both values are safe to ship: the URL identifies the service and the
@@ -55,7 +77,13 @@ android {
     }
 
     buildTypes {
-        debug { isMinifyEnabled = false }
+        debug {
+            isMinifyEnabled = false
+            // Device-test builds must update the installed release-signed
+            // launcher in place; using Android's generated debug key makes an
+            // otherwise valid APK fail with INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+            signingConfig = localReleaseSigning
+        }
         release {
             // Minify the release requested for device testing. Resource shrinking stays
             // disabled because the native runtime resolves several packaged resources by
@@ -72,24 +100,17 @@ android {
 
     buildFeatures { buildConfig = true }
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
-    // Mod payloads are supplied by the signed, remotely updateable first-boot
-    // pack. Keep them out of the APK so native mod fixes and prerequisites can
-    // be updated without rebuilding the launcher.
-    listOf(
-        "dead-island-de",
-        "deus-ex-hrdc",
-        "fallout3",
-        "fallout4",
-        "grim-dawn",
-        "skyrim-se",
-        "stardew-valley",
-        "transformers-wfc",
-        "valheim",
-    ).forEach { gameId ->
-        sourceSets["main"].assets.exclude("mods/$gameId/payload/**")
-    }
-    sourceSets["main"].assets.exclude("mods/switch/**/payload/**")
+    // AndroidSourceDirectorySet's exclude filter is not applied by AGP's asset
+    // merger. Stage a filtered tree instead, otherwise stale native payloads
+    // (including WFC's redistributables) silently ship inside every APK and can
+    // override the signed first-boot pack. Isaac is intentionally not in this
+    // list, so its native DLL, Lua loader, and assets ship with this release.
+    sourceSets["main"].assets.setSrcDirs(listOf(filteredLauncherAssets.get().asFile))
     packaging { jniLibs { useLegacyPackaging = true } }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareFilteredLauncherAssets)
 }
 
 dependencies {

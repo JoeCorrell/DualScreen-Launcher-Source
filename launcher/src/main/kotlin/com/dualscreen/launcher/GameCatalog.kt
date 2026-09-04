@@ -41,6 +41,8 @@ data class SupportedGame(
     val prerequisites: List<PrerequisitePackage> = emptyList(),
     val launchArguments: String = "",
     val panelMode: LowerPanelMode = LowerPanelMode.NATIVE_WINDOW,
+    /** Hide the duplicate DirectInput view and expose only Wine's XInput pad. */
+    val exclusiveXInput: Boolean = false,
     /** Executable-scoped Wine DLL policy; never promoted to prefix-wide env vars. */
     val nativeDllOverrides: Map<String, String> = emptyMap(),
     val windowHints: List<String> = executableCandidates,
@@ -171,6 +173,7 @@ object GameCatalog {
                     sha256 = "1db04b09b36094571fab861cd01ca175d44d610b5417f950f37523cd97eeb016",
                 ),
             ),
+            launchArguments = "-windowed -ResX=1280 -ResY=720",
             nativeDllOverrides = mapOf("dinput8" to "native,builtin"),
             windowHints = listOf("twfc", "transformers", "war for cybertron"),
         ),
@@ -212,6 +215,30 @@ object GameCatalog {
                 FileRule("gamedll_x64_rwdi.dll", bytes = 21_069_760),
             ),
             windowHints = listOf("deadislandgame", "dead island"),
+        ),
+        SupportedGame(
+            id = "isaac-repentance",
+            title = "The Binding of Isaac: Repentance+",
+            storageName = "The Binding of Isaac - Repentance",
+            summary = "Live dungeon map, stats, inventory, and run information.",
+            requiredBuild = "Repentance+ v1.9.7.17.J460 (Windows 32-bit)",
+            executableCandidates = listOf("isaac-ng.exe"),
+            saveDirectory = "Documents/My Games/Binding of Isaac Repentance+",
+            requiredFiles = listOf(
+                "isaac-ng.exe",
+                "resources/packed/repentance.a",
+                "resources/scripts/socket/core.dll",
+            ),
+            fileRules = listOf(
+                FileRule(
+                    path = "isaac-ng.exe",
+                    bytes = 9_362_944L,
+                    sha256 = "e5faf6f513c6de9cc9ff1c335ef9c541e2b33fc623aa3b8ffbd2e6a6c0027bb0",
+                ),
+            ),
+            panelMode = LowerPanelMode.NATIVE_WINDOW,
+            exclusiveXInput = true,
+            windowHints = listOf("isaac-ng", "binding of isaac", "repentance"),
         ),
         SupportedGame(
             id = "valheim",

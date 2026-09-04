@@ -1076,8 +1076,9 @@ public class WemuSession implements RuntimeSession {
         String affinity = container.getExtra("affinityCores");
         if (affinity == null || affinity.isEmpty()) affinity = "automatic";
         // Resolve through the guest launcher's policy so diagnostics cannot
-        // drift from HODLL selection. Ordinary ARM64EC sessions remain on FEX;
-        // the authenticated Transformers preset is the explicit Box64 exception.
+        // drift from HODLL selection. ARM64EC sessions, including WFC, follow
+        // WEMU's FEX path; WFC's authenticated Box64 package remains installed
+        // and is reported separately below.
         String effectiveEmulator = guestProgramLauncherComponent.getEffectiveEmulator();
         boolean fex = !"box64".equalsIgnoreCase(effectiveEmulator);
         String translator = fex ? "FEXCore" : "Box64";

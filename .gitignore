@@ -16,6 +16,8 @@ externalNativeBuild/
 /.device-*-debug/
 /.release-compare-*/
 /.research/
+/.work/
+/$out/
 /UmodelSaved/
 /stdout
 /backend/node_modules/

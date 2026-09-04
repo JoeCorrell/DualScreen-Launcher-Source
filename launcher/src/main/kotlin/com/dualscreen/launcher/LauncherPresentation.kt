@@ -55,6 +55,7 @@ internal fun gameArtwork(gameId: String): Int = when (gameId) {
     "transformers-wfc" -> R.drawable.art_transformers_wfc
     "deus-ex-hrdc" -> R.drawable.art_deus_ex
     "dead-island-de" -> R.drawable.art_dead_island
+    "isaac-repentance" -> R.drawable.art_isaac
     "valheim" -> R.drawable.art_valheim
     "stardew-valley" -> R.drawable.art_stardew
     else -> R.drawable.ic_launcher
@@ -77,6 +78,7 @@ internal fun gameShortTitle(gameId: String): String = when (gameId) {
     "transformers-wfc" -> "Transformers: War for Cybertron"
     "deus-ex-hrdc" -> "Deus Ex: Human Revolution"
     "dead-island-de" -> "Dead Island Definitive"
+    "isaac-repentance" -> "Binding of Isaac: Repentance+"
     "valheim" -> "Valheim"
     "stardew-valley" -> "Stardew Valley"
     else -> gameId

@@ -38,14 +38,17 @@ class AssetIntegrityTest {
     }
 
     @Test
-    fun transformersPresetPinsTheExactWemuBox64BuildAndPerformanceProfile() {
-        val games = JSONObject(File(assets, "presets/games.json").readText())
+    fun transformersPresetClonesTheKnownGoodProton9ContainerButUsesBox64() {
+        val proton9 = JSONObject(File(assets, "presets/stardew-proton9.json").readText())
         val transformers = JSONObject(File(assets, "presets/transformers-wfc.json").readText())
 
         assertThat(transformers.getString("name")).isEqualTo("Transformers WFC")
         assertThat(transformers.getString("emulator")).isEqualTo("box64")
         assertThat(transformers.getString("box64Version")).isEqualTo("0.4.2")
-        assertThat(transformers.getString("box64Preset")).isEqualTo("PERFORMANCE")
+        assertThat(transformers.getString("box64Preset")).isEqualTo("COMPATIBILITY")
+        assertThat(transformers.getBoolean("syncCpuTopology")).isFalse()
+        assertThat(transformers.getString("wineVersion"))
+            .isEqualTo("Proton-10.0-arm64ec-0")
         assertThat(transformers.getString("rendererDriverId")).isEqualTo("turnip26.2.0")
         assertThat(transformers.getString("graphicsDriverConfig"))
             .contains("version=turnip26.2.0")
@@ -53,28 +56,27 @@ class AssetIntegrityTest {
             .isEqualTo("0.4.2")
         assertThat(transformers.getJSONObject("extraData").getString("wemuPinnedBox64Runtime"))
             .isEqualTo("transformers-wfc-0.4.2")
-        assertThat(transformers.getString("wincomponents")).contains("xaudio=1")
 
-        // Preserve WEMU's known-launching WFC graphics and DXVK values. The
-        // system Vulkan driver rejects DXVK's queried feature structures and
-        // never produces a usable game frame on the target device.
-        val dxvk = transformers.getString("dxwrapperConfig")
-        assertThat(dxvk).contains("async=0")
-        assertThat(dxvk).contains("asyncCache=1")
-        assertThat(dxvk).contains("mobileTuning=1")
-        assertThat(dxvk).contains("relaxedBarriers=1")
-
-        games.remove("name")
+        // Identity and the authenticated Box64 package stay WFC-specific;
+        // ARM64EC execution itself follows WEMU's FEXCore path. WFC additionally
+        // exposes the second RandR monitor required by its native panel. Every
+        // other compatibility/performance field remains the exact WEMU Proton 9
+        // snapshot. In particular, fitGuestWindow stays disabled: scaling a
+        // 640x480 fallback is not a substitute for resizing WFC's real client.
+        proton9.put("id", transformers.getInt("id"))
+        proton9.put("name", transformers.getString("name"))
+        proton9.put("emulator", "box64")
+        proton9.getJSONObject("extraData").put(
+            "wemuPinnedBox64Runtime",
+            "transformers-wfc-0.4.2",
+        )
+        proton9.getJSONObject("extraData").put("displaySecondScreen", "1")
+        transformers.remove("syncCpuTopology")
         transformers.remove("name")
-        transformers.put("emulator", games.getString("emulator"))
-        // WFC uses the requested Box64 performance profile. All unrelated
-        // game defaults still match the captured WEMU container.
-        transformers.put("box64Preset", games.getString("box64Preset"))
-        transformers.put("wincomponents", games.getString("wincomponents"))
-        transformers.put("rendererDriverId", games.getString("rendererDriverId"))
-        transformers.put("graphicsDriverConfig", games.getString("graphicsDriverConfig"))
-        transformers.getJSONObject("extraData").remove("wemuPinnedBox64Runtime")
-        assertThat(transformers.toString()).isEqualTo(games.toString())
+        proton9.remove("name")
+        assertThat(transformers.toString()).isEqualTo(proton9.toString())
+        assertThat(transformers.getJSONObject("extraData").getString("displaySecondScreen"))
+            .isEqualTo("1")
 
         val archive = File(engineAssets, "box64/box64-0.4.2.tzst")
         assertThat(archive.length()).isEqualTo(3_970_492L)
@@ -165,6 +167,72 @@ class AssetIntegrityTest {
                 assertThat(target.split('/')).doesNotContain("..")
             }
         }
+    }
+
+    @Test
+    fun isaacNativePatchAndAssetsCoverTheExactInstalledBuild() {
+        val isaacAssets = File("../pc/mods/IsaacSecondScreen/assets").canonicalFile
+        val index = JSONObject(File(isaacAssets, "index.json").readText())
+        assertThat(index.getString("sourceBuild"))
+            .isEqualTo("Binding of Isaac: Repentance+ v1.9.7.17.J460")
+        val items = index.getJSONObject("items")
+        assertThat(items.getJSONObject("collectibles").length()).isEqualTo(721)
+        assertThat(items.getJSONObject("trinkets").length()).isEqualTo(188)
+        assertThat(index.getJSONObject("players").length()).isEqualTo(41)
+        assertThat(index.getJSONObject("pockets").length()).isEqualTo(98)
+        assertThat(items.getJSONObject("collectibles").getJSONObject("118").getInt("quality"))
+            .isEqualTo(4)
+
+        listOf("collectibles", "trinkets").forEach { category ->
+            val entries = items.getJSONObject(category)
+            entries.keys().forEach { id ->
+                val asset = entries.getJSONObject(id).getString("asset")
+                    .removePrefix("isaac/")
+                assertThat(File(isaacAssets, asset).isFile).isTrue()
+            }
+        }
+        listOf(
+            "game/font/upheaval.fnt",
+            "game/gfx/ui/minimap_icons.png",
+            "game/gfx/ui/ui_hearts.png",
+            "game/gfx/items/pick ups/pickup_007_pill.png",
+        ).forEach { relative -> assertThat(File(isaacAssets, relative).isFile).isTrue() }
+
+        val mod = File(assets, "mods/isaac-repentance")
+        val payload = File(mod, "payload").canonicalFile
+        val manifest = JSONObject(File(mod, "manifest.json").readText()).getJSONArray("files")
+        assertThat(manifest.length()).isEqualTo(1_207)
+        val declared = linkedSetOf<String>()
+        val targets = linkedSetOf<String>()
+        for (entryIndex in 0 until manifest.length()) {
+            val entry = manifest.getJSONObject(entryIndex)
+            val sourceName = entry.getString("source").replace('\\', '/')
+            val targetName = entry.getString("target").replace('\\', '/')
+            assertThat(declared.add(sourceName.lowercase())).isTrue()
+            assertThat(targets.add(targetName.lowercase())).isTrue()
+            assertThat(targetName.startsWith('/')).isFalse()
+            assertThat(targetName.split('/')).doesNotContain("..")
+            val source = File(payload, sourceName).canonicalFile
+            assertThat(source.path.startsWith(payload.path + File.separator)).isTrue()
+            assertThat(source.isFile).isTrue()
+            assertThat(sha256(source))
+                .isEqualTo(entry.getString("sha256"))
+        }
+        val bundled = payload.walkTopDown()
+            .filter(File::isFile)
+            .map { it.relativeTo(payload).invariantSeparatorsPath.lowercase() }
+            .toSet()
+        assertThat(declared).containsExactlyElementsIn(bundled)
+        assertThat(targets).containsAtLeast(
+            "winmm.dll",
+            "resources/scripts/isaac_second_screen_assets/game/gfx/ui/minimap_icons.png",
+            "mods/dualscreenisaac/main.lua",
+        )
+        val mainLua = File(payload, "mod/main.lua").readText()
+        assertThat(mainLua).contains("native winmm proxy")
+        assertThat(mainLua).contains("luaopen_isaac_second_screen")
+        assertThat(mainLua).doesNotContain("pcall(require, \"socket\")")
+        assertThat(mainLua).doesNotContain("require, \"isaac_second_screen\"")
     }
 
     @Test

@@ -1,0 +1,6 @@
+LIBRARY winmm
+EXPORTS
+    timeBeginPeriod
+    timeEndPeriod
+    timeGetDevCaps
+    luaopen_isaac_second_screen

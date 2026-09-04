@@ -167,6 +167,9 @@ class SwitchCatalogTest {
         assertThat(renderer).contains("keeping the current ${'$'}slot model")
         assertThat(renderer).contains("using ${'$'}{model.sourceActor}")
         assertThat(renderer).contains("defaultActors.getValue(slot)")
+        assertThat(renderer).contains("hasValidatedBotwBodyPose")
+        assertThat(renderer).contains("Ignoring unposed external player model")
+        assertThat(renderer).contains("using a packaged fallback")
         assertThat(renderer).doesNotContain(
             "val source = context.getExternalFilesDir(null)?.let",
         )
@@ -176,5 +179,9 @@ class SwitchCatalogTest {
         assertThat(runtimeBuild).contains("verifyBotwBasePlayerAssets")
         assertThat(runtimeBuild).contains("Armor_Default_Upper.glb")
         assertThat(runtimeBuild).contains("include(\"Armor_*.glb\")")
+        assertThat(runtimeBuild).contains("val missingArmor = requiredArmor.filterNot")
+        assertThat(runtimeBuild).contains("without every indexed BOTW armor GLB")
+        assertThat(runtimeBuild).contains("has no validated baked Nml_Wait pose")
+        assertThat(runtimeBuild).contains("contains a non-embedded or non-PNG texture")
     }
 }

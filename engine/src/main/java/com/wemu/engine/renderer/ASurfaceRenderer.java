@@ -104,7 +104,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     public int surfaceWidth;
     public int surfaceHeight;
 
-    private boolean surfaceInitialized = false;
+    private volatile boolean surfaceInitialized = false;
     private volatile Surface currentSurface = null;
     private boolean sfCompatMode = true;
     private int maximumConvertedBuffers = 8;
@@ -291,7 +291,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
         if (surfaceInitialized) {
             if (nativeReattachSurface(surface)) {
                 declareFrameRate();
-                updateScene();
+                queueSurfaceSceneRefresh(false);
                 return true;
             }
             surfaceInitialized = false;
@@ -312,11 +312,32 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
         nativeInitScanout();
         declareFrameRate();
         sendCursorToNative(lastCursor);
+        /*
+         * A WindowSurface is meaningful only inside the native context that
+         * registered its ASurfaceControl. Wine can map and even present startup
+         * windows before Android delivers this SurfaceView's first
+         * surfaceCreated callback. Those early Java entries used to survive
+         * nativeInit, so updateScene believed they were registered while the
+         * new native context had no matching controls. Every buffer was then
+         * rejected until an app switch destroyed the Surface and happened to
+         * clear this map.
+         *
+         * A fresh native context always starts with a fresh registration map.
+         * Reattach above keeps the map because it retains that same context.
+         */
+        final int staleRegistrations = windowSurfaces.size();
+        windowSurfaces.clear();
+        cachedDesktopDst = null;
+        if (staleRegistrations > 0) {
+            Log.i(TAG, "Discarded " + staleRegistrations
+                    + " pre-surface window registration(s)");
+        }
         // The scene creates the per-window surface controls; the resubmit fills
         // them, because a window that is not drawing would otherwise stay blank
-        // until it next happened to.
-        updateScene();
-        resubmitAllBuffers();
+        // until it next happened to. Both walks take XServer's global locks,
+        // so they run on the renderer worker rather than SurfaceView's UI
+        // callback. A busy Wine event must not turn startup into an input ANR.
+        queueSurfaceSceneRefresh(true);
         return true;
     }
 
@@ -358,6 +379,15 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
                 viewTransformation.viewOffsetY,
                 viewTransformation.viewWidth,
                 viewTransformation.viewHeight);
+    }
+
+    /** Runs X-server lock acquisition away from SurfaceView's UI callback. */
+    private void queueSurfaceSceneRefresh(boolean resubmit) {
+        xServerView.queueEvent(() -> {
+            if (!surfaceInitialized || currentSurface == null) return;
+            updateScene();
+            if (resubmit) resubmitAllBuffers();
+        });
     }
 
     private void resubmitAllBuffers() {
@@ -818,7 +848,15 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
         if (ws.hasBuffer) return;
         if (TRACE) Log.d(TAG, "first buffer for window " + windowId + " -> visible");
         ws.hasBuffer = true;
-        updateScene();
+        /*
+         * CPU draw listeners run inside the X request which already owns the
+         * drawable-manager lock. updateScene acquires WINDOW_MANAGER and then
+         * DRAWABLE_MANAGER; calling it inline can therefore invert the order
+         * against a simultaneous surface rebuild (window -> drawable) and
+         * permanently deadlock both threads. Publish visibility on the
+         * renderer worker after the X request releases its lock.
+         */
+        xServerView.queueEvent(this::updateScene);
     }
 
     /**
@@ -937,6 +975,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
                 // or register the primary renderer's per-window scanout sources
                 // for a window that can never enter the primary scene.
                 content.setOnDrawListener(() -> pushCpuImageToNative(window.id, content));
+                replayMappedSecondScreenWindow(window, content);
             } else {
                 if (!(content.getTexture() instanceof AHBImage)) {
                     AHBImage image = new AHBImage(content.width, content.height);
@@ -1030,8 +1069,36 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
 
     @Override
     public void onModifyWindowProperty(Window window, Property property) {
-        if (!isPanelIdentityProperty(property)
-                || !SecondScreenOutput.isEarlyClaimPanelWindow(window)) return;
+        if (!isPanelIdentityProperty(property)) return;
+
+        if (!SecondScreenOutput.isEarlyClaimPanelWindow(window)) {
+            if (window == null || !window.attributes.isMapped()
+                    || isUnviewable(window)) return;
+
+            /*
+             * Wine can map its application window while WM_CLASS still says
+             * explorer.exe, then publish the real executable identity after
+             * the first buffers have already presented. onMapWindow correctly
+             * ignores the shell identity, but without replaying that setup the
+             * now-viewable window has no WindowSurface and every later frame is
+             * dropped. Re-entering the app recreates the Android surface and
+             * incidentally rebuilds the scene, which is why an audible black
+             * game suddenly appeared after an app switch.
+             *
+             * Re-run mapped-window registration at the authoritative identity
+             * transition and immediately submit the retained drawable. This is
+             * bounded to WM_CLASS/WM_NAME changes and is idempotent for windows
+             * that were already registered.
+             */
+            final boolean wasMissing = !windowSurfaces.containsKey(window.id);
+            onMapWindow(window);
+            if (wasMissing) {
+                Log.i(TAG, "Recovered mapped window after identity update id="
+                        + window.id + " class=" + window.getClassName());
+            }
+            resubmitBuffersForWindow(window);
+            return;
+        }
 
         /*
          * MapWindow commonly arrives before Wine publishes WM_CLASS/title.
@@ -1041,7 +1108,25 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
          * reaches SecondScreenOutput.
          */
         reclassifyNativePanelTree(window);
-        updateScene();
+        queueSurfaceSceneRefresh(false);
+    }
+
+    /**
+     * Replays the drawable a native GDI panel painted before MapWindow.
+     *
+     * Isaac renders its static dashboard, then calls ShowWindow.  There is no
+     * later paint merely because X mapped the already-complete drawable, so an
+     * on-draw listener alone leaves the lower Surface waiting forever.  Queue
+     * the retained frame after the map callback instead of doing a 5 MiB copy
+     * while WindowManager is still broadcasting the topology mutation.
+     */
+    private void replayMappedSecondScreenWindow(Window window, Drawable content) {
+        xServerView.queueEvent(() -> {
+            if (window.attributes.isMapped() && window.getContent() == content
+                    && isSecondScreenOnlyWindow(window)) {
+                claimedBySecondScreen(window, content);
+            }
+        });
     }
 
     private void reclassifyNativePanelTree(Window window) {

@@ -233,6 +233,10 @@ class PresetContainerManager(private val context: Context) {
         )
         Shortcut(container, file).also { shortcut ->
             shortcut.putExtra("envVars", supportedGameLaunchEnvironment())
+            if (game.exclusiveXInput) {
+                shortcut.putExtra("inputType", "4")
+                shortcut.putExtra("exclusiveXInput", "1")
+            }
             if (game.launchArguments.isNotBlank()) {
                 shortcut.putExtra("execArgs", game.launchArguments)
             }
@@ -336,6 +340,7 @@ class PresetContainerManager(private val context: Context) {
         desired.put("screenSize", container.screenSize)
         desired.put("dpi", container.dpi)
         val mergedExtras = container.extraDataCopy
+        specification.discardedExtraKeys.forEach(mergedExtras::remove)
         desired.optJSONObject("extraData")?.let { captured ->
             captured.keys().forEach { key -> mergedExtras.put(key, captured.get(key)) }
         }
@@ -405,17 +410,27 @@ class PresetContainerManager(private val context: Context) {
             key = "transformers-wfc",
             asset = "presets/transformers-wfc.json",
             expectedName = "Transformers WFC",
-            // WFC's captured WEMU configuration requires Turnip 26.2.0. The
-            // device system driver rejects DXVK's Vulkan feature chain and
-            // leaves the game on a black screen. Start safely, then preserve a
-            // compatible AdrenoTools driver the user explicitly selects.
+            // This is a separate prefix cloned from Stardew's known-good WEMU
+            // "Proton 9" configuration. Its Box64 0.4.2 package is pinned and
+            // verified, while ARM64EC execution deliberately follows WEMU's
+            // actual FEXCore/HODLL path.
+            // WFC's native panel uses the captured Proton 9 profile's real
+            // second RandR output. SecondScreenOutput routes that lower-monitor
+            // window into Android's bottom-panel Surface.
+            // Keep its captured Turnip choice locked too, otherwise an old
+            // WFC-only override silently defeats the compatibility baseline.
             allowGpuOverride = false,
-            preserveExistingGpuSelection = true,
+            discardedExtraKeys = setOf(
+                "graphicsFpsPreset",
+                "graphicsSharpness",
+                "graphicsPostFXMode",
+                "graphicsFpsLimit",
+            ),
         )
         private const val KEY_CONTAINER_ID = "containerId"
         private const val KEY_FINGERPRINT = "fingerprint"
         private const val KEY_MATERIALIZATION_REVISION = "companionPresetMaterialization"
-        private const val MATERIALIZATION_REVISION = "4"
+        private const val MATERIALIZATION_REVISION = "7"
 
         private fun presetFor(game: SupportedGame): PresetSpecification = when (game.id) {
             "stardew-valley" -> STARDEW_PRESET
@@ -488,6 +503,7 @@ private data class PresetSpecification(
     val expectedName: String,
     val allowGpuOverride: Boolean,
     val preserveExistingGpuSelection: Boolean = false,
+    val discardedExtraKeys: Set<String> = emptySet(),
 )
 
 /**
@@ -495,8 +511,10 @@ private data class PresetSpecification(
  * otherwise opens those modal first-boot installers before the requested EXE,
  * which a game-only launcher deliberately hides and therefore cannot dismiss.
  */
-internal fun supportedGameLaunchEnvironment(): String =
-    "WINEDLLOVERRIDES=icu=n;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1"
+internal fun supportedGameLaunchEnvironment(gameId: String? = null): String {
+    val winmm = if (gameId == "isaac-repentance") ";winmm=n,b" else ""
+    return "WINEDLLOVERRIDES=icu=n$winmm;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1"
+}
 
 /** Installs only the exact component ids named by the captured preset. */
 private class ComponentProvisioner(private val context: Context) {

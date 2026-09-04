@@ -6,6 +6,9 @@ param(
     [string[]] $ModelName = @(),
     [string] $Python = 'python',
     [string] $PackerPath = '',
+    [string] $ConverterPath = '',
+    [string] $AnimationBfres = '',
+    [string[]] $SharedTextureInput = @(),
     [switch] $Force
 )
 
@@ -19,6 +22,20 @@ if (-not $PackerPath) {
     $PackerPath = Join-Path $PSScriptRoot 'pack_gltf_glb.py'
 }
 $PackerPath = (Resolve-Path -LiteralPath $PackerPath).Path
+if (-not $ConverterPath) {
+    $ConverterPath = Join-Path $PSScriptRoot '..\botw-companion\Convert-BotwModel.ps1'
+}
+$ConverterPath = (Resolve-Path -LiteralPath $ConverterPath).Path
+$animationPath = if ($AnimationBfres) {
+    (Resolve-Path -LiteralPath $AnimationBfres).Path
+}
+else {
+    $candidate = Join-Path $ResourceRoot 'Model\Player_Animation.sbfres'
+    if ([IO.File]::Exists($candidate)) { $candidate } else { '' }
+}
+$sharedTexturePaths = @($SharedTextureInput | ForEach-Object {
+    (Resolve-Path -LiteralPath $_).Path
+})
 [void][IO.Directory]::CreateDirectory($OutputRoot)
 $OutputRoot = (Resolve-Path -LiteralPath $OutputRoot).Path
 
@@ -86,6 +103,33 @@ function Add-TextureResources(
     }
 }
 
+function Test-BakedPlayerPose([string] $Path) {
+    try {
+        $bytes = [IO.File]::ReadAllBytes($Path)
+        if ($bytes.Length -lt 20 -or
+            [Text.Encoding]::ASCII.GetString($bytes, 0, 4) -ne 'glTF' -or
+            [BitConverter]::ToUInt32($bytes, 4) -ne 2 -or
+            [BitConverter]::ToUInt32($bytes, 8) -ne $bytes.Length -or
+            [BitConverter]::ToUInt32($bytes, 16) -ne 0x4E4F534A) {
+            return $false
+        }
+        $jsonLength = [BitConverter]::ToUInt32($bytes, 12)
+        if ($jsonLength -gt $bytes.Length - 20) {
+            return $false
+        }
+        $json = [Text.Encoding]::UTF8.GetString($bytes, 20, $jsonLength).TrimEnd(' ', [char]0)
+        $document = $json | ConvertFrom-Json
+        return $null -ne $document.extras.botwPose -and
+            [string]$document.extras.botwPose.animation -ceq 'Nml_Wait' -and
+            [int]$document.extras.botwPose.changedAnimatedNodes -gt 0 -and
+            @($document.meshes).Count -gt 0 -and
+            @($document.skins).Count -gt 0
+    }
+    catch {
+        return $false
+    }
+}
+
 try {
     [Environment]::CurrentDirectory = $ToolboxRoot
     $runtime = Join-Path $ToolboxRoot 'runtimes\win-x64\native'
@@ -140,12 +184,14 @@ try {
     foreach ($modelProperty in $models) {
         $unit = $modelProperty.Name
         $folder = [string]$modelProperty.Value.folder
+        $isPlayerBody = $unit -ceq 'Link' -or $unit.StartsWith('Armor_', [StringComparison]::Ordinal)
         $destination = Join-Path $OutputRoot $unit
         [void][IO.Directory]::CreateDirectory($destination)
         $daePath = Join-Path $destination "$unit.dae"
         $gltfPath = Join-Path $destination "$unit.gltf"
         $glbPath = Join-Path $destination "$unit.glb"
-        if ([IO.File]::Exists($glbPath) -and -not $Force) {
+        if ([IO.File]::Exists($glbPath) -and -not $Force -and
+            (-not $isPlayerBody -or (Test-BakedPlayerPose -Path $glbPath))) {
             $completed++
             Write-Output "[$completed/$($models.Count)] Reusing $unit"
             continue
@@ -160,6 +206,34 @@ try {
             $texturePath = Join-Path $ResourceRoot "Model\$folder.Tex.sbfres"
             if (-not [IO.File]::Exists($modelPath)) { throw "Missing $modelPath" }
             if (-not [IO.File]::Exists($texturePath)) { throw "Missing $texturePath" }
+
+            if ($isPlayerBody) {
+                if ([IO.File]::Exists($glbPath) -and -not $Force) {
+                    throw "$unit exists without a valid baked Nml_Wait pose; rerun with -Force"
+                }
+                if (-not $animationPath) {
+                    throw "Player_Animation.sbfres is required for $unit; pass -AnimationBfres"
+                }
+                $converterArguments = @{
+                    ModelInput = $modelPath
+                    TextureInput = @($texturePath) + $sharedTexturePaths
+                    ModelName = $unit
+                    OutputDirectory = $destination
+                    SwitchToolboxPath = $ToolboxRoot
+                    AnimationBfres = $animationPath
+                    Pose = 'Nml_Wait'
+                }
+                if ($Force) {
+                    $converterArguments.Force = $true
+                }
+                & $ConverterPath @converterArguments | Out-Null
+                if (-not (Test-BakedPlayerPose -Path $glbPath)) {
+                    throw "$unit did not produce a valid baked Nml_Wait GLB"
+                }
+                $completed++
+                Write-Output "[$completed/$($models.Count)] Exported posed player model $unit ($((Get-Item -LiteralPath $glbPath).Length) bytes)"
+                continue
+            }
 
             $modelStream = Open-BotwResource $modelPath
             [void]$streams.Add($modelStream)

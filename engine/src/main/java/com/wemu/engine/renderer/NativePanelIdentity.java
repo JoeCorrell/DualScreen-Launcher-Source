@@ -36,11 +36,32 @@ final class NativePanelIdentity {
                         "transformers: war for cybertron dual-screen");
     }
 
+    /**
+     * Wine sometimes exposes WFC's private GDI child with only the executable
+     * WM_CLASS.  Accept that fallback only when the window exactly fills the
+     * configured lower monitor; the ordinary game window must never be claimed
+     * merely because it belongs to the same process.
+     */
+    static boolean isTransformersWfcLowerPanelFallback(
+            String className, int width, int height,
+            int monitorWidth, int monitorHeight) {
+        return normalizedClass(className).equals("twfc.exe")
+                && width > 0 && height > 0
+                && width == monitorWidth && height == monitorHeight;
+    }
+
+    static boolean isIsaac(String className, String title) {
+        return normalizedClass(className).equals("isaacsecondscreenpanel")
+                || normalizedTitle(title).equals(
+                        "the binding of isaac: repentance+ dual-screen");
+    }
+
     static boolean isEarlyClaimPanel(String className, String title) {
         return isSkyrim(className, title)
                 || isFallout(className, title)
                 || isGrimDawn(className, title)
                 || isTransformersWfc(className, title)
+                || isIsaac(className, title)
                 || isStardewValley(className, title);
     }
 

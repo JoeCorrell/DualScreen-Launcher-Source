@@ -24,26 +24,26 @@ system structure were compared with [`zeldaret/ss`](https://github.com/zeldaret/
 
 The dual-screen loader recognizes the complete 1.0.1 NSO fingerprint: Build ID, all three segment
 locations and sizes, and BSS size. It refuses to patch any other executable. For the verified
-build it reserves a private 4 KiB mailbox and installs a small payload in the executable's original
-zero-filled `.text`/`.rodata` alignment gap at `main+0x105C950`.
+build it reserves a private 4 KiB read/write mailbox and a separate 4 KiB executable bridge page.
+A five-instruction island in the executable's original zero-filled `.text`/`.rodata` alignment gap
+at `main+0x105C950` reaches that bridge without changing the original segment layout.
 
-The payload is called from the verified main-loop site at `main+0xE3E818`. The overwritten
-`mov w1, w19` instruction is replayed, all scratch registers and the link register are preserved,
-and the hook remains within the AArch64 direct-call range. This is the same game-thread payload
-architecture used by the existing dual-screen integrations; it is compiled into the dual-screen
-APK's native library rather than distributed as an external IPS file.
+The payload is called from the verified `dStage` render callback prologue at `main+0xE2391C`.
+`dStage` initialization registers the callback at `main+0xE23900`; the hook is after its caller
+link register has been saved and before any conditional return. The overwritten `add x29, sp,
+#0x60` instruction is replayed, all payload scratch registers and vector registers are preserved,
+and the game continues through the original callback.
 
-Every game-loop iteration publishes a versioned, seqlocked mailbox containing the actual file/save
-manager, player, item-flag manager, story-flag manager, current stage, room, layer, entrance,
-day/night state, and trial state. The Android bridge only accepts a complete even sequence with the
-expected magic, ABI version, and size. It never consumes a partially written payload frame.
+The payload owns only the live-map request/completion handshake. It initializes the versioned map
+mailbox on every stage-render callback, applies a host request to the active `dStage` renderer, and
+publishes completed texture metadata under a seqlock. The compact UI snapshot is read directly from
+the verified game globals while Eden's system-access lock is held.
 
 ## Live snapshot
 
-`sshd_companion.cpp` consumes the game-thread payload and produces a packed, versioned 816-byte
-Android snapshot. Reads execute while holding Eden's system-access lock and validate the title,
-Build ID, mailbox ABI, mapped ranges, manager pointers, health bounds, and flag-table shapes before
-publishing data.
+`sshd_companion.cpp` produces a packed, versioned 2070-byte Android snapshot. Reads execute while
+holding Eden's system-access lock and validate the title, Build ID, mapped ranges, manager pointers,
+health bounds, and flag-table shapes before publishing data.
 
 The snapshot includes:
 
@@ -63,8 +63,8 @@ at `+0x53AE` through `+0x53B2`.
 The Android view polls this compact snapshot every 250 ms on a background-priority thread. It
 hashes the live fields and schedules a redraw only when data changes. Original RomFS assets are
 loaded once on a separate background worker and cached by the native asset bridge. Loading
-checkpoint 4 specifically means the matching game-thread payload has not published a valid mailbox
-frame yet, so payload failures are distinguishable from an uninitialized save.
+checkpoint 4 specifically means the verified save/player globals are not readable yet, so startup
+and stage-transition loading remain distinguishable from an initialized save.
 
 ## Bottom-screen design
 
@@ -91,17 +91,23 @@ geometry; stretching it caused the dark and transparent bands seen in the first 
 
 ## Current-region atlas
 
-The atlas has no manual map carousel. It resolves the visible original map from the live stage ID:
+The atlas has no manual map carousel or stage-to-image lookup. The reverse-engineered flow matches
+the game's `dLytMapCapture` implementation: STIF supplies the area/room classification and localized
+map title, `dLytMapGlobal` supplies the active floor and map transform, and the active `dStage`
+`MapRelated` renderer draws the visible rooms and discovery state into its existing `CpuTexture`.
+The companion requests that same render on the game thread and converts the completed GX RGB5A3 or
+RGBA8 texture to the Android bitmap.
 
-- Skyloft, the Sky, Thunderhead, and unknown/non-regional stages use the world chart;
-- `F/D/B/S1xx` stages use Faron;
-- `F/D/B/S2xx` stages use Eldin;
-- `F/D/B/S3xx` stages use Lanayru;
-- `F4xx` Sealed Grounds and Temple of Hylia stages use Faron.
+For the supported 1.0.1 executable, the live `dLytMapGlobal` and `dLytMapCapture` objects are
+`0xF358` bytes apart in their shared owner allocation. The capture bridge derives the latter from
+the former on every request, then consumes the native aspect-corrected pane dimensions at capture
+offsets `0xA0` and `0xA8`. This avoids retaining an actor pointer across UI lifetimes.
 
-This mapping was checked against the extracted stage tables and `sshd-rando` world data. Touch and
-controller input cannot switch the atlas to an unrelated region. A player marker remains disabled
-until the game's native world-to-map coordinate transform is traced.
+The image header carries the capture's stage name, floor, dimensions, texture format, and request
+sequence. The Android view accepts it only when the stage and lifecycle still match the current
+snapshot, clears stale images during transitions, and immediately requests the next native frame.
+Consequently interiors, dungeons, overworld regions, floor changes, reloads, and save changes follow
+the game's own map selection without maintaining a second map database.
 
 ## Link player render
 
@@ -135,7 +141,6 @@ Currently used assets are:
 - original icons for the verified practice sword, True Master Sword, Sailcloth, Goddess Harp,
   Digging/Mogma Mitts, Water Dragon's Scale, Heart Piece, Triforce pieces, wallets, Fireshield
   Earrings, Cawlin's letter, insect cage, rattle, tablets, and Life Tree items;
-- world, Faron, Eldin, and Lanayru maps from `Layout/Map2D.arc`;
 - item names/descriptions and Fi text from `US/Object/en_US/0-Common.arc`.
 
 Icon mappings are keyed by the game's `ITEMFLAGS` values. Items without a verified texture-to-ID

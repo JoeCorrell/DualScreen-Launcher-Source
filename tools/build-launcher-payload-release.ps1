@@ -4,7 +4,8 @@ param(
     [string]$Tag = "launcher-payloads-v1",
     [string]$OutputDirectory = "payload-release/launcher-payloads-v1",
     [string]$ExistingRuntimePack = "",
-    [string]$ExistingModPack = ""
+    [string]$ExistingModPack = "",
+    [string[]]$OverlayModIds = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -146,9 +147,21 @@ $modFiles = @(
     Get-ChildItem -LiteralPath (Join-Path $assetsRoot "mods") -Recurse -File |
         Where-Object {
             $normalized = $_.FullName.Replace('\', '/')
-            $normalized -match '/payload/' -or $_.Name -eq 'manifest.json'
+            $isPayloadFile = $normalized -match '/payload/' -or
+                $_.Name -eq 'manifest.json'
+            if (-not $isPayloadFile) { return $false }
+            if ($OverlayModIds.Count -eq 0) { return $true }
+            $relative = $_.FullName.Substring(
+                (Join-Path $assetsRoot 'mods').Length
+            ).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+            $modId = $relative.Split('/')[0]
+            return $OverlayModIds -contains $modId
         }
 )
+
+if ($OverlayModIds.Count -gt 0 -and -not $ExistingModPack) {
+    throw "-OverlayModIds requires -ExistingModPack so omitted mods remain in the base archive."
+}
 
 $runtimePack = if ($componentFiles.Count -gt 0) {
     New-PayloadPack -Name "runtime-components-$Version.zip" -Root "components" -Files $componentFiles -Compression ([System.IO.Compression.CompressionLevel]::NoCompression)

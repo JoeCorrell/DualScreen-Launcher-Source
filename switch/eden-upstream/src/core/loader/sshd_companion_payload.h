@@ -45,7 +45,7 @@ enum class MapCaptureResult : u32 {
     TextureDataMissing = 13,
 };
 
-// Written by the injected, game-thread main-loop payload and read by the Android companion.
+// Written by the injected game-thread stage-render payload and read by the Android companion.
 // Sequence is a seqlock: odd while the payload writes and even once a frame is complete.
 struct Mailbox {
     u32 magic;

@@ -12,6 +12,7 @@
 
 #include "CharacterRoleAdapter.h"
 #include "CharacterSwap.h"
+#include "CampaignClassSystem.h"
 #include "IatHook.h"
 #include "Log.h"
 #include "StateStore.h"
@@ -39,6 +40,10 @@ constexpr ULONGLONG kSquadAuditIntervalMs = 5000;
 constexpr ULONGLONG kWeaponAuditIntervalMs = 15000;
 constexpr ULONGLONG kWorldStabilizeMs = 750;
 constexpr ULONGLONG kResolveDiagnosticIntervalMs = 5000;
+constexpr ULONGLONG kDisplayRetryMs = 2000;
+constexpr ULONGLONG kDisplayStartupDelayMs = 1000;
+constexpr int kUpperViewportWidth = 1280;
+constexpr int kUpperViewportHeight = 720;
 #ifndef NDEBUG
 constexpr ULONGLONG kLiveSummaryIntervalMs = 10000;
 #endif
@@ -172,6 +177,11 @@ ULONGLONG g_world_ready_since = 0;
 ULONGLONG g_last_resolve_diagnostic = 0;
 ULONGLONG g_last_slow_pulse_log = 0;
 ULONGLONG g_last_snapshot_reject_log = 0;
+ULONGLONG g_display_retry_at = 0;
+ULONGLONG g_display_focus_confirm_at = 0;
+bool g_display_resolution_applied = false;
+bool g_display_focus_applied = false;
+HWND g_display_game_window = nullptr;
 #ifndef NDEBUG
 ULONGLONG g_last_live_summary_log = 0;
 #endif
@@ -195,7 +205,6 @@ void* g_cached_current_weapon = nullptr;
 void* g_cached_stored_vehicle_weapon = nullptr;
 void* g_cached_stored_robot_weapon = nullptr;
 void* g_cached_inventory_head = nullptr;
-void* g_cached_active_grenade_root = nullptr;
 void* g_cached_grenade = nullptr;
 void* g_cached_display_weapon = nullptr;
 std::array<void*, 2> g_cached_robot_weapons = {};
@@ -316,8 +325,6 @@ struct SnapshotBuild {
   uint32_t weapon_inventory_cursor_object_index = 0;
   void* weapon_inventory_previous = nullptr;
   uint32_t weapon_inventory_previous_object_index = 0;
-  void* weapon_grenade_root = nullptr;
-  uint32_t weapon_grenade_root_object_index = 0;
   void* weapon_grenade = nullptr;
   uint32_t weapon_grenade_object_index = 0;
   std::array<void*, 8> weapon_candidates = {};
@@ -656,7 +663,6 @@ void ClearWeaponTelemetryCache() {
   g_cached_stored_vehicle_weapon = nullptr;
   g_cached_stored_robot_weapon = nullptr;
   g_cached_inventory_head = nullptr;
-  g_cached_active_grenade_root = nullptr;
   g_cached_grenade = nullptr;
   g_cached_display_weapon = nullptr;
   g_cached_robot_weapons.fill(nullptr);
@@ -864,7 +870,6 @@ void ResolveStableObjects(ULONGLONG now) {
     LogResolveWaiting(now, "valid local player");
     return;
   }
-
   void* controller = nullptr;
   if (!UnrealReadObjectProperty(local_player, L"Actor", &controller) ||
       !controller ||
@@ -982,6 +987,10 @@ bool ResolveCharacter(void* controller, void* pawn, TransformerMode mode,
   if (!raw[0] && controller)
     UnrealReadStringProperty(controller, L"CharacterName", raw, sizeof(raw));
   if (!raw[0] && pawn) UnrealObjectName(pawn, raw, sizeof(raw));
+  char selected_identity[128] = {};
+  if (CampaignClassSelectedCharacterName(raw, selected_identity,
+                                         sizeof(selected_identity)))
+    CopyText(raw, sizeof(raw), selected_identity);
   const CharacterPresentation* known = CharacterFor(raw);
   if (known) {
     CopyText(name, name_capacity, known->display);
@@ -1126,9 +1135,9 @@ bool ReadRestrictions(Snapshot* state, bool require_complete = false) {
   state->in_scripted_sequence = disable_move || disable_look || frozen ||
                                 move_ignored || look_ignored || interacting ||
                                 using_turret;
-  // Combat is a normal state for the combat-page actions.  Only possession is
-  // prohibited while fighting; transform, reload, weapon, ability, and grenade
-  // requests still use their native per-action availability checks below.
+  // Combat is ordinary live gameplay. Character transfer serializes and
+  // suspends the selected AI's current plan before changing ownership, so it
+  // is gated by the same cutscene/menu/script restrictions as other actions.
   return (!require_complete || complete) &&
          !(paused || state->in_cutscene || menu ||
            state->in_scripted_sequence);
@@ -1389,7 +1398,6 @@ struct WeaponRoots {
   void* stored_vehicle = nullptr;
   void* stored_robot = nullptr;
   void* inventory_head = nullptr;
-  void* grenade = nullptr;
 };
 
 bool RetainedObjectMatches(void* retained, uint32_t retained_index,
@@ -1410,8 +1418,10 @@ bool ReadWeaponRoots(void* pawn, WeaponRoots* output) {
       PendingDestroy(manager))
     return false;
   void* active = nullptr;
-  UnrealReadObjectProperty(manager, L"CurrentWeapon", &active);
-  if (!active) UnrealReadObjectProperty(pawn, L"Weapon", &active);
+  // TnInventoryManager has a GetCurrentWeapon() function, not a reflected
+  // CurrentWeapon field. The function ultimately exposes Pawn(Owner).Weapon;
+  // StoreRobotWeapon/StoreVehicleWeapon use that same Pawn.Weapon root.
+  if (!UnrealReadObjectProperty(pawn, L"Weapon", &active)) return false;
   if (active && (!UnrealObjectIsA(active, L"TnWeapon") ||
                  PendingDestroy(active)))
     active = nullptr;
@@ -1429,11 +1439,6 @@ bool ReadWeaponRoots(void* pawn, WeaponRoots* output) {
       (!UnrealObjectIsA(stored_robot_weapon, L"TnWeapon") ||
        PendingDestroy(stored_robot_weapon)))
     stored_robot_weapon = nullptr;
-  void* grenade = nullptr;
-  UnrealReadObjectProperty(manager, L"ActiveGrenadeBag", &grenade);
-  if (grenade && (!UnrealObjectIsA(grenade, L"TnGrenadeBag") ||
-                  PendingDestroy(grenade)))
-    grenade = nullptr;
   void* inventory = nullptr;
   UnrealReadObjectProperty(manager, L"InventoryChain", &inventory);
   if (inventory &&
@@ -1444,7 +1449,6 @@ bool ReadWeaponRoots(void* pawn, WeaponRoots* output) {
   output->stored_vehicle = stored_vehicle_weapon;
   output->stored_robot = stored_robot_weapon;
   output->inventory_head = inventory;
-  output->grenade = grenade;
   return true;
 }
 
@@ -1466,10 +1470,7 @@ bool WeaponRootsStillCurrent(const SnapshotBuild& build,
                              current.stored_robot) ||
       !RetainedObjectMatches(build.weapon_inventory_head,
                              build.weapon_inventory_head_object_index,
-                             current.inventory_head) ||
-      !RetainedObjectMatches(build.weapon_grenade_root,
-                             build.weapon_grenade_root_object_index,
-                             current.grenade))
+                             current.inventory_head))
     return false;
   if (build.weapon_grenade &&
       !RetainedObjectMatches(build.weapon_grenade,
@@ -1523,10 +1524,12 @@ bool BeginWeaponDiscovery(SnapshotBuild* build) {
   build->weapon_inventory_cursor = roots.inventory_head;
   build->weapon_inventory_cursor_object_index =
       UnrealObjectIndex(roots.inventory_head);
-  build->weapon_grenade_root = roots.grenade;
-  build->weapon_grenade_root_object_index = UnrealObjectIndex(roots.grenade);
-  build->weapon_grenade = roots.grenade;
-  build->weapon_grenade_object_index = UnrealObjectIndex(roots.grenade);
+  // TnInventoryManager.AddInventory names a function-local variable
+  // ActiveGrenadeBag; the class has no persistent property with that name.
+  // Discover the live TnGrenadeBag from InventoryChain below, exactly as the
+  // native AddInventory implementation does via FindInventoryType.
+  build->weapon_grenade = nullptr;
+  build->weapon_grenade_object_index = 0;
   return true;
 }
 
@@ -1659,7 +1662,6 @@ bool FinishWeaponDiscovery(SnapshotBuild* build, Snapshot* state,
   g_cached_stored_vehicle_weapon = build->weapon_stored_vehicle;
   g_cached_stored_robot_weapon = build->weapon_stored_robot;
   g_cached_inventory_head = build->weapon_inventory_head;
-  g_cached_active_grenade_root = build->weapon_grenade_root;
   g_cached_grenade = build->weapon_grenade;
   g_cached_display_weapon = display_active;
   g_cached_robot_weapons = weapons;
@@ -1680,22 +1682,17 @@ bool RefreshCachedWeapons(Snapshot* state, void** manager_output,
   void* stored_vehicle = nullptr;
   void* stored_robot = nullptr;
   void* inventory_head = nullptr;
-  void* active_grenade_root = nullptr;
   if (!UnrealReadObjectProperty(g_pawn, L"InvManager", &manager) ||
       manager != g_cached_inventory_manager || PendingDestroy(manager) ||
-      !UnrealReadObjectProperty(manager, L"CurrentWeapon", &active))
+      !UnrealReadObjectProperty(g_pawn, L"Weapon", &active))
     return false;
-  if (!active) UnrealReadObjectProperty(g_pawn, L"Weapon", &active);
   UnrealReadObjectProperty(manager, L"StoredVehicleWeapon", &stored_vehicle);
   UnrealReadObjectProperty(manager, L"StoredRobotWeapon", &stored_robot);
   UnrealReadObjectProperty(manager, L"InventoryChain", &inventory_head);
-  UnrealReadObjectProperty(manager, L"ActiveGrenadeBag",
-                           &active_grenade_root);
   if (active != g_cached_current_weapon ||
       stored_vehicle != g_cached_stored_vehicle_weapon ||
       stored_robot != g_cached_stored_robot_weapon ||
-      inventory_head != g_cached_inventory_head ||
-      active_grenade_root != g_cached_active_grenade_root)
+      inventory_head != g_cached_inventory_head)
     return false;
   void* const grenade = g_cached_grenade;
   if (grenade &&
@@ -1757,10 +1754,7 @@ void FillSquadMember(void* controller, void* pawn, bool controlled,
                    output->portrait_key, sizeof(output->portrait_key),
                    authoritative_name);
   void* weapon = nullptr;
-  void* inventory_manager = nullptr;
-  if (UnrealReadObjectProperty(pawn, L"InvManager", &inventory_manager) &&
-      inventory_manager)
-    UnrealReadObjectProperty(inventory_manager, L"CurrentWeapon", &weapon);
+  UnrealReadObjectProperty(pawn, L"Weapon", &weapon);
   if (weapon) {
     char weapon_class[128] = {};
     if (UnrealObjectClassName(weapon, weapon_class, sizeof(weapon_class)))
@@ -1774,11 +1768,8 @@ void FillSquadMember(void* controller, void* pawn, bool controlled,
 }
 
 void* CurrentPawnWeapon(void* pawn) {
-  void* manager = nullptr;
   void* weapon = nullptr;
-  if (!pawn || !UnrealReadObjectProperty(pawn, L"InvManager", &manager) ||
-      !manager || PendingDestroy(manager) ||
-      !UnrealReadObjectProperty(manager, L"CurrentWeapon", &weapon) ||
+  if (!pawn || !UnrealReadObjectProperty(pawn, L"Weapon", &weapon) ||
       !weapon || PendingDestroy(weapon))
     return nullptr;
   return weapon;
@@ -1857,6 +1848,22 @@ bool SquadCandidateDuplicate(const SnapshotBuild& build, void* controller,
       return true;
   }
   return false;
+}
+
+int32_t FindSquadRecordIndexForController(
+    const SnapshotBuild& build, void* expected_controller) {
+  if (!expected_controller || !build.squad_records_available ||
+      build.squad_record_count < 1)
+    return -1;
+  for (int32_t index = 0; index < build.squad_record_count; ++index) {
+    void* controller = nullptr;
+    if (UnrealReadStructArrayObjectField(build.squad_records, index,
+                                         L"CharacterController",
+                                         &controller) &&
+        controller == expected_controller)
+      return index;
+  }
+  return -1;
 }
 
 bool SquadCandidatesStillCurrent(const SnapshotBuild& build) {
@@ -2082,6 +2089,14 @@ DiscoverySliceResult ScanSquadControllerSlice(SnapshotBuild* build) {
       build->squad_controllers[slot] = controller;
       build->squad_pawns[slot] = pawn;
       build->squad_weapons[slot] = CurrentPawnWeapon(pawn);
+      // The staged record pass can observe a member before its controller or
+      // character data has finished initializing. If the controller-list
+      // fallback finds that same live companion later in the snapshot, retain
+      // its exact authoritative record identity. Previously this slot stayed
+      // at -1, so the Squad card was visible but every tap was silently made
+      // unswitchable.
+      build->squad_record_indices[slot] =
+          FindSquadRecordIndexForController(*build, controller);
     }
   }
 
@@ -2550,15 +2565,10 @@ void ReadActionCapabilities(SnapshotBuild* build) {
     return;
   }
 
-  const bool can_switch = can_act && !state.in_combat &&
+  const bool can_switch = can_act &&
       !g_switch_in_progress && !g_pending_ability_release.pending &&
       !SwapWorldMutationActive() &&
-      SupportedPlayerPair(build->controller, build->pawn) &&
-      // The physical TnPlayerPawn has no TnAiPawn vehicle-strategy storage.
-      // It may enter the custom AI proxy only from robot form. Native AiPawn
-      // to AiPawn transfers remain valid in either stable form.
-      (!UnrealObjectIsA(build->pawn, L"TnPlayerPawn") ||
-       state.mode == TransformerMode::kRobot);
+      SupportedPlayerPair(build->controller, build->pawn);
   bool any_switchable = false;
   for (uint32_t slot = 0; slot < kSquadCapacity; ++slot) {
     SquadMemberState& member = state.squad[slot];
@@ -3018,7 +3028,7 @@ struct WfcSwapJournal {
     void* weapon_heat = nullptr;
     uint32_t weapon_heat_index = 0;
     float current_heat = 0.0f;
-    bool was_overheated = false;
+    bool heat_state_captured = false;
     bool changed = false;
   };
 
@@ -3085,6 +3095,7 @@ struct WfcSwapJournal {
   UnrealFunctionHandle plan_set_goal_set = {};
   UnrealFunctionHandle ai_set_sensor_set = {};
   UnrealFunctionHandle player_select_character = {};
+  UnrealFunctionHandle player_set_current_character = {};
   UnrealFunctionHandle player_client_start_character_load = {};
   UnrealFunctionHandle player_confirm_selected_character = {};
   UnrealFunctionHandle player_refresh_provider = {};
@@ -3118,6 +3129,7 @@ struct WfcSwapJournal {
   bool target_bound = false;
   bool squad_name_updated = false;
   bool identity_swapped = false;
+  bool player_current_identity_updated = false;
   bool selected_character_updated = false;
   bool services_rebound = false;
   bool runtime_services_restore_pending = false;
@@ -3174,61 +3186,139 @@ bool CaptureInventoryWeaponRoles(
   *head_output = nullptr;
   *head_index_output = 0;
   *fingerprint_output = 0;
+  const auto fail = [&](const char* stage, void* item) {
+    char class_name[96] = {};
+    if (item) UnrealObjectClassName(item, class_name, sizeof(class_name));
+    Log(LogLevel::kWarning,
+        "[SquadSwitch] inventory capture failed stage=%s pawn=%lu item=%lu class=%s desired-role=%u captured=%lu",
+        stage ? stage : "unknown",
+        static_cast<unsigned long>(UnrealObjectIndex(pawn)),
+        static_cast<unsigned long>(UnrealObjectIndex(item)),
+        class_name[0] ? class_name : "none", static_cast<unsigned>(desired_role),
+        static_cast<unsigned long>(*count_output));
+    return false;
+  };
   void* manager = nullptr;
   if (!ReadRequiredObject(pawn, L"InvManager", &manager) ||
       !UnrealObjectIsA(manager, L"TnInventoryManager"))
-    return false;
+    return fail("inventory-manager", manager);
   void* item = nullptr;
   if (!UnrealReadObjectProperty(manager, L"InventoryChain", &item))
-    return false;
+    return fail("inventory-chain", manager);
   const void* initial_head = item;
   std::array<void*, 32> visited = {};
   uint32_t visited_count = 0;
   uint64_t fingerprint = 1469598103934665603ull;
-  for (uint32_t examined = 0; item && examined < output->size(); ++examined) {
-    if (!UnrealObjectValid(item) || PendingDestroy(item)) return false;
-    for (uint32_t previous = 0; previous < visited_count; ++previous)
-      if (visited[previous] == item) return false;
-    visited[visited_count++] = item;
-    if (UnrealObjectIsA(item, L"TnWeapon")) {
-      WfcSwapJournal::InventoryWeaponRole& entry =
-          (*output)[(*count_output)++];
-      entry.weapon = item;
-      entry.object_index = UnrealObjectIndex(item);
-      void* current_data = nullptr;
-      void* instigator = nullptr;
-      bool is_firing = false;
-      if (!entry.object_index ||
-          !UnrealReadByteProperty(item, L"WeaponDataType",
-                                  &entry.previous_data_type) ||
-          !UnrealReadBoolProperty(item, L"bIsFiring", &is_firing) ||
-          is_firing ||
-          !ReadRequiredObject(item, L"Data", &current_data) ||
-          !UnrealCallObjectByte(item, L"GetWeaponDataByType", L"Type",
-                                entry.previous_data_type,
-                                &entry.previous_data) ||
-          !UnrealCallObjectByte(item, L"GetWeaponDataByType", L"Type",
-                                desired_role, &entry.desired_data) ||
-          !entry.previous_data || !UnrealObjectValid(entry.previous_data) ||
-          !UnrealObjectIsA(entry.previous_data, L"TnWeaponData") ||
-          !entry.desired_data || !UnrealObjectValid(entry.desired_data) ||
-          !UnrealObjectIsA(entry.desired_data, L"TnWeaponData") ||
-          current_data != entry.previous_data ||
-          !UnrealReadObjectProperty(item, L"Instigator", &instigator) ||
-          instigator != pawn)
-        return false;
-      if (!ReadRequiredObject(item, L"WeaponHeat", &entry.weapon_heat) ||
-          !(entry.weapon_heat_index = UnrealObjectIndex(entry.weapon_heat)) ||
-          !UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                           &entry.current_heat) ||
-          !std::isfinite(entry.current_heat) || entry.current_heat < 0.0f ||
-          !UnrealCallBool(entry.weapon_heat, L"IsOverheated",
-                          &entry.was_overheated))
-        return false;
+  const auto capture_weapon = [&](void* weapon) {
+    if (!weapon || !UnrealObjectIsA(weapon, L"TnWeapon")) return true;
+    for (uint32_t index = 0; index < *count_output; ++index)
+      if ((*output)[index].weapon == weapon) return true;
+
+    WfcSwapJournal::InventoryWeaponRole candidate = {};
+    WfcSwapJournal::InventoryWeaponRole& entry = candidate;
+    entry.weapon = weapon;
+    entry.object_index = UnrealObjectIndex(weapon);
+    void* current_data = nullptr;
+    void* instigator = nullptr;
+    bool is_firing = false;
+    if (!entry.object_index) return fail("weapon-identity", weapon);
+    if (!UnrealReadByteProperty(weapon, L"WeaponDataType",
+                                &entry.previous_data_type))
+      return fail("weapon-data-type", weapon);
+    if (!UnrealReadBoolProperty(weapon, L"bIsFiring", &is_firing))
+      return fail("weapon-firing-state", weapon);
+    if (is_firing) return fail("weapon-firing", weapon);
+    if (!UnrealReadObjectProperty(weapon, L"Data", &current_data))
+      return fail("weapon-current-data", weapon);
+
+    // Decompiled TnWeapon.GetWeaponDataByType is a four-way property lookup.
+    // Read the same authoritative fields directly during preflight instead
+    // of executing script while the inventory graph is being journaled.
+    const auto read_role_data = [weapon](uint8_t role, void** output_data) {
+      if (!output_data) return false;
+      *output_data = nullptr;
+      const wchar_t* property = nullptr;
+      switch (role) {
+        case 1: property = L"PlayerData"; break;
+        case 2: property = L"AiData"; break;
+        case 3: property = L"MultiplayerData"; break;
+        case 4: property = L"SurvivalData"; break;
+        default: return true;
+      }
+      return UnrealReadObjectProperty(weapon, property, output_data);
+    };
+    if (!read_role_data(entry.previous_data_type, &entry.previous_data))
+      return fail("weapon-previous-role-data", weapon);
+    if (!read_role_data(desired_role, &entry.desired_data))
+      return fail("weapon-desired-role-data", weapon);
+    if (!UnrealReadObjectProperty(weapon, L"Instigator", &instigator))
+      return fail("weapon-instigator", weapon);
+    // WFC clears Instigator on an unequipped/holstered inventory weapon.
+    // A validated manager root is as authoritative as InventoryChain;
+    // reject only a weapon actively attributed to a different pawn.
+    if (instigator && instigator != pawn)
+      return fail("weapon-foreign-instigator", weapon);
+
+    const bool previous_data_valid =
+        entry.previous_data && UnrealObjectValid(entry.previous_data) &&
+        UnrealObjectIsA(entry.previous_data, L"TnWeaponData");
+    const bool desired_data_valid =
+        entry.desired_data && UnrealObjectValid(entry.desired_data) &&
+        UnrealObjectIsA(entry.desired_data, L"TnWeaponData");
+    const bool role_neutral_without_data =
+        !current_data && !entry.previous_data && !entry.desired_data;
+    if (!role_neutral_without_data &&
+        (!previous_data_valid || current_data != entry.previous_data))
+      return fail("current-role-data", weapon);
+
+    // Grenade bags, melee helpers, ability weapons, and empty placeholders
+    // share TnWeapon's inventory base but do not necessarily publish both
+    // Player and AI tuning records. Only role-convertible weapons belong in
+    // the mutation journal.
+    if (!desired_data_valid) {
+      char class_name[96] = {};
+      UnrealObjectClassName(weapon, class_name, sizeof(class_name));
+      Log(LogLevel::kInfo,
+          "[SquadSwitch] preserving role-neutral inventory item pawn=%lu item=%lu class=%s current-role=%u desired-role=%u",
+          static_cast<unsigned long>(UnrealObjectIndex(pawn)),
+          static_cast<unsigned long>(entry.object_index),
+          class_name[0] ? class_name : "TnWeapon",
+          static_cast<unsigned>(entry.previous_data_type),
+          static_cast<unsigned>(desired_role));
+      return true;
     }
+
+    // WeaponHeat is an optional TnWeapon subobject. Ammo-fed campaign
+    // weapons such as Bumblebee's heavy pistol legitimately publish a null
+    // WeaponHeat pointer even though they expose PlayerData and AiData.
+    if (!UnrealReadObjectProperty(weapon, L"WeaponHeat", &entry.weapon_heat))
+      return fail("weapon-heat-property", weapon);
+    if (entry.weapon_heat) {
+      if (!UnrealObjectValid(entry.weapon_heat) ||
+          PendingDestroy(entry.weapon_heat) ||
+          !UnrealObjectIsA(entry.weapon_heat, L"TnWeaponHeat") ||
+          !(entry.weapon_heat_index = UnrealObjectIndex(entry.weapon_heat)) ||
+          !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                   &entry.current_heat) ||
+          !std::isfinite(entry.current_heat) || entry.current_heat < 0.0f)
+        return fail("weapon-heat-state", weapon);
+      entry.heat_state_captured = true;
+    }
+    if (*count_output >= output->size())
+      return fail("weapon-capacity", weapon);
+    (*output)[(*count_output)++] = entry;
+    return true;
+  };
+  for (uint32_t examined = 0; item && examined < output->size(); ++examined) {
+    if (!UnrealObjectValid(item) || PendingDestroy(item))
+      return fail("invalid-chain-item", item);
+    for (uint32_t previous = 0; previous < visited_count; ++previous)
+      if (visited[previous] == item) return fail("inventory-cycle", item);
+    visited[visited_count++] = item;
+    if (!capture_weapon(item)) return false;
     void* next = nullptr;
     if (!UnrealReadObjectProperty(item, L"Inventory", &next) || next == item)
-      return false;
+      return fail("inventory-next", item);
     fingerprint =
         (fingerprint ^ static_cast<uint64_t>(UnrealObjectIndex(item))) *
         1099511628211ull;
@@ -3239,33 +3329,55 @@ bool CaptureInventoryWeaponRoles(
   }
   // A non-null cursor here means the chain exceeded the exact-build safety
   // bound. Never partially convert a pawn's inventory role.
-  if (item != nullptr) return false;
-  const auto root_reachable = [&](const wchar_t* property, void* owner,
-                                  bool required_property) {
+  if (item != nullptr) return fail("inventory-bound", item);
+  // StoreRobotWeapon/StoreVehicleWeapon deliberately keep an authoritative
+  // form-specific weapon outside InventoryChain. Requiring every manager root
+  // to be reachable from that list rejected valid campaign inventories before
+  // UnPossess. Journal those detached roots in a stable order instead, so they
+  // receive the same role conversion and rollback protection as chain weapons.
+  const auto capture_root = [&](const wchar_t* property, void* owner,
+                                const wchar_t* expected_class,
+                                const char* stage, uint64_t discriminator) {
     void* root = nullptr;
-    const bool read = UnrealReadObjectProperty(owner, property, &root);
-    if (!read) return !required_property;
+    if (!UnrealReadObjectProperty(owner, property, &root))
+      return fail(stage, owner);
+    const uint32_t root_index = root ? UnrealObjectIndex(root) : 0;
+    fingerprint = (fingerprint ^ discriminator) * 1099511628211ull;
+    fingerprint = (fingerprint ^ static_cast<uint64_t>(root_index)) *
+                  1099511628211ull;
     if (!root) return true;
     if (!UnrealObjectValid(root) || PendingDestroy(root) ||
-        !UnrealObjectIsA(root, L"TnWeapon"))
-      return false;
-    for (uint32_t index = 0; index < *count_output; ++index)
-      if ((*output)[index].weapon == root) return true;
-    return false;
+        !root_index ||
+        (expected_class && !UnrealObjectIsA(root, expected_class)))
+      return fail(stage, root);
+    bool in_chain = false;
+    for (uint32_t index = 0; index < visited_count; ++index)
+      in_chain |= visited[index] == root;
+    if (!in_chain) {
+      char class_name[96] = {};
+      UnrealObjectClassName(root, class_name, sizeof(class_name));
+      Log(LogLevel::kInfo,
+          "[SquadSwitch] journaling detached inventory root stage=%s pawn=%lu item=%lu class=%s",
+          stage, static_cast<unsigned long>(UnrealObjectIndex(pawn)),
+          static_cast<unsigned long>(root_index),
+          class_name[0] ? class_name : "unknown");
+    }
+    return capture_weapon(root);
   };
-  if (!root_reachable(L"Weapon", pawn, true) ||
-      !root_reachable(L"CurrentWeapon", manager, true) ||
-      !root_reachable(L"StoredRobotWeapon", manager, true) ||
-      !root_reachable(L"StoredVehicleWeapon", manager, true) ||
-      !root_reachable(L"ActiveGrenadeBag", manager, true))
+  if (!capture_root(L"Weapon", pawn, L"TnWeapon", "pawn-weapon-root", 1u) ||
+      !capture_root(L"StoredRobotWeapon", manager, L"TnWeapon",
+                    "stored-robot-root", 3u) ||
+      !capture_root(L"StoredVehicleWeapon", manager, L"TnWeapon",
+                    "stored-vehicle-root", 4u))
     return false;
   *manager_output = manager;
   *manager_index_output = UnrealObjectIndex(manager);
   *head_output = const_cast<void*>(initial_head);
   *head_index_output = UnrealObjectIndex(*head_output);
   *fingerprint_output = fingerprint ? fingerprint : 1u;
-  return *manager_index_output != 0 &&
-         (!*head_output || *head_index_output != 0);
+  if (!*manager_index_output || (*head_output && !*head_index_output))
+    return fail("inventory-identity", manager);
+  return true;
 }
 
 bool InventoryCaptureStillCurrent(
@@ -3296,11 +3408,13 @@ bool InventoryCaptureStillCurrent(
         current[index].previous_data_type != expected[index].previous_data_type ||
         current[index].previous_data != expected[index].previous_data ||
         current[index].desired_data != expected[index].desired_data ||
+        current[index].heat_state_captured !=
+            expected[index].heat_state_captured ||
         current[index].weapon_heat != expected[index].weapon_heat ||
         current[index].weapon_heat_index != expected[index].weapon_heat_index ||
-        std::fabs(current[index].current_heat - expected[index].current_heat) >
-            0.001f ||
-        current[index].was_overheated != expected[index].was_overheated)
+        (current[index].heat_state_captured &&
+         std::fabs(current[index].current_heat - expected[index].current_heat) >
+             0.001f))
       return false;
   }
   return true;
@@ -3429,6 +3543,15 @@ bool PublishPriIdentityPair(void* first_pri, void* first_pawn,
          PriIdentityMatchesPawn(second_pri, second_pawn);
 }
 
+bool PublishPlayerIdentity(void* player_pri, void* player_pawn,
+                           void* game_replication_info,
+                           const UnrealFunctionHandle& refresh_provider) {
+  return AssignPriIdentityStrings(player_pri, player_pawn) &&
+         UnrealCallVoid(game_replication_info, L"RefreshClaimedCharacters") &&
+         UnrealCallExactVoid(player_pri, refresh_provider) &&
+         PriIdentityMatchesPawn(player_pri, player_pawn);
+}
+
 class WfcSwapOperations final : public CharacterSwapOperations {
  public:
   CharacterSwapPreflight CapturePreflight(
@@ -3487,6 +3610,15 @@ bool SwapWorldMutationActive() {
 
 bool WfcSwapOperations::CaptureJournal(
     const CharacterSwapRequest& request) noexcept {
+  const auto capture_failed = [&request](const char* requirement) noexcept {
+    Log(LogLevel::kWarning,
+        "[SquadSwitch] request=%llu preflight journal requirement failed: %s",
+        static_cast<unsigned long long>(request.request_id), requirement);
+    return false;
+  };
+#define WFC_SWAP_CAPTURE_REQUIRE(condition) \
+  do { if (!(condition)) return capture_failed(#condition); } while (false)
+
   WfcSwapJournal journal;
   journal.request_id = request.request_id;
   journal.world = g_world_info;
@@ -3501,26 +3633,28 @@ bool WfcSwapOperations::CaptureJournal(
   uint8_t net_mode = 0xFF;
   // The synchronous identity path intentionally suppresses replication. It
   // is valid only for WFC's local campaign world.
-  if (!UnrealReadByteProperty(journal.world, L"NetMode", &net_mode) ||
-      net_mode != 0 || !UnrealObjectValid(journal.game_replication_info) ||
-      !UnrealObjectIsA(journal.game_replication_info,
-                       L"TnGameReplicationInfoGameBase"))
-    return false;
+  WFC_SWAP_CAPTURE_REQUIRE(
+      UnrealReadByteProperty(journal.world, L"NetMode", &net_mode));
+  WFC_SWAP_CAPTURE_REQUIRE(net_mode == 0);
+  WFC_SWAP_CAPTURE_REQUIRE(UnrealObjectValid(journal.game_replication_info));
+  WFC_SWAP_CAPTURE_REQUIRE(UnrealObjectIsA(
+      journal.game_replication_info, L"TnGameReplicationInfoGameBase"));
   const bool mapping_active =
       GetCharacterRoleMapping(&journal.previous_mapping);
-  if (mapping_active && !CharacterRoleMappingObjectsValid()) return false;
+  WFC_SWAP_CAPTURE_REQUIRE(!mapping_active ||
+                           CharacterRoleMappingObjectsValid());
   if (mapping_active) {
     if (journal.previous_mapping.player_controller !=
             journal.player_controller ||
         journal.previous_mapping.player_controlled_ai_pawn !=
             journal.player_pawn)
-      return false;
+      return capture_failed("previous role mapping player pair");
     if (UnrealObjectIsA(journal.target_pawn, L"TnPlayerPawn")) {
       if (journal.previous_mapping.mapped_ai_controller !=
               journal.target_controller ||
           journal.previous_mapping.ai_controlled_player_pawn !=
               journal.target_pawn)
-        return false;
+        return capture_failed("previous role mapping AI pair");
       journal.target_lifecycle_was_proxy = true;
       journal.desired_mapping = {};
     } else {
@@ -3534,7 +3668,7 @@ bool WfcSwapOperations::CaptureJournal(
   } else {
     if (!UnrealObjectIsA(journal.player_pawn, L"TnPlayerPawn") ||
         !UnrealObjectIsA(journal.target_pawn, L"TnAiPawn"))
-      return false;
+      return capture_failed("initial TnPlayerPawn/TnAiPawn class pair");
     journal.desired_mapping.player_controller = journal.player_controller;
     journal.desired_mapping.player_controlled_ai_pawn = journal.target_pawn;
     journal.desired_mapping.mapped_ai_controller = journal.target_controller;
@@ -3542,110 +3676,128 @@ bool WfcSwapOperations::CaptureJournal(
   }
   journal.former_player_requires_proxy =
       UnrealObjectIsA(journal.player_pawn, L"TnPlayerPawn");
-  if (journal.former_player_requires_proxy &&
-      journal.player_mode != TransformerMode::kRobot)
-    return false;
 
   // Native GOAP actions cache a statically typed TnAiPawn and directly touch
   // subclass-owned storage. Initial control transfer therefore uses the
-  // bounded role proxy for the former physical TnPlayerPawn; later AiPawn to
-  // AiPawn transfers can safely use the complete native planning lifecycle.
-  if (!SupportedPlayerPair(journal.player_controller, journal.player_pawn) ||
-      !SupportedAiPair(journal.target_controller, journal.target_pawn) ||
-      !ReadRequiredObject(journal.player_controller, L"PlayerReplicationInfo",
-                          &journal.player_pri) ||
-      !ReadRequiredObject(journal.target_controller, L"PlayerReplicationInfo",
-                          &journal.target_pri) ||
-      !ResolveSquadRecord(journal.target_controller, &journal.squad,
-                          &journal.squad_records,
-                          &journal.squad_record_index) ||
-      journal.squad_record_index !=
-          g_squad_record_indices[request.squad_slot] ||
-      !ReadOptionalObject(journal.player_controller, L"ViewTarget",
-                          &journal.previous_view_target) ||
-      !ReadRequiredObject(journal.player_controller, L"_PickupManager",
-                          &journal.pickup_manager) ||
-      !ReadRequiredObject(journal.player_controller, L"ContextualCommander",
-                          &journal.contextual_commander) ||
-      !ReadRequiredObject(journal.player_controller, L"_FineAimManager",
-                          &journal.fine_aim_manager) ||
-      !ReadRequiredObject(journal.player_controller, L"PlayerTargeting",
-                           &journal.player_targeting) ||
-      !ReadRequiredObject(journal.player_targeting, L"_TargetingOwner",
-                          &journal.previous_targeting_owner) ||
-      journal.previous_targeting_owner != journal.player_pawn ||
-      !ReadRequiredObject(journal.player_controller, L"_CameraStrategyManager",
-                          &journal.camera_manager) ||
-      !ReadRequiredObject(journal.camera_manager, L"_TransformerPawn",
-                          &journal.previous_camera_owner) ||
-      journal.previous_camera_owner != journal.player_pawn ||
-      !ReadRequiredObject(journal.player_controller, L"_DialogManager",
-                           &journal.dialog_manager) ||
-      !ReadRequiredObject(journal.target_controller, L"_DialogManager",
-                          &journal.target_dialog_manager) ||
-      !ReadRequiredObject(journal.target_dialog_manager, L"OwnerPawn",
-                          &journal.previous_target_dialog_owner) ||
-      !ReadRequiredObject(journal.target_dialog_manager, L"OwnerAiPawn",
-                          &journal.previous_target_dialog_ai_owner) ||
-      !ReadOptionalObject(journal.target_controller, L"_VehicleAiControl",
-                           &journal.previous_target_vehicle_ai_control) ||
-      !ReadRequiredObject(journal.target_controller, L"WeaponShooter",
-                          &journal.target_weapon_shooter) ||
-      !ReadRequiredObject(journal.target_controller, L"WeaponAimer",
-                          &journal.target_weapon_aimer) ||
-      !ReadRequiredObject(journal.target_controller, L"PlanRunner",
-                          &journal.target_plan_runner) ||
-      !ReadRequiredObject(journal.target_plan_runner, L"_ActionSet",
-                          &journal.target_action_set) ||
-      !ReadRequiredObject(journal.target_plan_runner, L"_GoalSet",
-                          &journal.target_goal_set) ||
-      !ReadRequiredObject(journal.target_controller, L"TacticalAnalyzer",
-                          &journal.target_tactical_analyzer) ||
-      !ReadRequiredObject(journal.target_tactical_analyzer, L"SensorSet",
-                          &journal.target_sensor_set) ||
-      !ReadRequiredObject(journal.player_controller,
-                          L"_PointOfInterestManager",
-                          &journal.point_of_interest_manager) ||
-      !ReadRequiredObject(journal.player_controller, L"myHUD", &journal.hud) ||
-      !ReadRequiredObject(journal.player_pawn, L"AbilityManager",
-                          &journal.player_ability_manager) ||
-      !ReadRequiredObject(journal.player_pawn, L"_BuffManager",
-                          &journal.player_buff_manager) ||
-      !ReadRequiredObject(journal.target_pawn, L"AbilityManager",
-                          &journal.target_ability_manager) ||
-      !ReadRequiredObject(journal.target_pawn, L"_BuffManager",
-                          &journal.target_buff_manager) ||
-      !ReadOptionalObject(journal.player_ability_manager, L"OwnerHud",
-                          &journal.player_ability_hud) ||
-      !ReadOptionalObject(journal.player_buff_manager, L"OwnerHud",
-                          &journal.player_buff_hud) ||
-      !ReadOptionalObject(journal.target_ability_manager, L"OwnerHud",
-                          &journal.target_ability_hud) ||
-      !ReadOptionalObject(journal.target_buff_manager, L"OwnerHud",
-                           &journal.target_buff_hud) ||
-      !ReadRequiredObject(journal.player_pawn, L"_CollisionController",
-                          &journal.player_collision_controller) ||
-      !ReadRequiredObject(journal.target_pawn, L"_CollisionController",
-                          &journal.target_collision_controller) ||
-      !CaptureInventoryWeaponRoles(
-          journal.player_pawn, &journal.player_inventory_weapons,
-          &journal.player_inventory_weapon_count, 2u,
-          &journal.player_inventory_manager,
-          &journal.player_inventory_manager_index,
-          &journal.player_inventory_head,
-          &journal.player_inventory_head_index,
-          &journal.player_inventory_fingerprint) ||
-      !CaptureInventoryWeaponRoles(
-          journal.target_pawn, &journal.target_inventory_weapons,
-          &journal.target_inventory_weapon_count, 1u,
-          &journal.target_inventory_manager,
-          &journal.target_inventory_manager_index,
-          &journal.target_inventory_head,
-          &journal.target_inventory_head_index,
-          &journal.target_inventory_fingerprint))
-    return false;
-  if (!PriIdentityMatchesPawn(journal.player_pri, journal.player_pawn))
-    return false;
+  // bounded role proxy for the former physical TnPlayerPawn. Its vehicle-form
+  // branch uses native form inputs rather than an AiPawn strategy; later
+  // AiPawn-to-AiPawn transfers retain the complete native lifecycle.
+  WFC_SWAP_CAPTURE_REQUIRE(
+      SupportedPlayerPair(journal.player_controller, journal.player_pawn));
+  WFC_SWAP_CAPTURE_REQUIRE(
+      SupportedAiPair(journal.target_controller, journal.target_pawn));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"PlayerReplicationInfo", &journal.player_pri));
+  // Campaign squad AI is spawned by TnAiSquad and is not required to own a
+  // PlayerReplicationInfo. Some game modes do create one, so preserve the
+  // paired path when present, but never manufacture a player record for a
+  // campaign bot.
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.target_controller, L"PlayerReplicationInfo", &journal.target_pri));
+  WFC_SWAP_CAPTURE_REQUIRE(!journal.target_pri ||
+                           UnrealObjectIsA(journal.target_pri,
+                                           L"TnPlayerReplicationInfo"));
+  WFC_SWAP_CAPTURE_REQUIRE(ResolveSquadRecord(
+      journal.target_controller, &journal.squad, &journal.squad_records,
+      &journal.squad_record_index));
+  WFC_SWAP_CAPTURE_REQUIRE(journal.squad_record_index ==
+                           g_squad_record_indices[request.squad_slot]);
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.player_controller, L"ViewTarget", &journal.previous_view_target));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"_PickupManager", &journal.pickup_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"ContextualCommander",
+      &journal.contextual_commander));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"_FineAimManager", &journal.fine_aim_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"PlayerTargeting", &journal.player_targeting));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_targeting, L"_TargetingOwner",
+      &journal.previous_targeting_owner));
+  WFC_SWAP_CAPTURE_REQUIRE(journal.previous_targeting_owner ==
+                           journal.player_pawn);
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"_CameraStrategyManager",
+      &journal.camera_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.camera_manager, L"_TransformerPawn",
+      &journal.previous_camera_owner));
+  WFC_SWAP_CAPTURE_REQUIRE(journal.previous_camera_owner == journal.player_pawn);
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"_DialogManager", &journal.dialog_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_controller, L"_DialogManager",
+      &journal.target_dialog_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_dialog_manager, L"OwnerPawn",
+      &journal.previous_target_dialog_owner));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_dialog_manager, L"OwnerAiPawn",
+      &journal.previous_target_dialog_ai_owner));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.target_controller, L"_VehicleAiControl",
+      &journal.previous_target_vehicle_ai_control));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_controller, L"WeaponShooter", &journal.target_weapon_shooter));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_controller, L"WeaponAimer", &journal.target_weapon_aimer));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_controller, L"PlanRunner", &journal.target_plan_runner));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_plan_runner, L"_ActionSet", &journal.target_action_set));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_plan_runner, L"_GoalSet", &journal.target_goal_set));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_controller, L"TacticalAnalyzer",
+      &journal.target_tactical_analyzer));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_tactical_analyzer, L"SensorSet", &journal.target_sensor_set));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"_PointOfInterestManager",
+      &journal.point_of_interest_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_controller, L"myHUD", &journal.hud));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_pawn, L"AbilityManager", &journal.player_ability_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_pawn, L"_BuffManager", &journal.player_buff_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_pawn, L"AbilityManager", &journal.target_ability_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_pawn, L"_BuffManager", &journal.target_buff_manager));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.player_ability_manager, L"OwnerHud", &journal.player_ability_hud));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.player_buff_manager, L"OwnerHud", &journal.player_buff_hud));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.target_ability_manager, L"OwnerHud", &journal.target_ability_hud));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadOptionalObject(
+      journal.target_buff_manager, L"OwnerHud", &journal.target_buff_hud));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.player_pawn, L"_CollisionController",
+      &journal.player_collision_controller));
+  WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
+      journal.target_pawn, L"_CollisionController",
+      &journal.target_collision_controller));
+  WFC_SWAP_CAPTURE_REQUIRE(CaptureInventoryWeaponRoles(
+      journal.player_pawn, &journal.player_inventory_weapons,
+      &journal.player_inventory_weapon_count, 2u,
+      &journal.player_inventory_manager, &journal.player_inventory_manager_index,
+      &journal.player_inventory_head, &journal.player_inventory_head_index,
+      &journal.player_inventory_fingerprint));
+  WFC_SWAP_CAPTURE_REQUIRE(CaptureInventoryWeaponRoles(
+      journal.target_pawn, &journal.target_inventory_weapons,
+      &journal.target_inventory_weapon_count, 1u,
+      &journal.target_inventory_manager, &journal.target_inventory_manager_index,
+      &journal.target_inventory_head, &journal.target_inventory_head_index,
+      &journal.target_inventory_fingerprint));
+  WFC_SWAP_CAPTURE_REQUIRE(
+      PriIdentityMatchesPawn(journal.player_pri, journal.player_pawn));
+  WFC_SWAP_CAPTURE_REQUIRE(
+      !journal.target_pri ||
+      PriIdentityMatchesPawn(journal.target_pri, journal.target_pawn));
   {
     UnrealStructValueView player_character;
     UnrealStructValueView target_character;
@@ -3665,7 +3817,7 @@ bool WfcSwapOperations::CaptureJournal(
         !UnrealReadStructStringField(target_character, L"CharacterName",
                                      target_name, sizeof(target_name)) ||
         !player_name[0] || !target_name[0])
-      return false;
+      return capture_failed("compatible player/target character structs");
   }
 
   void* previous_shooter_owner = nullptr;
@@ -3682,18 +3834,18 @@ bool WfcSwapOperations::CaptureJournal(
                                 L"_OwnerController",
                                 &previous_aimer_controller) ||
       previous_aimer_controller != journal.target_controller ||
-      !UnrealCallBool(journal.target_weapon_shooter, L"IsFiring",
-                      &target_shooter_firing) ||
+       !UnrealCallBool(journal.target_weapon_shooter, L"IsFiring",
+                       &target_shooter_firing) ||
       target_shooter_firing ||
-      !UnrealCallObject(journal.target_weapon_shooter, L"get_ActiveWeapon",
-                        &journal.previous_target_shooter_weapon) ||
+       !UnrealCallObject(journal.target_weapon_shooter, L"get_ActiveWeapon",
+                         &journal.previous_target_shooter_weapon) ||
       (journal.previous_target_shooter_weapon &&
        (!UnrealObjectIsA(journal.previous_target_shooter_weapon,
                          L"TnWeapon") ||
         PendingDestroy(journal.previous_target_shooter_weapon))) ||
       journal.previous_target_shooter_weapon !=
           CurrentPawnWeapon(journal.target_pawn))
-    return false;
+    return capture_failed("target weapon shooter/aimer graph and idle state");
 
   const void* expected_previous_dialog_owner =
       journal.target_lifecycle_was_proxy ? journal.player_pawn
@@ -3701,7 +3853,7 @@ bool WfcSwapOperations::CaptureJournal(
   if (journal.previous_target_dialog_owner != expected_previous_dialog_owner ||
       journal.previous_target_dialog_ai_owner !=
           expected_previous_dialog_owner)
-    return false;
+    return capture_failed("target dialog owner graph");
 
   journal.previous_target_vehicle_ai_control_index =
       UnrealObjectIndex(journal.previous_target_vehicle_ai_control);
@@ -3727,7 +3879,7 @@ bool WfcSwapOperations::CaptureJournal(
        plan_runner_suspended != journal.target_lifecycle_was_proxy ||
        plan_runner_owner != journal.target_controller || pending_action_set ||
        pending_goal_set || tactical_analyzer_owner != journal.target_controller)
-    return false;
+    return capture_failed("target GOAP plan/sensor graph");
   journal.target_plan_was_suspended = plan_runner_suspended;
 
   if (!UnrealResolveExactScriptFunctionForObject(
@@ -3763,6 +3915,10 @@ bool WfcSwapOperations::CaptureJournal(
           L"SelectCharacter", &journal.player_select_character) ||
       !UnrealResolveExactScriptFunctionForObject(
           journal.player_pri, L"TransGame.TnPlayerReplicationInfo",
+          L"set_CurrentCharacter",
+          &journal.player_set_current_character) ||
+      !UnrealResolveExactScriptFunctionForObject(
+          journal.player_pri, L"TransGame.TnPlayerReplicationInfo",
           L"ClientStartCharacterLoad",
           &journal.player_client_start_character_load) ||
       !UnrealResolveExactScriptFunctionForObject(
@@ -3772,7 +3928,7 @@ bool WfcSwapOperations::CaptureJournal(
       !UnrealResolveExactScriptFunctionForObject(
           journal.player_pri, L"TransGame.TnPlayerReplicationInfo",
           L"RefreshProvider", &journal.player_refresh_provider))
-    return false;
+    return capture_failed("exact script function resolution");
 
   g_swap_journal = journal;
   const bool lifecycle_coherent =
@@ -3781,8 +3937,9 @@ bool WfcSwapOperations::CaptureJournal(
           : TargetAiLifecycleCoherent(journal.target_pawn);
   if (!lifecycle_coherent) {
     g_swap_journal = {};
-    return false;
+    return capture_failed("target AI lifecycle coherence");
   }
+#undef WFC_SWAP_CAPTURE_REQUIRE
   return true;
 }
 
@@ -4005,35 +4162,69 @@ CharacterSwapPreflight WfcSwapOperations::CapturePreflight(
     CharacterSwapCapture* output) noexcept {
   if (!output) return CharacterSwapPreflight::kReject;
   *output = {};
-  if (request.squad_slot == 0 || request.squad_slot >= kSquadCapacity ||
-      request.world_generation != g_world_epoch ||
-      request.expected_world_object_index != UnrealObjectIndex(g_world_info) ||
-      request.expected_player_controller_object_index !=
-          UnrealObjectIndex(g_controller) ||
-      request.expected_player_pawn_object_index != UnrealObjectIndex(g_pawn) ||
-      request.expected_target_controller_object_index !=
-          UnrealObjectIndex(g_squad_controllers[request.squad_slot]) ||
-      request.expected_target_pawn_object_index !=
-          UnrealObjectIndex(g_squad_pawns[request.squad_slot]) ||
-      g_squad_record_indices[request.squad_slot] < 0 ||
-      g_pending_ability_release.pending || PendingCommandCount() != 0)
+  const auto reject = [&request](const char* reason) noexcept {
+    Log(LogLevel::kWarning,
+        "[SquadSwitch] request=%llu preflight rejected: %s slot=%lu epoch=%llu pending=%lu",
+        static_cast<unsigned long long>(request.request_id), reason,
+        static_cast<unsigned long>(request.squad_slot),
+        static_cast<unsigned long long>(g_world_epoch),
+        static_cast<unsigned long>(PendingCommandCount()));
     return CharacterSwapPreflight::kReject;
+  };
+  if (request.squad_slot == 0 || request.squad_slot >= kSquadCapacity)
+    return reject("invalid squad slot");
+  if (request.world_generation != g_world_epoch)
+    return reject("world generation changed");
+  if (request.expected_world_object_index != UnrealObjectIndex(g_world_info))
+    return reject("world object changed");
+  if (request.expected_player_controller_object_index !=
+      UnrealObjectIndex(g_controller))
+    return reject("player controller changed");
+  if (request.expected_player_pawn_object_index != UnrealObjectIndex(g_pawn))
+    return reject("player pawn changed");
+  if (request.expected_target_controller_object_index !=
+      UnrealObjectIndex(g_squad_controllers[request.squad_slot]))
+    return reject("target controller changed");
+  if (request.expected_target_pawn_object_index !=
+      UnrealObjectIndex(g_squad_pawns[request.squad_slot]))
+    return reject("target pawn changed");
+  if (g_squad_record_indices[request.squad_slot] < 0)
+    return reject("target squad record unavailable");
+  if (g_pending_ability_release.pending)
+    return reject("ability release pending");
+  if (PendingCommandCount() != 0)
+    return reject("another command pending");
 
   Snapshot state;
   Snapshot restrictions;
   if (!request.checkpoint_native_restore) {
-    if (!CopyLatestSnapshot(&state) || state.lifecycle != Lifecycle::kLive ||
-        state.world_epoch != g_world_epoch ||
-        request.squad_slot >= state.squad_count ||
-        !state.squad[request.squad_slot].switchable ||
-        !ReadRestrictions(&restrictions, true) || restrictions.in_combat ||
-        restrictions.paused || restrictions.in_cutscene ||
-        restrictions.in_menu || restrictions.in_scripted_sequence)
-      return CharacterSwapPreflight::kReject;
+    if (!CopyLatestSnapshot(&state)) return reject("snapshot unavailable");
+    if (state.lifecycle != Lifecycle::kLive)
+      return reject("snapshot lifecycle is not live");
+    if (state.world_epoch != g_world_epoch)
+      return reject("snapshot world changed");
+    if (request.squad_slot >= state.squad_count)
+      return reject("snapshot squad slot disappeared");
+    if (!state.squad[request.squad_slot].switchable)
+      return reject("snapshot target is not switchable");
+    const bool restrictions_read = ReadRestrictions(&restrictions, true);
+    if (!restrictions_read || restrictions.paused ||
+        restrictions.in_cutscene || restrictions.in_menu ||
+        restrictions.in_scripted_sequence) {
+      Log(LogLevel::kWarning,
+          "[SquadSwitch] request=%llu restriction state read=%u combat=%u paused=%u cutscene=%u menu=%u scripted=%u",
+          static_cast<unsigned long long>(request.request_id),
+          restrictions_read ? 1u : 0u, restrictions.in_combat ? 1u : 0u,
+          restrictions.paused ? 1u : 0u,
+          restrictions.in_cutscene ? 1u : 0u,
+          restrictions.in_menu ? 1u : 0u,
+          restrictions.in_scripted_sequence ? 1u : 0u);
+      return reject("live gameplay restrictions");
+    }
   } else if (!DeferredCheckpointPending() ||
              !CharacterRoleMappingActive() ||
              !CharacterRoleMappingObjectsValid()) {
-    return CharacterSwapPreflight::kReject;
+    return reject("checkpoint restore prerequisites");
   }
 
   float player_health = -1.0f;
@@ -4046,29 +4237,42 @@ CharacterSwapPreflight WfcSwapOperations::CapturePreflight(
   bool target_alive = false;
   void* target_pawn = g_squad_pawns[request.squad_slot];
   if (!ReadVitals(g_pawn, &player_health, &player_max, &player_downed,
-                  &player_alive) ||
-      !ReadVitals(target_pawn, &target_health, &target_max, &target_downed,
-                  &target_alive) ||
-      !player_alive || player_downed || !target_alive || target_downed ||
-      ReadMode(g_pawn) == TransformerMode::kUnknown ||
-      ReadMode(g_pawn) == TransformerMode::kTransitioning ||
-      ReadMode(target_pawn) == TransformerMode::kUnknown ||
-      ReadMode(target_pawn) == TransformerMode::kTransitioning ||
-      TeamFor(g_controller, g_pawn) == nullptr ||
-      TeamFor(g_controller, g_pawn) !=
-          TeamFor(g_squad_controllers[request.squad_slot], target_pawn) ||
-      !CaptureJournal(request))
-    return CharacterSwapPreflight::kReject;
+                  &player_alive))
+    return reject("player vitals unavailable");
+  if (!ReadVitals(target_pawn, &target_health, &target_max, &target_downed,
+                  &target_alive))
+    return reject("target vitals unavailable");
+  if (!player_alive || player_downed)
+    return reject("player is dead or downed");
+  if (!target_alive || target_downed)
+    return reject("target is dead or downed");
+  const TransformerMode player_mode = ReadMode(g_pawn);
+  const TransformerMode target_mode = ReadMode(target_pawn);
+  if (player_mode == TransformerMode::kUnknown ||
+      player_mode == TransformerMode::kTransitioning)
+    return reject("player form is unstable");
+  if (target_mode == TransformerMode::kUnknown ||
+      target_mode == TransformerMode::kTransitioning)
+    return reject("target form is unstable");
+  void* player_team = TeamFor(g_controller, g_pawn);
+  void* target_team = TeamFor(
+      g_squad_controllers[request.squad_slot], target_pawn);
+  if (!player_team) return reject("player team unavailable");
+  if (player_team != target_team) return reject("target team mismatch");
+  if (!CaptureJournal(request)) return reject("journal capture failed");
 
   uint32_t player_hash = 0;
   uint32_t target_hash = 0;
   if (!ResolveLiveCharacterHash(g_swap_journal.player_controller,
-                                g_swap_journal.player_pawn, &player_hash) ||
-      !ResolveLiveCharacterHash(g_swap_journal.target_controller,
-                                g_swap_journal.target_pawn, &target_hash) ||
-      player_hash != request.expected_player_identity_hash ||
-      target_hash != request.expected_target_identity_hash)
-    return CharacterSwapPreflight::kReject;
+                                g_swap_journal.player_pawn, &player_hash))
+    return reject("player identity unavailable");
+  if (!ResolveLiveCharacterHash(g_swap_journal.target_controller,
+                                g_swap_journal.target_pawn, &target_hash))
+    return reject("target identity unavailable");
+  if (player_hash != request.expected_player_identity_hash)
+    return reject("player identity changed");
+  if (target_hash != request.expected_target_identity_hash)
+    return reject("target identity changed");
 
   output->world_generation = g_world_epoch;
   output->world = SwapIdentity(g_swap_journal.world);
@@ -4130,7 +4334,7 @@ CharacterSwapPreflight WfcSwapOperations::VerifyQuiesced(
 
   if (!request.checkpoint_native_restore) {
     Snapshot restrictions;
-    if (!ReadRestrictions(&restrictions, true) || restrictions.in_combat ||
+    if (!ReadRestrictions(&restrictions, true) ||
         restrictions.paused || restrictions.in_cutscene ||
         restrictions.in_menu || restrictions.in_scripted_sequence)
       return CharacterSwapPreflight::kReject;
@@ -4368,7 +4572,6 @@ bool WfcSwapOperations::ActivateTargetWeaponShooter(void* pawn) noexcept {
   void* aimer_owner = nullptr;
   void* aimer_controller = nullptr;
   void* manager = nullptr;
-  void* manager_weapon = nullptr;
   void* pawn_weapon = nullptr;
   if (!UnrealReadObjectProperty(g_swap_journal.target_weapon_shooter, L"Owner",
                                 &shooter_owner) ||
@@ -4380,9 +4583,8 @@ bool WfcSwapOperations::ActivateTargetWeaponShooter(void* pawn) noexcept {
                                 L"_OwnerController", &aimer_controller) ||
       aimer_controller != g_swap_journal.target_controller ||
       !ReadRequiredObject(pawn, L"InvManager", &manager) ||
-      !UnrealReadObjectProperty(manager, L"CurrentWeapon", &manager_weapon) ||
-      !UnrealReadObjectProperty(pawn, L"Weapon", &pawn_weapon) ||
-      manager_weapon != pawn_weapon)
+      !UnrealObjectIsA(manager, L"TnInventoryManager") ||
+      !UnrealReadObjectProperty(pawn, L"Weapon", &pawn_weapon))
     return false;
   void* weapon = pawn_weapon;
   if (!weapon) {
@@ -4430,7 +4632,6 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
       uint8_t current_type = 0;
       void* current_data = nullptr;
       float current_heat = 0.0f;
-      bool overheated = false;
       if (!entry.weapon || !entry.object_index ||
           !UnrealObjectValid(entry.weapon) || PendingDestroy(entry.weapon) ||
           UnrealObjectIndex(entry.weapon) != entry.object_index ||
@@ -4440,15 +4641,15 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
           !UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
                                   &current_type) ||
           !UnrealReadObjectProperty(entry.weapon, L"Data", &current_data) ||
-          !entry.weapon_heat || !UnrealObjectValid(entry.weapon_heat) ||
-          UnrealObjectIndex(entry.weapon_heat) != entry.weapon_heat_index ||
-          !UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                           &current_heat) ||
-          !UnrealCallBool(entry.weapon_heat, L"IsOverheated", &overheated) ||
           current_type != entry.previous_data_type ||
-          current_data != entry.previous_data ||
-          std::fabs(current_heat - entry.current_heat) > 0.001f ||
-          overheated != entry.was_overheated)
+          current_data != entry.previous_data)
+        return false;
+      if (entry.heat_state_captured &&
+          (!entry.weapon_heat || !UnrealObjectValid(entry.weapon_heat) ||
+           UnrealObjectIndex(entry.weapon_heat) != entry.weapon_heat_index ||
+           !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                    &current_heat) ||
+           std::fabs(current_heat - entry.current_heat) > 0.001f))
         return false;
     }
     return true;
@@ -4469,31 +4670,31 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
       uint8_t current_type = 0;
       void* current_data = nullptr;
       float current_heat = 0.0f;
-      bool overheated = false;
       if (!UnrealCallVoidByte(entry.weapon, L"SetWeaponDataType", L"Type",
                               role))
         return false;
-      void* owned_heat = nullptr;
-      uint32_t owned_heat_index = 0;
-      if (!ReadRequiredObject(entry.weapon, L"WeaponHeat", &owned_heat) ||
-          !UnrealObjectIsA(owned_heat, L"TnWeaponHeat") ||
-          !(owned_heat_index = UnrealObjectIndex(owned_heat)))
-        return false;
-      // SetData may rebuild the heat service. Continue through the component
-      // currently owned by the weapon, never a detached pre-conversion object.
-      entry.weapon_heat = owned_heat;
-      entry.weapon_heat_index = owned_heat_index;
-      if (!UnrealCallVoidFloat(entry.weapon_heat, L"SyncCurrentHeat",
-                               L"SyncHeat", entry.current_heat) ||
-          !UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
+      if (entry.heat_state_captured) {
+        void* owned_heat = nullptr;
+        uint32_t owned_heat_index = 0;
+        if (!ReadRequiredObject(entry.weapon, L"WeaponHeat", &owned_heat) ||
+            !UnrealObjectIsA(owned_heat, L"TnWeaponHeat") ||
+            !(owned_heat_index = UnrealObjectIndex(owned_heat)))
+          return false;
+        // SetData may rebuild the heat service. Continue through the component
+        // currently owned by the weapon, never a detached pre-conversion object.
+        entry.weapon_heat = owned_heat;
+        entry.weapon_heat_index = owned_heat_index;
+        if (!UnrealCallVoidFloat(entry.weapon_heat, L"SyncCurrentHeat",
+                                 L"SyncHeat", entry.current_heat) ||
+            !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                     &current_heat) ||
+            std::fabs(current_heat - entry.current_heat) > 0.001f)
+          return false;
+      }
+      if (!UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
                                   &current_type) ||
           !UnrealReadObjectProperty(entry.weapon, L"Data", &current_data) ||
-          !UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                           &current_heat) ||
-          !UnrealCallBool(entry.weapon_heat, L"IsOverheated", &overheated) ||
-          current_type != role || current_data != entry.desired_data ||
-          std::fabs(current_heat - entry.current_heat) > 0.001f ||
-          overheated != entry.was_overheated)
+          current_type != role || current_data != entry.desired_data)
         return false;
     }
     return true;
@@ -4513,45 +4714,48 @@ bool WfcSwapOperations::RestoreInventoryWeaponRoles() noexcept {
       uint8_t restored_type = 0;
       void* restored_data = nullptr;
       float restored_heat = 0.0f;
-      bool restored_overheated = false;
       void* currently_owned_heat = nullptr;
       bool restored =
           entry.weapon && entry.object_index &&
           UnrealObjectValid(entry.weapon) && !PendingDestroy(entry.weapon) &&
-          UnrealObjectIndex(entry.weapon) == entry.object_index &&
-          ReadRequiredObject(entry.weapon, L"WeaponHeat",
-                             &currently_owned_heat) &&
-          currently_owned_heat == entry.weapon_heat &&
-          UnrealObjectIndex(currently_owned_heat) == entry.weapon_heat_index &&
-          UnrealCallVoidByte(entry.weapon, L"SetWeaponDataType", L"Type",
-                             entry.previous_data_type);
-      void* restored_heat_object = nullptr;
-      uint32_t restored_heat_index = 0;
-      restored =
-          restored &&
-          ReadRequiredObject(entry.weapon, L"WeaponHeat",
-                             &restored_heat_object) &&
-          UnrealObjectIsA(restored_heat_object, L"TnWeaponHeat") &&
-          (restored_heat_index = UnrealObjectIndex(restored_heat_object)) != 0;
-      if (restored) {
-        entry.weapon_heat = restored_heat_object;
-        entry.weapon_heat_index = restored_heat_index;
+          UnrealObjectIndex(entry.weapon) == entry.object_index;
+      if (restored && entry.heat_state_captured) {
+        restored = ReadRequiredObject(entry.weapon, L"WeaponHeat",
+                                      &currently_owned_heat) &&
+                   currently_owned_heat == entry.weapon_heat &&
+                   UnrealObjectIndex(currently_owned_heat) ==
+                       entry.weapon_heat_index;
       }
-      restored =
-          restored &&
-          UnrealCallVoidFloat(entry.weapon_heat, L"SyncCurrentHeat",
-                              L"SyncHeat", entry.current_heat) &&
-          UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
-                                 &restored_type) &&
-          UnrealReadObjectProperty(entry.weapon, L"Data", &restored_data) &&
-          UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                          &restored_heat) &&
-          UnrealCallBool(entry.weapon_heat, L"IsOverheated",
-                         &restored_overheated) &&
-          restored_type == entry.previous_data_type &&
-          restored_data == entry.previous_data &&
-          std::fabs(restored_heat - entry.current_heat) <= 0.001f &&
-          restored_overheated == entry.was_overheated;
+      restored = restored &&
+                 UnrealCallVoidByte(entry.weapon, L"SetWeaponDataType", L"Type",
+                                    entry.previous_data_type);
+      if (restored && entry.heat_state_captured) {
+        void* restored_heat_object = nullptr;
+        uint32_t restored_heat_index = 0;
+        restored =
+            ReadRequiredObject(entry.weapon, L"WeaponHeat",
+                               &restored_heat_object) &&
+            UnrealObjectIsA(restored_heat_object, L"TnWeaponHeat") &&
+            (restored_heat_index = UnrealObjectIndex(restored_heat_object)) !=
+                0;
+        if (restored) {
+          entry.weapon_heat = restored_heat_object;
+          entry.weapon_heat_index = restored_heat_index;
+          restored =
+              UnrealCallVoidFloat(entry.weapon_heat, L"SyncCurrentHeat",
+                                  L"SyncHeat", entry.current_heat) &&
+              UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                      &restored_heat) &&
+              std::fabs(restored_heat - entry.current_heat) <= 0.001f;
+        }
+      }
+      restored = restored &&
+                 UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
+                                        &restored_type) &&
+                 UnrealReadObjectProperty(entry.weapon, L"Data",
+                                          &restored_data) &&
+                 restored_type == entry.previous_data_type &&
+                 restored_data == entry.previous_data;
       if (restored) entry.changed = false;
       ok = restored && ok;
     }
@@ -4581,41 +4785,73 @@ bool WfcSwapOperations::RestoreDeferredRuntimeState() noexcept {
       UnrealStructValueView player_character;
       UnrealStructValueView target_character;
       bool rollback_assignment_started = false;
-      const bool replicated_restored =
+      bool replicated_restored =
           UnrealReadStructProperty(g_swap_journal.player_pawn,
                                    L"_CurrentCharacterCompressed",
-                                   &player_character) &&
-          UnrealReadStructProperty(g_swap_journal.target_pawn,
-                                   L"_CurrentCharacterCompressed",
-                                   &target_character) &&
-          UnrealSynchronouslyAssignCharacterPair(
-              g_swap_journal.player_pri, g_swap_journal.target_pri,
-              g_swap_journal.player_select_character,
-              g_swap_journal.player_client_start_character_load,
-              g_swap_journal.player_confirm_selected_character,
-              g_swap_journal.player_refresh_provider,
-              player_character, target_character,
-              g_game_thread.load(std::memory_order_relaxed),
-              &rollback_assignment_started);
+                                   &player_character);
+      if (replicated_restored && g_swap_journal.target_pri) {
+        replicated_restored =
+            UnrealReadStructProperty(g_swap_journal.target_pawn,
+                                     L"_CurrentCharacterCompressed",
+                                     &target_character) &&
+            UnrealSynchronouslyAssignCharacterPair(
+                g_swap_journal.player_pri, g_swap_journal.target_pri,
+                g_swap_journal.player_select_character,
+                g_swap_journal.player_client_start_character_load,
+                g_swap_journal.player_confirm_selected_character,
+                g_swap_journal.player_refresh_provider,
+                player_character, target_character,
+                g_game_thread.load(std::memory_order_relaxed),
+                &rollback_assignment_started);
+      } else if (replicated_restored) {
+        replicated_restored = UnrealSynchronouslyAssignCharacter(
+            g_swap_journal.player_pri,
+            g_swap_journal.player_select_character,
+            g_swap_journal.player_client_start_character_load,
+            g_swap_journal.player_confirm_selected_character,
+            g_swap_journal.player_refresh_provider, player_character,
+            g_game_thread.load(std::memory_order_relaxed),
+            &rollback_assignment_started);
+      }
       (void)rollback_assignment_started;
       if (replicated_restored)
         g_swap_journal.selected_character_updated = false;
       restored = replicated_restored && restored;
     }
-    if (g_swap_journal.identity_swapped) {
+    if (g_swap_journal.identity_swapped && g_swap_journal.target_pri) {
       const bool resolved_restored = UnrealSwapStructProperties(
           g_swap_journal.player_pri, L"_CurrentCharacter",
           g_swap_journal.target_pri, L"_CurrentCharacter");
       if (resolved_restored) g_swap_journal.identity_swapped = false;
       restored = resolved_restored && restored;
     }
-    restored =
-        restored &&
-        PublishPriIdentityPair(
-            g_swap_journal.player_pri, g_swap_journal.player_pawn,
-            g_swap_journal.target_pri, g_swap_journal.target_pawn,
-            g_swap_journal.game_replication_info,
-            g_swap_journal.player_refresh_provider);
+    if (g_swap_journal.player_current_identity_updated) {
+      UnrealStructValueView player_current;
+      const bool current_restored =
+          UnrealReadStructProperty(g_swap_journal.player_pawn,
+                                   L"_CurrentCharacter", &player_current) &&
+          UnrealCallExactVoidStruct(
+              g_swap_journal.player_pri,
+              g_swap_journal.player_set_current_character, L"Value",
+              player_current);
+      if (current_restored)
+        g_swap_journal.player_current_identity_updated = false;
+      restored = current_restored && restored;
+    }
+    restored = restored &&
+               (g_swap_journal.target_pri
+                    ? PublishPriIdentityPair(
+                          g_swap_journal.player_pri,
+                          g_swap_journal.player_pawn,
+                          g_swap_journal.target_pri,
+                          g_swap_journal.target_pawn,
+                          g_swap_journal.game_replication_info,
+                          g_swap_journal.player_refresh_provider)
+                    : PublishPlayerIdentity(
+                          g_swap_journal.player_pri,
+                          g_swap_journal.player_pawn,
+                          g_swap_journal.game_replication_info,
+                          g_swap_journal.player_refresh_provider));
     if (restored) g_swap_journal.identity_restore_pending = false;
     ok = restored && ok;
   }
@@ -4623,7 +4859,7 @@ bool WfcSwapOperations::RestoreDeferredRuntimeState() noexcept {
   if (g_swap_journal.squad_restore_pending) {
     UnrealStructValueView target_character;
     const bool restored =
-        UnrealReadStructProperty(g_swap_journal.target_pri,
+        UnrealReadStructProperty(g_swap_journal.target_pawn,
                                  L"_CurrentCharacter", &target_character) &&
         UnrealAssignStructArrayStringField(
             g_swap_journal.squad_records,
@@ -4864,7 +5100,7 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
              : CharacterSwapApplyResult::kFailedNeedsRollback;
     case CharacterSwapMutation::kUpdateSquadMembership: {
       UnrealStructValueView player_character;
-      if (!UnrealReadStructProperty(g_swap_journal.player_pri,
+      if (!UnrealReadStructProperty(g_swap_journal.player_pawn,
                                     L"_CurrentCharacter",
                                     &player_character))
         return CharacterSwapApplyResult::kFailedNoMutation;
@@ -4878,45 +5114,84 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
         return CharacterSwapApplyResult::kFailedNeedsRollback;
       return CharacterSwapApplyResult::kApplied;
     }
-    case CharacterSwapMutation::kUpdateCharacterIdentity:
-      if (!UnrealSwapStructProperties(
-              g_swap_journal.player_pri, L"_CurrentCharacter",
-              g_swap_journal.target_pri, L"_CurrentCharacter"))
-        return CharacterSwapApplyResult::kFailedNeedsRollback;
-      g_swap_journal.identity_swapped = true;
-      {
-        UnrealStructValueView target_character;
-        UnrealStructValueView player_character;
-        bool identity_assignment_started = false;
-        if (!UnrealReadStructProperty(
-                g_swap_journal.target_pawn,
-                L"_CurrentCharacterCompressed", &target_character) ||
-            !UnrealReadStructProperty(
-                g_swap_journal.player_pawn,
-                L"_CurrentCharacterCompressed", &player_character) ||
-            !UnrealSynchronouslyAssignCharacterPair(
+    case CharacterSwapMutation::kUpdateCharacterIdentity: {
+      UnrealStructValueView target_character;
+      UnrealStructValueView player_character;
+      UnrealStructValueView target_current;
+      bool identity_assignment_started = false;
+      if (!UnrealReadStructProperty(
+              g_swap_journal.target_pawn,
+              L"_CurrentCharacterCompressed", &target_character) ||
+          !UnrealReadStructProperty(
+              g_swap_journal.player_pawn,
+              L"_CurrentCharacterCompressed", &player_character) ||
+          !UnrealReadStructProperty(g_swap_journal.target_pawn,
+                                    L"_CurrentCharacter",
+                                    &target_current))
+        return CharacterSwapApplyResult::kFailedNoMutation;
+
+      if (g_swap_journal.target_pri) {
+        if (!UnrealSwapStructProperties(
+                g_swap_journal.player_pri, L"_CurrentCharacter",
+                g_swap_journal.target_pri, L"_CurrentCharacter"))
+          return CharacterSwapApplyResult::kFailedNeedsRollback;
+        g_swap_journal.identity_swapped = true;
+      } else {
+        // Campaign squad identities live on their pawn/squad record. Move
+        // only the real local-player PRI to the selected existing pawn.
+        if (!UnrealCallExactVoidStruct(
                 g_swap_journal.player_pri,
-                g_swap_journal.target_pri,
-                g_swap_journal.player_select_character,
-                g_swap_journal.player_client_start_character_load,
-                g_swap_journal.player_confirm_selected_character,
-                g_swap_journal.player_refresh_provider,
-                target_character, player_character,
-                g_game_thread.load(std::memory_order_relaxed),
-                &identity_assignment_started)) {
-          g_swap_journal.selected_character_updated =
-              identity_assignment_started;
+                g_swap_journal.player_set_current_character, L"Value",
+                target_current))
           return CharacterSwapApplyResult::kFailedNeedsRollback;
-        }
-        g_swap_journal.selected_character_updated = true;
-        if (!PublishPriIdentityPair(
-                g_swap_journal.player_pri, g_swap_journal.target_pawn,
-                g_swap_journal.target_pri, g_swap_journal.player_pawn,
-                g_swap_journal.game_replication_info,
-                g_swap_journal.player_refresh_provider))
-          return CharacterSwapApplyResult::kFailedNeedsRollback;
+        g_swap_journal.player_current_identity_updated = true;
       }
+
+      const bool selected_updated =
+          g_swap_journal.target_pri
+              ? UnrealSynchronouslyAssignCharacterPair(
+                    g_swap_journal.player_pri,
+                    g_swap_journal.target_pri,
+                    g_swap_journal.player_select_character,
+                    g_swap_journal.player_client_start_character_load,
+                    g_swap_journal.player_confirm_selected_character,
+                    g_swap_journal.player_refresh_provider,
+                    target_character, player_character,
+                    g_game_thread.load(std::memory_order_relaxed),
+                    &identity_assignment_started)
+              : UnrealSynchronouslyAssignCharacter(
+                    g_swap_journal.player_pri,
+                    g_swap_journal.player_select_character,
+                    g_swap_journal.player_client_start_character_load,
+                    g_swap_journal.player_confirm_selected_character,
+                    g_swap_journal.player_refresh_provider,
+                    target_character,
+                    g_game_thread.load(std::memory_order_relaxed),
+                    &identity_assignment_started);
+      if (!selected_updated) {
+        g_swap_journal.selected_character_updated =
+            identity_assignment_started;
+        return CharacterSwapApplyResult::kFailedNeedsRollback;
+      }
+      g_swap_journal.selected_character_updated = true;
+      const bool published =
+          g_swap_journal.target_pri
+              ? PublishPriIdentityPair(
+                    g_swap_journal.player_pri,
+                    g_swap_journal.target_pawn,
+                    g_swap_journal.target_pri,
+                    g_swap_journal.player_pawn,
+                    g_swap_journal.game_replication_info,
+                    g_swap_journal.player_refresh_provider)
+              : PublishPlayerIdentity(
+                    g_swap_journal.player_pri,
+                    g_swap_journal.target_pawn,
+                    g_swap_journal.game_replication_info,
+                    g_swap_journal.player_refresh_provider);
+      if (!published)
+        return CharacterSwapApplyResult::kFailedNeedsRollback;
       return CharacterSwapApplyResult::kApplied;
+    }
     case CharacterSwapMutation::kRebindRuntimeServices: {
       bool ok = RebindPlayerServices(g_swap_journal.target_pawn,
                                      g_swap_journal.hud,
@@ -5186,18 +5461,20 @@ bool WfcSwapOperations::RevertMutation(
   return false;
 }
 
-bool SquadRecordNameMatches(void* pri, const UnrealStructArrayView& records,
-                            int32_t record_index) {
+bool SquadRecordNameMatchesPawn(void* pawn,
+                                const UnrealStructArrayView& records,
+                                int32_t record_index) {
   UnrealStructValueView character;
   char expected[128] = {};
   char actual[128] = {};
-  return UnrealReadStructProperty(pri, L"_CurrentCharacter", &character) &&
+  return UnrealReadStructProperty(pawn, L"_CurrentCharacter", &character) &&
          UnrealReadStructStringField(character, L"CharacterName", expected,
-                                     sizeof(expected)) && expected[0] &&
+                                     sizeof(expected)) &&
+         expected[0] &&
          UnrealReadStructArrayStringField(records, record_index,
                                            L"CharacterName", actual,
-                                           sizeof(actual)) && actual[0] &&
-         Token(expected) == Token(actual);
+                                           sizeof(actual)) &&
+         actual[0] && Token(expected) == Token(actual);
 }
 
 bool ServiceOwnerIs(void* service, const wchar_t* property, void* expected) {
@@ -5237,23 +5514,22 @@ bool InventoryWeaponRolesMatch(
     void* current_data = nullptr;
     void* current_heat_object = nullptr;
     float current_heat = 0.0f;
-    bool overheated = false;
     if (!entry.weapon || !UnrealObjectValid(entry.weapon) ||
         PendingDestroy(entry.weapon) ||
         UnrealObjectIndex(entry.weapon) != entry.object_index ||
         !UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
                                 &current_type) ||
         !UnrealReadObjectProperty(entry.weapon, L"Data", &current_data) ||
-        !ReadRequiredObject(entry.weapon, L"WeaponHeat",
-                            &current_heat_object) ||
-        current_heat_object != entry.weapon_heat ||
-        UnrealObjectIndex(current_heat_object) != entry.weapon_heat_index ||
-        !UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                         &current_heat) ||
-        !UnrealCallBool(entry.weapon_heat, L"IsOverheated", &overheated) ||
-        current_type != role || current_data != entry.desired_data ||
-        std::fabs(current_heat - entry.current_heat) > 0.001f ||
-        overheated != entry.was_overheated)
+        current_type != role || current_data != entry.desired_data)
+      return false;
+    if (entry.heat_state_captured &&
+        (!ReadRequiredObject(entry.weapon, L"WeaponHeat",
+                             &current_heat_object) ||
+         current_heat_object != entry.weapon_heat ||
+         UnrealObjectIndex(current_heat_object) != entry.weapon_heat_index ||
+         !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                  &current_heat) ||
+         std::fabs(current_heat - entry.current_heat) > 0.001f))
       return false;
   }
   return true;
@@ -5268,24 +5544,23 @@ bool InventoryWeaponPreviousRolesMatch(
     void* current_data = nullptr;
     void* current_heat_object = nullptr;
     float current_heat = 0.0f;
-    bool overheated = false;
     if (entry.changed || !entry.weapon || !UnrealObjectValid(entry.weapon) ||
         PendingDestroy(entry.weapon) ||
         UnrealObjectIndex(entry.weapon) != entry.object_index ||
         !UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
                                 &current_type) ||
         !UnrealReadObjectProperty(entry.weapon, L"Data", &current_data) ||
-        !ReadRequiredObject(entry.weapon, L"WeaponHeat",
-                            &current_heat_object) ||
-        current_heat_object != entry.weapon_heat ||
-        UnrealObjectIndex(current_heat_object) != entry.weapon_heat_index ||
-        !UnrealCallFloat(entry.weapon_heat, L"GetCurrentHeat",
-                         &current_heat) ||
-        !UnrealCallBool(entry.weapon_heat, L"IsOverheated", &overheated) ||
         current_type != entry.previous_data_type ||
-        current_data != entry.previous_data ||
-        std::fabs(current_heat - entry.current_heat) > 0.001f ||
-        overheated != entry.was_overheated)
+        current_data != entry.previous_data)
+      return false;
+    if (entry.heat_state_captured &&
+        (!ReadRequiredObject(entry.weapon, L"WeaponHeat",
+                             &current_heat_object) ||
+         current_heat_object != entry.weapon_heat ||
+         UnrealObjectIndex(current_heat_object) != entry.weapon_heat_index ||
+         !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+                                  &current_heat) ||
+         std::fabs(current_heat - entry.current_heat) > 0.001f))
       return false;
   }
   return true;
@@ -5322,8 +5597,9 @@ bool WfcSwapOperations::VerifyCommittedGraph(
                TargetAiLifecycleCoherent(g_swap_journal.player_pawn))) ||
       !PriIdentityMatchesPawn(g_swap_journal.player_pri,
                               g_swap_journal.target_pawn) ||
-      !PriIdentityMatchesPawn(g_swap_journal.target_pri,
-                              g_swap_journal.player_pawn) ||
+      (g_swap_journal.target_pri &&
+       !PriIdentityMatchesPawn(g_swap_journal.target_pri,
+                               g_swap_journal.player_pawn)) ||
       g_pending_ability_release.pending)
     return false;
 
@@ -5337,9 +5613,9 @@ bool WfcSwapOperations::VerifyCommittedGraph(
           g_swap_journal.squad_records, g_swap_journal.squad_record_index,
           L"CharacterController", &record_controller) ||
       record_controller != g_swap_journal.target_controller ||
-      !SquadRecordNameMatches(g_swap_journal.target_pri,
-                              g_swap_journal.squad_records,
-                              g_swap_journal.squad_record_index) ||
+      !SquadRecordNameMatchesPawn(g_swap_journal.player_pawn,
+                                  g_swap_journal.squad_records,
+                                  g_swap_journal.squad_record_index) ||
       !ResolveLiveCharacterHash(g_swap_journal.player_controller,
                                 g_swap_journal.target_pawn, &player_hash) ||
       player_hash != request.expected_target_identity_hash ||
@@ -5439,8 +5715,9 @@ bool WfcSwapOperations::VerifyRestoredGraph(
             : TargetAiLifecycleCoherent(g_swap_journal.target_pawn)) ||
       !PriIdentityMatchesPawn(g_swap_journal.player_pri,
                               g_swap_journal.player_pawn) ||
-      !PriIdentityMatchesPawn(g_swap_journal.target_pri,
-                              g_swap_journal.target_pawn))
+      (g_swap_journal.target_pri &&
+       !PriIdentityMatchesPawn(g_swap_journal.target_pri,
+                               g_swap_journal.target_pawn)))
     return false;
   uint32_t player_hash = 0;
   uint32_t target_hash = 0;
@@ -5461,9 +5738,9 @@ bool WfcSwapOperations::VerifyRestoredGraph(
          ResolveLiveCharacterHash(g_swap_journal.target_controller,
                                   g_swap_journal.target_pawn, &target_hash) &&
          target_hash == request.expected_target_identity_hash &&
-         SquadRecordNameMatches(g_swap_journal.target_pri,
-                                g_swap_journal.squad_records,
-                                g_swap_journal.squad_record_index) &&
+         SquadRecordNameMatchesPawn(g_swap_journal.target_pawn,
+                                    g_swap_journal.squad_records,
+                                    g_swap_journal.squad_record_index) &&
          UnrealReadObjectProperty(g_swap_journal.player_controller,
                                   L"ViewTarget", &view_target) &&
          view_target == g_swap_journal.previous_view_target &&
@@ -5798,19 +6075,34 @@ void DriveCharacterSwap(ULONGLONG now) {
 }
 
 bool SwitchSquadMember(const Command& command, const Snapshot& state) {
-  if (command.squad_slot == 0 || command.squad_slot >= state.squad_count ||
-      command.squad_slot >= kSquadCapacity ||
-      !(state.capabilities & kCapSquadSwitchAction) ||
-      !state.squad[command.squad_slot].switchable ||
-      state.squad[command.squad_slot].controlled ||
-      command.expected_target_object_index !=
-          state.squad[command.squad_slot].pawn_object_index ||
-      command.expected_pawn_object_index !=
-          state.squad[command.squad_slot].pawn_object_index ||
-      command.expected_identity_hash !=
-          state.squad[command.squad_slot].identity_hash ||
-      g_squad_record_indices[command.squad_slot] < 0)
+  const auto reject = [&command](const char* reason) {
+    Log(LogLevel::kWarning,
+        "[SquadSwitch] request=%llu rejected before transaction: %s slot=%lu",
+        static_cast<unsigned long long>(command.request_id), reason,
+        static_cast<unsigned long>(command.squad_slot));
     return false;
+  };
+  if (command.squad_slot == 0 || command.squad_slot >= kSquadCapacity)
+    return reject("invalid squad slot");
+  if (command.squad_slot >= state.squad_count)
+    return reject("slot absent from synchronized snapshot");
+  if (!(state.capabilities & kCapSquadSwitchAction))
+    return reject("snapshot has no squad-switch capability");
+  if (!state.squad[command.squad_slot].switchable)
+    return reject("target is not switchable");
+  if (state.squad[command.squad_slot].controlled)
+    return reject("target is already controlled");
+  if (command.expected_target_object_index !=
+      state.squad[command.squad_slot].pawn_object_index)
+    return reject("target pawn identity changed");
+  if (command.expected_pawn_object_index !=
+      state.squad[command.squad_slot].pawn_object_index)
+    return reject("command pawn identity changed");
+  if (command.expected_identity_hash !=
+      state.squad[command.squad_slot].identity_hash)
+    return reject("target character identity changed");
+  if (g_squad_record_indices[command.squad_slot] < 0)
+    return reject("authoritative squad record unavailable");
 
   CharacterSwapRequest request;
   request.request_id = command.request_id;
@@ -5936,8 +6228,7 @@ bool CurrentInventory(void** manager_output, void** active_output) {
       PendingDestroy(manager))
     return false;
   void* active = nullptr;
-  UnrealReadObjectProperty(manager, L"CurrentWeapon", &active);
-  if (!active) UnrealReadObjectProperty(g_pawn, L"Weapon", &active);
+  if (!UnrealReadObjectProperty(g_pawn, L"Weapon", &active)) return false;
   if (!active || !UnrealObjectIsA(active, L"TnWeapon") ||
       PendingDestroy(active))
     return false;
@@ -5959,7 +6250,6 @@ bool CachedWeaponRootsMatchSnapshot(const Snapshot& state,
       roots.stored_vehicle != g_cached_stored_vehicle_weapon ||
       roots.stored_robot != g_cached_stored_robot_weapon ||
       roots.inventory_head != g_cached_inventory_head ||
-      roots.grenade != g_cached_active_grenade_root ||
       UnrealObjectIndex(roots.manager) !=
           state.inventory_manager_object_index ||
       UnrealObjectIndex(roots.active) != state.active_weapon_object_index)
@@ -6075,7 +6365,6 @@ bool CurrentCachedGrenade(const Command& command, const Snapshot& state) {
       !UnrealObjectIsA(grenade, L"TnGrenadeBag") ||
       UnrealObjectIndex(grenade) != command.expected_target_object_index)
     return false;
-  if (roots.grenade && roots.grenade != grenade) return false;
   int32_t count = -1;
   if (!UnrealReadIntProperty(grenade, L"AmmoCount", &count))
     UnrealReadIntProperty(grenade, L"ReserveAmmoCount", &count);
@@ -6315,6 +6604,197 @@ void ProcessOneQueuedCommand() {
       static_cast<unsigned long long>(command.world_epoch));
 }
 
+struct GameWindowCandidate {
+  HWND window = nullptr;
+  unsigned long long client_area = 0;
+};
+
+BOOL CALLBACK FindPrimaryGameWindow(HWND window, LPARAM context_value) {
+  if (!context_value || !IsWindowVisible(window)) return TRUE;
+  DWORD process_id = 0;
+  GetWindowThreadProcessId(window, &process_id);
+  if (process_id != GetCurrentProcessId()) return TRUE;
+
+  wchar_t class_name[128] = {};
+  GetClassNameW(window, class_name,
+                static_cast<int>(sizeof(class_name) / sizeof(class_name[0])));
+  if (lstrcmpiW(class_name, L"TransformersWfcSecondScreenPanel") == 0)
+    return TRUE;
+  if ((GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0)
+    return TRUE;
+
+  RECT client = {};
+  if (!GetClientRect(window, &client)) return TRUE;
+  const int width = client.right - client.left;
+  const int height = client.bottom - client.top;
+  if (width <= 0 || height <= 0) return TRUE;
+
+  auto* candidate = reinterpret_cast<GameWindowCandidate*>(context_value);
+  const unsigned long long area =
+      static_cast<unsigned long long>(width) *
+      static_cast<unsigned long long>(height);
+  if (area > candidate->client_area) {
+    candidate->window = window;
+    candidate->client_area = area;
+  }
+  return TRUE;
+}
+
+HWND ResolvePrimaryGameWindow() {
+  if (g_display_game_window && IsWindow(g_display_game_window))
+    return g_display_game_window;
+  GameWindowCandidate candidate;
+  EnumWindows(&FindPrimaryGameWindow,
+              reinterpret_cast<LPARAM>(&candidate));
+  g_display_game_window = candidate.window;
+  return candidate.window;
+}
+
+bool WindowIsOwnedBy(HWND root, HWND value) {
+  return root && value &&
+         (value == root || GetAncestor(value, GA_ROOT) == root);
+}
+
+bool ActivatePrimaryGameWindow(HWND window, const char* phase) {
+  if (!window || !IsWindow(window)) return false;
+  const DWORD owner_thread = GetWindowThreadProcessId(window, nullptr);
+  const DWORD caller_thread = GetCurrentThreadId();
+  ShowWindow(window, SW_SHOW);
+  const BOOL raised = BringWindowToTop(window);
+  const BOOL foreground_requested = SetForegroundWindow(window);
+  SetActiveWindow(window);
+  SetFocus(window);
+  const HWND foreground = GetForegroundWindow();
+  const HWND active = GetActiveWindow();
+  const HWND focused = GetFocus();
+  const bool verified = WindowIsOwnedBy(window, foreground) &&
+                        WindowIsOwnedBy(window, active) &&
+                        WindowIsOwnedBy(window, focused);
+  Log(verified ? LogLevel::kInfo : LogLevel::kWarning,
+      "[Display] game focus phase=%s hwnd=%p ownerTid=%lu callerTid=%lu raised=%u foregroundRequest=%u foreground=%p active=%p focused=%p verified=%u",
+      phase ? phase : "unknown", window,
+      static_cast<unsigned long>(owner_thread),
+      static_cast<unsigned long>(caller_thread), raised ? 1u : 0u,
+      foreground_requested ? 1u : 0u, foreground, active, focused,
+      verified ? 1u : 0u);
+  return verified;
+}
+
+// Returns true only when this call changed the real game HWND. The caller then
+// yields the rest of this tick so UE3 can process WM_WINDOWPOSCHANGED/WM_SIZE
+// and recreate its D3D9 viewport without sharing the frame with reflection.
+bool EnsureNativeUpperViewport(ULONGLONG now) {
+  if (!g_display_retry_at) {
+    g_display_retry_at = now + kDisplayStartupDelayMs;
+    return false;
+  }
+  if (now < g_display_retry_at) return false;
+  g_display_retry_at = now + kDisplayRetryMs;
+
+  HWND window = ResolvePrimaryGameWindow();
+  if (!window) return false;
+
+  RECT client = {};
+  RECT outer = {};
+  if (!GetClientRect(window, &client) || !GetWindowRect(window, &outer)) {
+    g_display_game_window = nullptr;
+    g_display_resolution_applied = false;
+    return false;
+  }
+  const int width = client.right - client.left;
+  const int height = client.bottom - client.top;
+  const bool correct = width == kUpperViewportWidth &&
+                       height == kUpperViewportHeight && outer.left == 0 &&
+                       outer.top == 0;
+  if (correct) {
+    if (!g_display_resolution_applied) {
+      Log(LogLevel::kInfo,
+          "[Display] real Win32 upper client verified hwnd=%p position=0,0 size=%dx%d",
+          window, width, height);
+    }
+    g_display_resolution_applied = true;
+    if (!g_display_focus_applied &&
+        (!g_display_focus_confirm_at || now >= g_display_focus_confirm_at)) {
+      g_display_focus_applied =
+          ActivatePrimaryGameWindow(window, "stable-native-client");
+      if (!g_display_focus_applied) {
+        g_display_focus_confirm_at = now + 500;
+        g_display_retry_at = g_display_focus_confirm_at;
+      } else {
+        g_display_focus_confirm_at = 0;
+      }
+    }
+    return false;
+  }
+  g_display_resolution_applied = false;
+  g_display_focus_applied = false;
+
+  const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+  const LONG_PTR border_bits = WS_CAPTION | WS_THICKFRAME | WS_BORDER |
+                               WS_DLGFRAME | WS_SYSMENU | WS_MINIMIZEBOX |
+                               WS_MAXIMIZEBOX;
+  const LONG_PTR borderless =
+      (style & ~border_bits) | WS_POPUP | WS_VISIBLE;
+  if (borderless != style) {
+    SetLastError(ERROR_SUCCESS);
+    const LONG_PTR previous =
+        SetWindowLongPtrW(window, GWL_STYLE, borderless);
+    if (!previous && GetLastError() != ERROR_SUCCESS) {
+      Log(LogLevel::kWarning,
+          "[Display] could not make WFC's game window borderless error=%lu",
+          static_cast<unsigned long>(GetLastError()));
+      return false;
+    }
+  }
+
+  // This is the same WEMU compatibility path used for PC games which create a
+  // bordered 640x480 fallback inside a 1280x720 virtual desktop. Resizing the
+  // HWND (not the Android surface) sends UE3 WM_SIZE, making the game recreate
+  // its own D3D client at the requested resolution. Keep the resize itself
+  // non-activating; once geometry is committed below, activate the authoritative
+  // game HWND explicitly instead of allowing Wine's remap to leave focus on its
+  // root window or on the native lower panel.
+  if (!SetWindowPos(window, nullptr, 0, 0, kUpperViewportWidth,
+                    kUpperViewportHeight,
+                    SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE |
+                        SWP_FRAMECHANGED)) {
+    Log(LogLevel::kWarning,
+        "[Display] Win32 upper-client resize failed hwnd=%p error=%lu",
+        window, static_cast<unsigned long>(GetLastError()));
+    return false;
+  }
+
+  RECT verified_client = {};
+  RECT verified_outer = {};
+  const bool verified = GetClientRect(window, &verified_client) &&
+                        GetWindowRect(window, &verified_outer) &&
+                        verified_client.right - verified_client.left ==
+                            kUpperViewportWidth &&
+                        verified_client.bottom - verified_client.top ==
+                            kUpperViewportHeight &&
+                        verified_outer.left == 0 && verified_outer.top == 0;
+  wchar_t class_name[128] = {};
+  GetClassNameW(window, class_name,
+                static_cast<int>(sizeof(class_name) / sizeof(class_name[0])));
+  Log(verified ? LogLevel::kInfo : LogLevel::kWarning,
+      "[Display] real Win32 upper client corrected hwnd=%p class=%ls before=%d,%d %dx%d after=%ld,%ld %ldx%ld verified=%u",
+      window, class_name, outer.left, outer.top, width, height,
+      static_cast<long>(verified_outer.left),
+      static_cast<long>(verified_outer.top),
+      static_cast<long>(verified_client.right - verified_client.left),
+      static_cast<long>(verified_client.bottom - verified_client.top),
+      verified ? 1u : 0u);
+  g_display_resolution_applied = verified;
+  ActivatePrimaryGameWindow(window, "native-client-resized");
+  // Wine publishes the resized GPU-backed X client just after SetWindowPos
+  // returns. Confirm focus again on a later game tick so that late remap cannot
+  // undo this activation and force the user to click the screen manually.
+  g_display_focus_applied = false;
+  g_display_focus_confirm_at = now + 500;
+  g_display_retry_at = g_display_focus_confirm_at;
+  return true;
+}
+
 void GameThreadPulse(DWORD tick_thread) {
   DWORD game_thread = g_game_thread.load(std::memory_order_relaxed);
   if (!game_thread) {
@@ -6332,14 +6812,17 @@ void GameThreadPulse(DWORD tick_thread) {
   // even though telemetry was only published once per second. VirtualQuery is
   // particularly costly under Wine/Box64 and was the source of the constant
   // frame-time tax seen only with this mod enabled.
+  const bool display_due = !g_display_retry_at || now >= g_display_retry_at;
   const bool resolver_due = now >= g_resolve_retry_at;
   const bool snapshot_due =
       g_snapshot_build.phase != SnapshotBuildPhase::kIdle
           ? now >= g_snapshot_build.next_slice_at
           : now - g_last_publish >= kPublishIntervalMs;
-  if (!resolver_due && !snapshot_due) return;
+  if (!display_due && !resolver_due && !snapshot_due) return;
   if (SwapWorldMutationActive()) return;
   g_last_pulse = now;
+  if (display_due && EnsureNativeUpperViewport(now)) return;
+  if (!resolver_due && !snapshot_due) return;
   // A staged snapshot yields to the native engine between slices, so cached
   // regions must age out while GC and streaming own the game thread. Retire a
   // bounded portion on every due slice; UnrealBridge lazily revalidates those
@@ -6397,6 +6880,18 @@ void __attribute__((fastcall)) HookedTick(void* self, void*, float delta) {
     const DWORD game_thread =
         g_game_thread.load(std::memory_order_relaxed);
     if (game_thread && tick_thread == game_thread) {
+      bool class_system_did_work = false;
+      if (!TickCampaignClassSystem(self, tick_thread, GetTickCount64(),
+                                   &class_system_did_work)) {
+        Log(LogLevel::kError,
+            "[CampaignClass] native campaign selection system failed closed");
+      }
+      if (class_system_did_work) bridge_work_before_tick = true;
+      if (CampaignClassSelectionActive()) {
+        SetCommandAcceptance(false);
+        DiscardAllCommands();
+        bridge_work_before_tick = true;
+      }
       if (DeferredCheckpointFailedClosed()) {
         SetCommandAcceptance(false);
         DiscardAllCommands();
@@ -6698,6 +7193,9 @@ void ShutdownGameBridge() {
   if (!ShutdownCharacterRoleAdapter())
     Log(LogLevel::kWarning,
         "[Lifecycle] one or more character-role executor detours could not be restored");
+  if (!ShutdownCampaignClassSystem())
+    Log(LogLevel::kWarning,
+        "[Lifecycle] one or more campaign class-system executor detours could not be restored");
   ShutdownUnrealBridge();
   g_tick_slot = nullptr;
   g_original_tick = nullptr;
@@ -6723,6 +7221,11 @@ void ShutdownGameBridge() {
   g_last_objective_discovery = 0;
   g_last_squad_discovery = 0;
   g_resolve_retry_at = 0;
+  g_display_retry_at = 0;
+  g_display_focus_confirm_at = 0;
+  g_display_resolution_applied = false;
+  g_display_focus_applied = false;
+  g_display_game_window = nullptr;
   g_world_ready_since = 0;
   g_last_resolve_diagnostic = 0;
   g_last_slow_pulse_log = 0;

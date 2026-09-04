@@ -80,4 +80,32 @@ public class NativePanelIdentityTest {
         assertFalse(NativePanelIdentity.isTransformersWfc(
                 "TWFC", "Transformers: War for Cybertron"));
     }
+
+    @Test
+    public void transformersExecutableFallbackRequiresExactLowerMonitorSize() {
+        assertTrue(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                "twfc.exe", 1240, 1080, 1240, 1080));
+        assertTrue(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                "  TWFC.EXE  ", 1240, 1080, 1240, 1080));
+        assertFalse(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                "twfc.exe", 640, 480, 1240, 1080));
+        assertFalse(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                "explorer.exe", 1240, 1080, 1240, 1080));
+        assertFalse(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                "twfc.exe", 0, 0, 0, 0));
+    }
+
+    @Test
+    public void isaacPanelUsesExactPrivateIdentityAndEarlyClaim() {
+        assertTrue(NativePanelIdentity.isIsaac(
+                "IsaacSecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isIsaac(
+                "", "The Binding of Isaac: Repentance+ Dual-Screen"));
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel(
+                "IsaacSecondScreenPanel", ""));
+        assertFalse(NativePanelIdentity.isIsaac(
+                "IsaacSecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isIsaac(
+                "isaac-ng", "The Binding of Isaac: Repentance+"));
+    }
 }

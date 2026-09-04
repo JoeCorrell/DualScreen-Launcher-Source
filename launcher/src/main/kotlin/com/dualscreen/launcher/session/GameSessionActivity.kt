@@ -34,6 +34,7 @@ import com.dualscreen.launcher.PresetContainerManager
 import com.dualscreen.launcher.SupportedGame
 import com.dualscreen.launcher.SkyrimGamepadConfiguration
 import com.dualscreen.launcher.WfcPrerequisiteConfiguration
+import com.dualscreen.launcher.WfcDisplayConfiguration
 import com.dualscreen.launcher.access.AccessState
 import com.dualscreen.launcher.resolveConfigurationLauncherExecutable
 import com.dualscreen.launcher.supportedGameLaunchEnvironment
@@ -89,6 +90,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     @Volatile private var keyboardTargetScore = Int.MIN_VALUE
     @Volatile private var keyboardTargetIdentity = ""
     private val keyboardFocusLogged = AtomicBoolean(false)
+    private val gameInputFocusEstablished = AtomicBoolean(false)
+    private val wfcPanelWindowSeen = AtomicBoolean(false)
+    private val wfcPanelFocusCheckScheduled = AtomicBoolean(false)
+    private val wfcPostPanelFocusScheduled = AtomicBoolean(false)
+    private val wfcNativeViewportFocusScheduled = AtomicBoolean(false)
     private val cursorShown = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val gameWindowVisible = AtomicBoolean(false)
@@ -225,7 +231,19 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             directShortcut
         }
 
-        val selectedResolution = app.settings.settings.value.resolution
+        val requestedResolution = app.settings.settings.value.resolution
+        // WFC's upper viewport and the dual-monitor geometry are an exact
+        // compatibility contract: the game renders a native 1280x720 client
+        // while the companion owns the separate 1240x1080 lower monitor.
+        // Letting the global launcher preference change this value recreates
+        // the off-screen/stretched window regression and makes the panel's
+        // fallback origin incorrect. Keep this override local to WFC; every
+        // other game continues to use the user's selected resolution.
+        val selectedResolution = if (game.id == "transformers-wfc") {
+            GameResolution.HD
+        } else {
+            requestedResolution
+        }
         val resolutionChanged = withContext(Dispatchers.IO) {
             if (container.screenSize == selectedResolution.containerValue) {
                 false
@@ -240,6 +258,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             "DISPLAY",
             "fullscreen=${if (game.id == "stardew-valley") "exclusive" else "borderless"} " +
                 "resolution=${selectedResolution.containerValue} " +
+                (if (selectedResolution != requestedResolution) {
+                    "requested=${requestedResolution.containerValue} compatibilityOverride=true "
+                } else {
+                    ""
+                }) +
                 "containerChanged=$resolutionChanged dpi=${container.dpi}",
         )
 
@@ -388,6 +411,31 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             )
         }
 
+        if (!configurationLauncher && game.id == "transformers-wfc") {
+            val display = withContext(Dispatchers.IO) {
+                runCatching {
+                    WfcDisplayConfiguration.ensure(container.rootDir, selectedResolution)
+                }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not prepare WFC's upper-screen viewport", failure)
+                finishWithMessage("Transformers display setup failed: ${failure.message}")
+                return
+            }
+            val launchArguments = WfcDisplayConfiguration.launchArguments(selectedResolution)
+            if (shortcut.getExtra("execArgs") != launchArguments) {
+                shortcut.putExtra("execArgs", launchArguments)
+                shortcut.saveData()
+            }
+            launchStatus.record(
+                "DISPLAY",
+                "WFC upper-screen profile verified at ${selectedResolution.containerValue}; " +
+                    "mode=windowed native=${display.nativeResolution} " +
+                    "registry=${display.userRegistry.absolutePath} " +
+                    "profile=${display.profile.absolutePath} changed=${display.changed} " +
+                    "args=$launchArguments",
+            )
+        }
+
         withContext(Dispatchers.IO) {
             DualscreenStorage().exposeConfigurationFiles(container, game)
         }
@@ -395,11 +443,28 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         // Migrate shortcuts created by earlier launcher builds as well as new
         // installs. This keeps Wine's optional first-boot add-on dialogs from
         // blocking invisibly in front of the game.
-        val launchEnvironment = supportedGameLaunchEnvironment()
+        val launchEnvironment = supportedGameLaunchEnvironment(game.id)
         if (shortcut.getExtra("envVars") != launchEnvironment) {
             shortcut.putExtra("envVars", launchEnvironment)
             shortcut.saveData()
             launchStatus.record("SHORTCUT", "Migrated launch-only DLL overrides: $launchEnvironment")
+        }
+
+        // Isaac enumerates both Wine's DirectInput HID view and its XInput view
+        // when the generic pad is not explicitly hidden. That assigns one
+        // physical controller two IDs and makes menu/gameplay bindings jump
+        // between them. Keep only the XInput identity for this title.
+        if (game.exclusiveXInput &&
+            (shortcut.getExtra("inputType") != "4" ||
+                shortcut.getExtra("exclusiveXInput") != "1")
+        ) {
+            shortcut.putExtra("inputType", "4")
+            shortcut.putExtra("exclusiveXInput", "1")
+            shortcut.saveData()
+            launchStatus.record(
+                "INPUT",
+                "Exclusive XInput enabled; duplicate DirectInput controller suppressed",
+            )
         }
 
         val wfcPrerequisites = if (!configurationLauncher && game.id == "transformers-wfc") {
@@ -660,6 +725,81 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         game: SupportedGame,
         configurationLauncher: Boolean,
     ) {
+        fun restoreWfcFocusAfterPanelMapping() {
+            if (game.id != "transformers-wfc" ||
+                !gameWindowVisible.get() ||
+                !wfcPanelWindowSeen.get() ||
+                !wfcPostPanelFocusScheduled.compareAndSet(false, true)
+            ) return
+            // The lower-panel HWND is deliberately non-activating, but Wine can
+            // still leave its Win32 foreground bookkeeping on the newly mapped
+            // window. WFC then ignores an already-connected XInput controller
+            // until the player clicks the upper window. Restore the same proven
+            // game-window focus handoff once, after the panel has settled.
+            listOf(400L to "panel", 5_200L to "final-game-client").forEach { (delay, phase) ->
+                mainHandler.postDelayed({
+                    if (!isFinishing) {
+                        focusGameWindowForKeyboard(xServer)
+                        launchStatus.record(
+                            "INPUT",
+                            "WFC game focus restored after $phase mapping",
+                        )
+                    }
+                }, delay)
+            }
+        }
+
+        fun discoverWfcPanelAfterRendererClaim() {
+            if (game.id != "transformers-wfc" ||
+                wfcPostPanelFocusScheduled.get() ||
+                !wfcPanelFocusCheckScheduled.compareAndSet(false, true)
+            ) return
+            // The renderer may classify the native panel after this activity's
+            // window-content listener has already seen the same frame. Check
+            // the published claim just after dispatch instead of depending on
+            // listener registration order.
+            mainHandler.postDelayed({
+                wfcPanelFocusCheckScheduled.set(false)
+                if (SecondScreenOutput.isTransformersWfcPanelActive()) {
+                    wfcPanelWindowSeen.set(true)
+                    restoreWfcFocusAfterPanelMapping()
+                }
+            }, 100L)
+        }
+
+        fun focusWfcAfterNativeViewportResize(window: Window, resized: Boolean) {
+            if (game.id != "transformers-wfc" || !resized ||
+                window.width.toInt() != 1280 || window.height.toInt() != 720 ||
+                !window.attributes.isMapped || !window.attributes.isEnabled ||
+                SecondScreenOutput.isEarlyClaimPanelWindow(window)
+            ) return
+            val identity = "${window.name} ${window.className}".lowercase(Locale.ROOT)
+            if (!matchesDirectExecutableWindow(identity, game) ||
+                !wfcNativeViewportFocusScheduled.compareAndSet(false, true)
+            ) return
+
+            // The mod's borderless correction causes Wine to publish a new
+            // 1280x720 GPU-backed client after the old 640x480 window has
+            // already received our startup focus handoff. That late geometry
+            // transition is the authoritative point at which to focus WFC.
+            // Use this exact window as the target, then let one X dispatch
+            // cycle finish before pairing X11 focus with Win32 activation.
+            keyboardTargetWindow = window
+            keyboardTargetScore = 110
+            keyboardTargetIdentity = identity
+            keyboardFocusLogged.set(false)
+            mainHandler.postDelayed({
+                if (!isFinishing) {
+                    val focused = focusGameWindowForKeyboard(xServer)
+                    launchStatus.record(
+                        "INPUT",
+                        "WFC native 1280x720 client focus handoff completed " +
+                            "window=${window.id} x11Verified=$focused",
+                    )
+                }
+            }, 150L)
+        }
+
         fun observe(window: Window) {
             if (!window.attributes.isMapped) return
             // Native lower-panel titles deliberately include the game name, so
@@ -667,7 +807,13 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             // matches the mod window. That window proves the mod initialized,
             // not that the playable upper window exists. Keep the launch cover
             // up until a non-panel game window is actually mapped.
-            if (SecondScreenOutput.isEarlyClaimPanelWindow(window)) return
+            if (SecondScreenOutput.isEarlyClaimPanelWindow(window)) {
+                if (game.id == "transformers-wfc") {
+                    wfcPanelWindowSeen.set(true)
+                    restoreWfcFocusAfterPanelMapping()
+                }
+                return
+            }
             val identity = "${window.name} ${window.className}".lowercase(Locale.ROOT)
             if (!matchesSessionWindow(identity, game, configurationLauncher)) return
 
@@ -677,12 +823,19 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             // after SkyrimSE.exe appeared. Prefer an exact direct-play executable
             // identity, but keep the launcher as a temporary target so its text
             // fields remain usable too.
-            val directExecutableMatch = game.executableCandidates.any { candidate ->
-                identity.contains(candidate.lowercase(Locale.ROOT))
-            }
+            val directExecutableMatch = matchesDirectExecutableWindow(identity, game)
             val applicationBonus = if (window.isApplicationWindow) 10 else 0
             val targetScore = (if (directExecutableMatch) 100 else 20) + applicationBonus
-            if (targetScore > keyboardTargetScore) {
+            // Keep the first direct game target until it is unmapped. WFC's
+            // native lower panel initially inherits the process WM_CLASS
+            // (twfc.exe) before its private class/title properties settle. An
+            // equal-score "newer window" replacement therefore promoted the
+            // panel over the already-correct game window and every later focus
+            // handoff explicitly focused the lower UI instead of gameplay.
+            if (targetScore > keyboardTargetScore ||
+                (targetScore == keyboardTargetScore &&
+                    keyboardTargetWindow?.attributes?.isMapped != true)
+            ) {
                 keyboardTargetWindow = window
                 keyboardTargetScore = targetScore
                 keyboardTargetIdentity = identity
@@ -693,17 +846,38 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                         "directExecutable=$directExecutableMatch window=${window.id}",
                 )
             }
+            if (game.id == "transformers-wfc" && directExecutableMatch &&
+                gameInputFocusEstablished.compareAndSet(false, true)
+            ) {
+                // WFC creates its D3D client without reliably promoting it from
+                // Wine's explorer desktop. WEMU fixes the same condition by
+                // focusing the recognised top-level game window once. Without
+                // this handoff XInput is already connected, but WFC ignores it
+                // until the player clicks the upper window manually.
+                focusGameWindowForKeyboard(xServer)
+                launchStatus.record(
+                    "INPUT",
+                    "WFC game window received initial X11/Win32 foreground handoff",
+                )
+            }
             if (gameWindowVisible.compareAndSet(false, true)) {
                 runOnUiThread {
                     stopGuestOutputCapture()
                     launchStatus.ready("Game window matched: $identity")
-                    loading.animate()
-                        .alpha(0f)
-                        .setDuration(220)
-                        .withEndAction { loading.visibility = View.GONE }
-                        .start()
+                    // The launch cover is correctness state, not decoration.
+                    // A ViewPropertyAnimator needs a later Choreographer frame
+                    // to run its end action; while Wine is mapping its first
+                    // burst of windows that frame can be delayed long enough
+                    // to leave an already-running game hidden until an app
+                    // switch forces a redraw. Remove it atomically as soon as
+                    // the playable window is authoritative.
+                    loading.animate().cancel()
+                    loading.alpha = 0f
+                    loading.visibility = View.GONE
+                    root.invalidate()
                 }
             }
+            restoreWfcFocusAfterPanelMapping()
         }
 
         windowListener = object : WindowManager.OnWindowModificationListener {
@@ -721,6 +895,11 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     launchStatus.record("INPUT", "Guest cursor enabled after first window draw")
                 }
                 observe(window)
+                discoverWfcPanelAfterRendererClaim()
+            }
+            override fun onUpdateWindowGeometry(window: Window, resized: Boolean) {
+                observe(window)
+                focusWfcAfterNativeViewportResize(window, resized)
             }
             override fun onModifyWindowProperty(window: Window, property: com.wemu.engine.xserver.Property) =
                 observe(window)
@@ -734,30 +913,36 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
      * the last Wine foreground window even though the player is typing into a
      * Scaleform field on the top screen.
      */
-    private fun focusGameWindowForKeyboard(xServer: XServer) {
-        val target = keyboardTargetWindow
+    private fun focusGameWindowForKeyboard(xServer: XServer): Boolean {
+        var target = keyboardTargetWindow
             ?.takeIf { it.attributes.isMapped && it.attributes.isEnabled }
-            ?: return
+            ?: return false
+        val rootWindow = xServer.windowManager.rootWindow
+        while (target.parent != null && target.parent !== rootWindow) {
+            target = target.parent
+        }
         var changed = false
         xServer.lock(
             XServer.Lockable.WINDOW_MANAGER,
             XServer.Lockable.INPUT_DEVICE,
         ).use {
-            if (xServer.windowManager.focusedWindow !== target) {
-                xServer.windowManager.setFocus(
-                    target,
-                    if (target.parent === xServer.windowManager.rootWindow) {
-                        WindowManager.FocusRevertTo.POINTER_ROOT
-                    } else {
-                        WindowManager.FocusRevertTo.PARENT
-                    },
-                )
-                changed = true
-            }
+            changed = xServer.windowManager.focusedWindow !== target
+            // Always refresh the X focus even when the cached WindowManager
+            // value already points at the target. Wine's Win32 foreground
+            // state can diverge after a non-activating companion HWND maps.
+            xServer.windowManager.setFocus(
+                target,
+                if (target.parent === rootWindow) {
+                    WindowManager.FocusRevertTo.POINTER_ROOT
+                } else {
+                    WindowManager.FocusRevertTo.PARENT
+                },
+            )
         }
-        if (changed) {
-            xServer.winHandler.bringToFront(target.className, target.handle)
-        }
+        // Keep this paired with X11 focus. WEMU's working controller path does
+        // both; conditioning this call on the X focus comparison caused WFC to
+        // require a mouse click before it accepted controller input.
+        xServer.winHandler.bringToFront(target.className, target.handle)
         if (keyboardFocusLogged.compareAndSet(false, true)) {
             launchStatus.record(
                 "INPUT",
@@ -765,6 +950,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     "window=${target.id} win32Handle=${target.handle} changed=$changed",
             )
         }
+        return xServer.windowManager.focusedWindow === target
     }
 
     private fun loadShortcut(container: Container, path: String): Shortcut? = runCatching {
@@ -805,7 +991,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             },
         )
         Shortcut(container, shortcutFile).also { launcherShortcut ->
-            launcherShortcut.putExtra("envVars", supportedGameLaunchEnvironment())
+            launcherShortcut.putExtra("envVars", supportedGameLaunchEnvironment(game.id))
             // A vendor launcher starts as a CPU/GDI window and may replace that
             // same X window with the game's DRI3/AHardwareBuffer swapchain when
             // PLAY is pressed. SurfaceFlinger cannot draw the initial GDI
@@ -907,7 +1093,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         // Setting the id to null disposes PresentationHost and its SurfaceView.
         // The guest can remain alive; onStart attaches a fresh lower Surface.
         secondaryDisplayId = null
-        SecondScreenOutput.detach()
+        SecondScreenOutput.requestDetach()
         super.onStop()
     }
 
@@ -1187,7 +1373,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         runtimeControls = null
         runtimeLog.stop()
         SecondScreen.shutdown()
-        SecondScreenOutput.detach()
+        SecondScreenOutput.requestDetach()
         if (retiredRuntime != null || retiredView != null) {
             Thread({
                 runCatching { retiredRuntime?.stop() }
@@ -1282,6 +1468,23 @@ internal fun matchesSessionWindow(
             .filter(Char::isLetterOrDigit)
         loweredIdentity.contains(loweredCandidate) ||
             (normalizedCandidate.isNotEmpty() && normalizedIdentity.contains(normalizedCandidate))
+    }
+}
+
+/** Matches Wine's WM_CLASS executable name against a catalog path. */
+internal fun matchesDirectExecutableWindow(identity: String, game: SupportedGame): Boolean {
+    val loweredIdentity = identity.lowercase(Locale.ROOT)
+    val normalizedIdentity = loweredIdentity.filter(Char::isLetterOrDigit)
+    return game.executableCandidates.any { candidate ->
+        val executableName = candidate
+            .replace('\\', '/')
+            .substringAfterLast('/')
+            .lowercase(Locale.ROOT)
+        val normalizedExecutable = executableName
+            .removeSuffix(".exe")
+            .filter(Char::isLetterOrDigit)
+        loweredIdentity.contains(executableName) ||
+            (normalizedExecutable.isNotEmpty() && normalizedIdentity.contains(normalizedExecutable))
     }
 }
 

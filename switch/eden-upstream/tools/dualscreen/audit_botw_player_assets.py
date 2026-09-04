@@ -26,13 +26,54 @@ def expected_bone(actor: str) -> str:
     return "Armature_Weapon_R"
 
 
+def read_glb_document(path: Path) -> dict[str, object]:
+    data = path.read_bytes()
+    if len(data) < 20:
+        raise ValueError("shorter than a GLB JSON header")
+    magic, version, total_length = struct.unpack_from("<4sII", data)
+    json_length, json_type = struct.unpack_from("<II", data, 12)
+    if magic != b"glTF" or version != 2 or total_length != len(data):
+        raise ValueError("invalid GLB header")
+    if json_type != 0x4E4F534A or 20 + json_length > len(data):
+        raise ValueError("invalid GLB JSON chunk")
+    return json.loads(data[20 : 20 + json_length].decode("utf-8").rstrip(" \0"))
+
+
+def validate_player_body(path: Path) -> list[str]:
+    failures: list[str] = []
+    try:
+        document = read_glb_document(path)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        return [str(error)]
+    if not document.get("meshes"):
+        failures.append("contains no meshes")
+    if not document.get("skins"):
+        failures.append("contains no skins")
+    pose = document.get("extras", {}).get("botwPose", {})
+    if (
+        pose.get("animation") != "Nml_Wait"
+        or int(pose.get("changedAnimatedNodes", 0)) <= 0
+    ):
+        failures.append("has no validated baked Nml_Wait pose")
+    for image in document.get("images", []):
+        if "bufferView" not in image or image.get("mimeType") != "image/png":
+            failures.append("contains a non-embedded or non-PNG texture")
+            break
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--index", type=Path, required=True)
     parser.add_argument("--item-text-table", type=Path, required=True)
+    parser.add_argument(
+        "--asset-root",
+        type=Path,
+        help="GLB directory; defaults to the directory containing --index",
+    )
     args = parser.parse_args()
 
-    root = args.index.parent
+    root = args.asset_root or args.index.parent
     index = json.loads(args.index.read_text(encoding="utf-8"))
     table = args.item_text_table.read_text(encoding="utf-8")
     expected = {
@@ -48,6 +89,7 @@ def main() -> int:
         failures.append(f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}")
 
     referenced_files: set[str] = set()
+    validated_files: set[str] = set()
     for actor, value in index["actors"].items():
         if isinstance(value, str):
             file_name = value
@@ -73,6 +115,15 @@ def main() -> int:
         magic, version, total_length = struct.unpack("<4sII", data)
         if magic != b"glTF" or version != 2 or total_length != path.stat().st_size:
             failures.append(f"{file_name} has an invalid GLB header")
+            continue
+        if (
+            file_name not in validated_files
+            and (file_name == "Link.glb" or file_name.startswith("Armor_"))
+        ):
+            validated_files.add(file_name)
+            failures.extend(
+                f"{file_name} {failure}" for failure in validate_player_body(path)
+            )
 
     result = {
         "actorMappings": len(index["actors"]),

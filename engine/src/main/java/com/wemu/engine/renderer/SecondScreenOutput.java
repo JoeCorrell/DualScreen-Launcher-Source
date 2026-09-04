@@ -16,6 +16,7 @@ import java.net.InetAddress;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The Thor's bottom panel, as somewhere a guest window can be put.
@@ -53,6 +54,15 @@ public final class SecondScreenOutput {
                 thread.setDaemon(true);
                 return thread;
             });
+    /** Surface attach/detach can enter SurfaceFlinger and must never block Android's UI thread. */
+    private static final ExecutorService OUTPUT_LIFECYCLE =
+            Executors.newSingleThreadExecutor(runnable -> {
+                Thread thread = new Thread(runnable, "SecondScreenOutputLifecycle");
+                thread.setDaemon(true);
+                return thread;
+            });
+    /** Invalidates an older queued attach before it can publish stale state. */
+    private static final AtomicLong OUTPUT_REQUEST = new AtomicLong();
 
     static { System.loadLibrary("asurface_renderer"); }
 
@@ -214,6 +224,11 @@ public final class SecondScreenOutput {
         return NativePanelIdentity.isTransformersWfc(className, title);
     }
 
+    /** Recognizes Repentance+'s in-process native lower-screen patch window. */
+    public static boolean isIsaacPanelWindow(String className, String title) {
+        return NativePanelIdentity.isIsaac(className, title);
+    }
+
     /** Native panels which are lower-only even at transient primary coordinates. */
     public static boolean isEarlyClaimPanelWindow(String className, String title) {
         return NativePanelIdentity.isEarlyClaimPanel(className, title);
@@ -253,12 +268,19 @@ public final class SecondScreenOutput {
         return showing && (isFalloutPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isGrimDawnPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isTransformersWfcPanelWindow(guestWindowClassName, guestWindowTitle)
+                || isIsaacPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle));
     }
 
     /** Whether Stardew Valley's embedded lower-panel window is visible. */
     public static boolean isStardewValleyPanelActive() {
         return showing && isStardewValleyPanelWindow(
+                guestWindowClassName, guestWindowTitle);
+    }
+
+    /** Whether Transformers WFC's native companion panel owns the lower display. */
+    public static boolean isTransformersWfcPanelActive() {
+        return showing && isTransformersWfcPanelWindow(
                 guestWindowClassName, guestWindowTitle);
     }
 
@@ -424,6 +446,53 @@ public final class SecondScreenOutput {
         // this notification cannot publish a stale false value.
         if (claimChanged) notifyState();
         return ready;
+    }
+
+    /**
+     * UI-safe ordered attachment for Presentation/SurfaceView lifecycle callbacks.
+     *
+     * ASurfaceControl teardown may wait behind an in-flight guest-buffer
+     * transaction. Android delivers {@code surfaceChanged}/{@code
+     * surfaceDestroyed} on the activity's main looper, where waiting for that
+     * native lock turns a harmless output transition into an application ANR.
+     * Keep native lifecycle work on one ordered worker; guest frames simply
+     * drop while {@link #attached} is false and resume after the new surface is
+     * ready.
+     */
+    public static void requestAttach(Surface surface, int panelWidth, int panelHeight) {
+        if (surface == null || panelWidth <= 0 || panelHeight <= 0) return;
+        final long request = OUTPUT_REQUEST.incrementAndGet();
+        final boolean claimChanged = showing;
+        attached = false;
+        showing = false;
+        if (claimChanged) notifyState();
+
+        OUTPUT_LIFECYCLE.execute(() -> {
+            final boolean ready = surface.isValid()
+                    && nativeAttach(surface, panelWidth, panelHeight);
+            if (OUTPUT_REQUEST.get() != request) return;
+            attached = ready;
+            if (ready) {
+                ProcessHelper.emitDiagnostic("Second screen output ready: "
+                        + panelWidth + "x" + panelHeight);
+            } else {
+                Log.w(TAG, "Second screen output unavailable; lower guest windows wait for its surface");
+            }
+        });
+    }
+
+    /** UI-safe ordered counterpart to {@link #requestAttach}. */
+    public static void requestDetach() {
+        OUTPUT_REQUEST.incrementAndGet();
+        final boolean wasShowing = showing;
+        attached = false;
+        showing = false;
+        guestWindowId = -1;
+        guestWindowClassName = "";
+        guestWindowTitle = "";
+        guestWindowIdentity = "";
+        if (wasShowing) notifyState();
+        OUTPUT_LIFECYCLE.execute(SecondScreenOutput::nativeDetach);
     }
 
     public static void detach() {

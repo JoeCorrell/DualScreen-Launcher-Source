@@ -234,7 +234,7 @@ final class SharedBox64RuntimeState {
                     WOWBOX64_0_4_2_SHA256,
                     false,
                     false,
-                    true);
+                    false);
         }
 
         if (!isEmpty(pinnedRuntime)) {

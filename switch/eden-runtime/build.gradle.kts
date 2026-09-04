@@ -1,3 +1,6 @@
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
@@ -98,17 +101,97 @@ val verifyBotwBasePlayerAssets by tasks.registering {
     val dualScreenAssets = layout.projectDirectory.dir(
         "../eden-upstream/src/android/app/src/dualscreen/assets"
     )
+    val playerIndex = dualScreenAssets.file("botw/player/index.json")
+    inputs.file(playerIndex)
     dependsOn(prepareBotwBasePlayerAssets)
     doLast {
         val generatedRoot = generatedBotwPlayerAssets.get().dir("botw/player")
-        val missing = botwBasePlayerAssetNames.filterNot { name ->
-            dualScreenAssets.file("botw/player/$name").asFile.isFile ||
-                generatedRoot.file(name).asFile.isFile
+        fun playerAsset(name: String): File? =
+            dualScreenAssets.file("botw/player/$name").asFile.takeIf { it.isFile }
+                ?: generatedRoot.file(name).asFile.takeIf { it.isFile }
+        fun hasPlayerAsset(name: String): Boolean = playerAsset(name) != null
+        fun readGlbDocument(file: File): Map<*, *> {
+            val bytes = file.readBytes()
+            check(bytes.size >= 20) { "shorter than a GLB JSON header" }
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            check(bytes.copyOfRange(0, 4).contentEquals("glTF".toByteArray(Charsets.US_ASCII))) {
+                "invalid GLB magic"
+            }
+            check(buffer.getInt(4) == 2 && buffer.getInt(8) == bytes.size) {
+                "invalid GLB version or length"
+            }
+            val jsonLength = buffer.getInt(12)
+            check(
+                buffer.getInt(16) == 0x4E4F534A &&
+                    jsonLength >= 2 &&
+                    20L + jsonLength.toLong() <= bytes.size.toLong()
+            ) { "invalid GLB JSON chunk" }
+            val json = String(bytes, 20, jsonLength, Charsets.UTF_8).trimEnd(' ', '\u0000')
+            return groovy.json.JsonSlurper().parseText(json) as? Map<*, *>
+                ?: error("GLB JSON is not an object")
         }
-        check(missing.isEmpty()) {
+
+        val missingBase = botwBasePlayerAssetNames.filterNot(::hasPlayerAsset)
+        check(missingBase.isEmpty()) {
             "A release without BOTW's base player GLBs leaves the bottom-screen Link preview " +
                 "blank. Supply the generated model directory with " +
-                "-PbotwPlayerAssetsDir=<directory>: ${missing.joinToString()}"
+                "-PbotwPlayerAssetsDir=<directory>: ${missingBase.joinToString()}"
+        }
+
+        val indexRoot = groovy.json.JsonSlurper().parse(playerIndex.asFile) as? Map<*, *>
+            ?: error("BOTW player model index is not a JSON object")
+        val actors = indexRoot["actors"] as? Map<*, *>
+            ?: error("BOTW player model index has no actors object")
+        val requiredArmor = actors.entries.asSequence()
+            .filter { (actor, _) -> actor.toString().startsWith("Armor_") }
+            .mapNotNull { (_, entry) ->
+                when (entry) {
+                    is String -> entry
+                    is Map<*, *> -> entry["file"] as? String
+                    else -> null
+                }
+            }
+            .filter { file -> file.startsWith("Armor_") && file.endsWith(".glb") }
+            .toSortedSet()
+        check(requiredArmor.isNotEmpty()) {
+            "BOTW player model index contains no armor GLBs"
+        }
+        val missingArmor = requiredArmor.filterNot(::hasPlayerAsset)
+        check(missingArmor.isEmpty()) {
+            "A release without every indexed BOTW armor GLB renders Link without equipped " +
+                "armor on clean installs. Generate the preview cache from the builder's RomFS " +
+                "and supply -PbotwPlayerAssetsDir=<directory>: ${missingArmor.joinToString()}"
+        }
+
+        val invalidPlayerBodies = (requiredArmor + "Link.glb").mapNotNull { name ->
+            val file = playerAsset(name) ?: return@mapNotNull null
+            val failure = runCatching {
+                val document = readGlbDocument(file)
+                check((document["meshes"] as? Collection<*>)?.isNotEmpty() == true) {
+                    "contains no meshes"
+                }
+                check((document["skins"] as? Collection<*>)?.isNotEmpty() == true) {
+                    "contains no skins"
+                }
+                val extras = document["extras"] as? Map<*, *>
+                val pose = extras?.get("botwPose") as? Map<*, *>
+                check(
+                    pose?.get("animation") == "Nml_Wait" &&
+                        ((pose?.get("changedAnimatedNodes") as? Number)?.toInt() ?: 0) > 0
+                ) { "has no validated baked Nml_Wait pose" }
+                val images = document["images"] as? Collection<*> ?: emptyList<Any>()
+                check(images.all { image ->
+                    image is Map<*, *> &&
+                        image.containsKey("bufferView") &&
+                        image["mimeType"] == "image/png"
+                }) { "contains a non-embedded or non-PNG texture" }
+            }.exceptionOrNull()
+            failure?.let { "$name: ${it.message ?: it.javaClass.simpleName}" }
+        }
+        check(invalidPlayerBodies.isEmpty()) {
+            "BOTW Link/armor preview GLBs are not release-safe. Raw bind-pose armor stretches " +
+                "on clean installs; regenerate it through Convert-BotwModel.ps1: " +
+                invalidPlayerBodies.joinToString()
         }
     }
 }

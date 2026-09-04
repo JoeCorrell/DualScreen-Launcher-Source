@@ -1,7 +1,9 @@
 #include "CharacterRoleAdapter.h"
 
+#include <algorithm>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -118,7 +120,6 @@ uint32_t g_ai_weapon_aimer_offset = 0;
 uint32_t g_ai_enemy_offset = 0;
 uint32_t g_pawn_weapon_offset = 0;
 uint32_t g_pawn_inventory_offset = 0;
-uint32_t g_inventory_current_weapon_offset = 0;
 uint32_t g_shooter_owner_offset = 0;
 uint32_t g_aimer_owner_offset = 0;
 uint32_t g_aimer_controller_offset = 0;
@@ -147,6 +148,7 @@ struct RoleProxyState {
   void* enemy = nullptr;
   bool shooter_active = false;
   bool movement_started = false;
+  bool vehicle_inputs_active = false;
 };
 
 RoleProxyState g_role_proxy;
@@ -236,6 +238,72 @@ void* RawObjectLink(void* object, uint32_t offset) {
              ? *reinterpret_cast<void**>(static_cast<uint8_t*>(object) +
                                           offset)
              : nullptr;
+}
+
+struct ProxyPosition {
+  float x;
+  float y;
+  float z;
+};
+
+float VehicleTurnToward(const UnrealStructValueView& pawn_rotation,
+                        float dx, float dy) {
+  int32_t current_yaw = 0;
+  if (!UnrealReadStructIntField(pawn_rotation, L"Yaw", &current_yaw))
+    return 0.0f;
+  constexpr float kPi = 3.14159265358979323846f;
+  const int32_t desired_yaw = static_cast<int32_t>(
+      std::lround(std::atan2(dy, dx) * (32768.0f / kPi)));
+  // UE3 rotators wrap at 65536. Narrowing the unsigned modular difference
+  // to int16_t gives the shortest signed turn without a branch at the seam.
+  const uint16_t wrapped = static_cast<uint16_t>(desired_yaw - current_yaw);
+  const int16_t signed_delta = static_cast<int16_t>(wrapped);
+  return std::clamp(static_cast<float>(signed_delta) / 8192.0f,
+                    -1.0f, 1.0f);
+}
+
+bool SetVehicleProxyInputs(void* vehicle_form, float forward, float turn,
+                           const UnrealStructValueView* view_rotation) {
+  if (!vehicle_form || !UnrealObjectValid(vehicle_form)) return false;
+  bool ok = true;
+  const auto set_float = [&](const wchar_t* function_name,
+                             float value) {
+    if (!UnrealCallVoidFloat(vehicle_form, function_name, L"Value", value))
+      ok = false;
+  };
+  if (UnrealObjectIsA(vehicle_form, L"TnCarForm")) {
+    set_float(L"set_StrafeForwardBackInput", forward);
+    set_float(L"set_StrafeLeftRightInput", 0.0f);
+    set_float(L"set_SteeringInput", turn);
+  } else if (UnrealObjectIsA(vehicle_form, L"TnTankForm")) {
+    set_float(L"set_StrafeForwardBackInput", forward);
+    set_float(L"set_StrafeRightLeftInput", 0.0f);
+    set_float(L"set_TurnInput", turn);
+  } else if (UnrealObjectIsA(vehicle_form, L"TnPlaneForm")) {
+    set_float(L"set_StrafeForwardBackInput", forward);
+    set_float(L"set_StrafeRightLeftInput", 0.0f);
+    set_float(L"set_YawInput", turn);
+    // Holding an inherited player pitch after the pawn becomes AI-controlled
+    // makes aircraft climb or dive forever. The proxy owns this input edge.
+    set_float(L"set_PitchInput", 0.0f);
+  } else {
+    return false;
+  }
+  if (view_rotation &&
+      !UnrealCallVoidStruct(vehicle_form, L"set_ViewRotation", L"Value",
+                            *view_rotation))
+    ok = false;
+  return ok;
+}
+
+bool StopMappedVehicleInputs(const CharacterRoleMapping& mapping) {
+  void* current_form =
+      RawObjectLink(mapping.ai_controlled_player_pawn, g_current_form_offset);
+  void* vehicle_form =
+      RawObjectLink(mapping.ai_controlled_player_pawn, g_vehicle_form_offset);
+  if (!current_form || !vehicle_form || current_form != vehicle_form)
+    return true;
+  return SetVehicleProxyInputs(vehicle_form, 0.0f, 0.0f, nullptr);
 }
 
 bool ObjectSlotStillOwns(void* object, uint32_t one_based_index) {
@@ -1039,7 +1107,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
   uint32_t ai_weapon_offset = 0;
   uint32_t player_inventory_offset = 0;
   uint32_t ai_inventory_offset = 0;
-  uint32_t inventory_current_weapon_offset = 0;
   uint32_t shooter_owner_offset = 0;
   uint32_t aimer_owner_offset = 0;
   uint32_t aimer_controller_offset = 0;
@@ -1122,8 +1189,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
       !UnrealResolveObjectPropertyOffset(ai_pawn_instance, L"InvManager",
                                          &ai_inventory_offset) ||
       player_inventory_offset != ai_inventory_offset ||
-      !UnrealResolveObjectPropertyOffset(ai_inventory, L"CurrentWeapon",
-                                         &inventory_current_weapon_offset) ||
       !UnrealResolveObjectPropertyOffset(ai_weapon_shooter, L"Owner",
                                          &shooter_owner_offset) ||
       !UnrealResolveObjectPropertyOffset(ai_weapon_aimer, L"_Owner",
@@ -1373,7 +1438,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
   g_ai_enemy_offset = ai_enemy_offset;
   g_pawn_weapon_offset = player_weapon_offset;
   g_pawn_inventory_offset = player_inventory_offset;
-  g_inventory_current_weapon_offset = inventory_current_weapon_offset;
   g_shooter_owner_offset = shooter_owner_offset;
   g_aimer_owner_offset = aimer_owner_offset;
   g_aimer_controller_offset = aimer_controller_offset;
@@ -1403,7 +1467,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
       g_ai_enemy_offset = 0;
       g_pawn_weapon_offset = 0;
       g_pawn_inventory_offset = 0;
-      g_inventory_current_weapon_offset = 0;
       g_shooter_owner_offset = 0;
       g_aimer_owner_offset = 0;
       g_aimer_controller_offset = 0;
@@ -1441,7 +1504,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
       g_ai_enemy_offset = 0;
       g_pawn_weapon_offset = 0;
       g_pawn_inventory_offset = 0;
-      g_inventory_current_weapon_offset = 0;
       g_shooter_owner_offset = 0;
       g_aimer_owner_offset = 0;
       g_aimer_controller_offset = 0;
@@ -1480,7 +1542,6 @@ bool ShutdownCharacterRoleAdapter() {
     g_ai_enemy_offset = 0;
     g_pawn_weapon_offset = 0;
     g_pawn_inventory_offset = 0;
-    g_inventory_current_weapon_offset = 0;
     g_shooter_owner_offset = 0;
     g_aimer_owner_offset = 0;
     g_aimer_controller_offset = 0;
@@ -1686,6 +1747,8 @@ bool QuiesceCharacterRoleProxy() {
       ok = UnrealCallVoid(published.value.mapped_ai_controller,
                           L"StopMovement") && ok;
     }
+    if (g_role_proxy.vehicle_inputs_active)
+      ok = StopMappedVehicleInputs(published.value) && ok;
   }
   g_role_proxy = {};
   return ok;
@@ -1754,23 +1817,22 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
         (!UnrealCallVoid(mapping.mapped_ai_controller, L"CancelMove") ||
          !UnrealCallVoid(mapping.mapped_ai_controller, L"StopMovement")))
       return false;
+    if (in_vehicle_form && g_role_proxy.vehicle_inputs_active &&
+        !SetVehicleProxyInputs(vehicle_form, 0.0f, 0.0f, nullptr))
+      return false;
     g_role_proxy.shooter_active = false;
     g_role_proxy.weapon = nullptr;
     g_role_proxy.enemy = nullptr;
     g_role_proxy.movement_started = false;
+    g_role_proxy.vehicle_inputs_active = false;
     return true;
   }
 
   // MoveTowardActor is a native Controller movement state and operates on the
   // shared Pawn/TnPawn contract. Keep its live actor destination current; the
   // function itself only pushes the state when needed.
-  struct Position {
-    float x;
-    float y;
-    float z;
-  };
-  Position player = {};
-  Position buddy = {};
+  ProxyPosition player = {};
+  ProxyPosition buddy = {};
   // PrepareCharacterRoleAdapter validates that both pawn subclasses inherit
   // the exact same Engine.Actor.Location field. Both mapped UObject slots and
   // reciprocal links were revalidated above in this game-thread pulse, so a
@@ -1789,12 +1851,11 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
   const float dz = player.z - buddy.z;
   const float distance_squared = dx * dx + dy * dy + dz * dz;
   if (in_vehicle_form) {
-    // Vehicle strategies cache TnAiPawn-only obstacle-avoidance state. The
-    // transaction deliberately leaves that strategy detached for a physical
-    // TnPlayerPawn, so do not enter its movement path here. This is an
-    // unsupported proxy state, not a corrupt graph: quiesce any robot-form
-    // work still cached from the preceding slice and report a safe success so
-    // three ordinary vehicle-form pulses cannot fail-close all mod input.
+    // Native vehicle AI strategies address TnAiPawn-only storage and cannot
+    // safely own the physical TnPlayerPawn. Drive that pawn's existing form
+    // through the same native input setters used by PlayerInCar/Tank/PlaneForm
+    // instead. This preserves the actor, form, health and inventory while the
+    // old player character follows the newly controlled squad member.
     if (g_role_proxy.shooter_active) {
       void* shooter = RawObjectLink(mapping.mapped_ai_controller,
                                     g_ai_weapon_shooter_offset);
@@ -1808,12 +1869,32 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
         (!UnrealCallVoid(mapping.mapped_ai_controller, L"CancelMove") ||
          !UnrealCallVoid(mapping.mapped_ai_controller, L"StopMovement")))
       return false;
+    UnrealStructValueView pawn_rotation;
+    if (!UnrealReadStructProperty(mapping.ai_controlled_player_pawn,
+                                  L"Rotation", &pawn_rotation))
+      return false;
+    const bool should_follow = distance_squared > 500.0f * 500.0f;
+    const float turn = should_follow
+                           ? VehicleTurnToward(pawn_rotation, dx, dy)
+                           : 0.0f;
+    if (!SetVehicleProxyInputs(vehicle_form, should_follow ? 1.0f : 0.0f,
+                               turn, &pawn_rotation))
+      return false;
     g_role_proxy.shooter_active = false;
     g_role_proxy.weapon = nullptr;
     g_role_proxy.enemy = nullptr;
     g_role_proxy.movement_started = false;
+    g_role_proxy.vehicle_inputs_active = should_follow;
     return true;
-  } else if (distance_squared > 500.0f * 500.0f) {
+  }
+  if (g_role_proxy.vehicle_inputs_active) {
+    // Transformation can complete between proxy slices. Clear the prior
+    // vehicle edge before robot movement takes ownership.
+    if (!SetVehicleProxyInputs(vehicle_form, 0.0f, 0.0f, nullptr))
+      return false;
+    g_role_proxy.vehicle_inputs_active = false;
+  }
+  if (distance_squared > 500.0f * 500.0f) {
     // MovingToActor uses the selected pawn as its live MoveTarget, avoiding a
     // four-Hz sampled destination and the visible stop/start jitter it caused.
     // Its native guard makes repeated calls no-ops while already in state and
@@ -1885,20 +1966,12 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
   void* inventory = RawObjectLink(mapping.ai_controlled_player_pawn,
                                   g_pawn_inventory_offset);
   if (!inventory || !UnrealObjectValid(inventory) ||
-      !UnrealObjectIsA(inventory, L"TnInventoryManager") ||
-      !g_inventory_current_weapon_offset)
+      !UnrealObjectIsA(inventory, L"TnInventoryManager"))
     return false;
-  void* current_weapon =
-      RawObjectLink(inventory, g_inventory_current_weapon_offset);
-  // The native shooter is only safe to bind once both authoritative weapon
-  // roots agree. A mismatch is a transient pickup/swap/equip state; skip this
-  // slice instead of firing or rebinding through a half-completed transition.
-  if (pawn_weapon != current_weapon) {
-    if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;
-    g_role_proxy.shooter_active = false;
-    g_role_proxy.enemy = nullptr;
-    return true;
-  }
+  // TnInventoryManager exposes GetCurrentWeapon() as a function and owns no
+  // CurrentWeapon field. Pawn.Weapon is the authoritative root used by the
+  // game's StoreRobotWeapon/StoreVehicleWeapon implementations, so reading an
+  // invented manager offset here made the role adapter impossible to prepare.
   void* weapon = pawn_weapon;
   if (!weapon) {
     if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;

@@ -51,7 +51,7 @@ public class SharedBox64RuntimeStateTest {
     }
 
     @Test
-    public void transformersRequestPinsExactWemuBox64AndForcesTranslator() {
+    public void transformersRequestPinsExactWemuBox64ButMatchesArm64EcFexExecution() {
         SharedBox64RuntimeState.RuntimeRequest request =
                 SharedBox64RuntimeState.runtimeRequest(
                         "", "", "", "Proton-11.0-5-arm64ec-6", "0.4.2",
@@ -64,14 +64,16 @@ public class SharedBox64RuntimeStateTest {
                 request.requiredWowBox64Sha256);
         assertFalse(request.allowInstalledProfile);
         assertFalse(request.managedSteamRuntime);
-        assertTrue(request.forceBox64Translator);
-        assertEquals("box64", SharedBox64RuntimeState.resolveEmulator(
+        assertFalse(request.forceBox64Translator);
+        assertEquals("fexcore", SharedBox64RuntimeState.resolveEmulator(
                 request, "box64", null, true));
+        assertEquals("fexcore", SharedBox64RuntimeState.resolveEmulator(
+                request, "box64", "FEXCore", true));
+        assertEquals("box64", SharedBox64RuntimeState.resolveEmulator(
+                request, "box64", null, false));
         assertPinnedGameRequestRejected("0.4.4",
                 SharedBox64RuntimeState.TRANSFORMERS_WFC_RUNTIME);
         assertPinnedGameRequestRejected("0.4.2", "unknown-game-runtime");
-        assertPinnedEmulatorRejected(request, "FEXCore", null);
-        assertPinnedEmulatorRejected(request, "box64", "FEXCore");
     }
 
     @Test
@@ -581,20 +583,6 @@ public class SharedBox64RuntimeStateTest {
             SharedBox64RuntimeState.runtimeRequest(
                     "", "", "", "Proton-11.0-5-arm64ec-6",
                     box64Version, pinnedRuntime);
-        } catch (IllegalStateException expected) {
-            rejected = true;
-        }
-        assertTrue(rejected);
-    }
-
-    private static void assertPinnedEmulatorRejected(
-            SharedBox64RuntimeState.RuntimeRequest request,
-            String containerEmulator,
-            String shortcutEmulator) {
-        boolean rejected = false;
-        try {
-            SharedBox64RuntimeState.resolveEmulator(
-                    request, containerEmulator, shortcutEmulator, true);
         } catch (IllegalStateException expected) {
             rejected = true;
         }

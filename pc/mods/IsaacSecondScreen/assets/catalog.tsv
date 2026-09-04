@@ -1,0 +1,1303 @@
+V	1	Binding of Isaac: Repentance+ v1.9.7.17.J460
+C	1	3	0	game/gfx/items/collectibles/collectibles_001_thesadonion.png	The Sad Onion	The Sad Onion
+C	2	3	0	game/gfx/items/collectibles/collectibles_002_theinnereye.png	The Inner Eye	The Inner Eye
+C	3	3	0	game/gfx/items/collectibles/collectibles_003_spoonbender.png	Spoon Bender	Spoon Bender
+C	4	4	0	game/gfx/items/collectibles/collectibles_004_cricketshead.png	Crickets Head	Crickets Head
+C	5	3	0	game/gfx/items/collectibles/collectibles_005_myreflection.png	My Reflection	My Reflection
+C	6	2	0	game/gfx/items/collectibles/collectibles_006_numberone.png	Number One	Number One
+C	7	3	0	game/gfx/items/collectibles/collectibles_007_bloodofthemartyr.png	Blood Of The Martyr	Blood Of The Martyr
+C	8	1	0	game/gfx/items/collectibles/collectibles_008_brotherbobby.png	Brother Bobby	Brother Bobby
+C	9	0	0	game/gfx/items/collectibles/collectibles_009_skatole.png	Skatole	Skatole
+C	10	2	0	game/gfx/items/collectibles/collectibles_010_haloofflies.png	Halo Of Flies	Halo Of Flies
+C	11	2	0	game/gfx/items/collectibles/collectibles_011_1up.png	1Up	1Up
+C	12	4	0	game/gfx/items/collectibles/collectibles_012_magicmushroom.png	Magic Mushroom	Magic Mushroom
+C	13	2	0	game/gfx/items/collectibles/collectibles_013_thevirus.png	The Virus	The Virus
+C	14	2	0	game/gfx/items/collectibles/collectibles_014_roidrage.png	Roid Rage	Roid Rage
+C	15	2	0	game/gfx/items/collectibles/collectibles_015_heart.png	Heart	Heart
+C	16	2	0	game/gfx/items/collectibles/collectibles_016_rawliver.png	Raw Liver	Raw Liver
+C	17	2	0	game/gfx/items/collectibles/collectibles_017_skeletonkey.png	Skeleton Key	Skeleton Key
+C	18	3	0	game/gfx/items/collectibles/collectibles_018_adollar.png	A Dollar	A Dollar
+C	19	0	0	game/gfx/items/collectibles/collectibles_019_boom.png	Boom	Boom
+C	20	2	0	game/gfx/items/collectibles/collectibles_020_transcendence.png	Transcendence	Transcendence
+C	21	1	0	game/gfx/items/collectibles/collectibles_021_thecompass.png	The Compass	The Compass
+C	22	1	0	game/gfx/items/collectibles/collectibles_022_lunch.png	Lunch	Lunch
+C	23	1	0	game/gfx/items/collectibles/collectibles_023_dinner.png	Dinner	Dinner
+C	24	1	0	game/gfx/items/collectibles/collectibles_024_dessert.png	Dessert	Dessert
+C	25	1	0	game/gfx/items/collectibles/collectibles_025_breakfast.png	Breakfast	Breakfast
+C	26	1	0	game/gfx/items/collectibles/collectibles_026_rottenmeat.png	Rotten Meat	Rotten Meat
+C	27	1	0	game/gfx/items/collectibles/collectibles_027_woodenspoon.png	Wooden Spoon	Wooden Spoon
+C	28	1	0	game/gfx/items/collectibles/collectibles_028_thebelt.png	The Belt	The Belt
+C	29	1	0	game/gfx/items/collectibles/collectibles_029_momsunderwear.png	Moms Underwear	Moms Underwear
+C	30	1	0	game/gfx/items/collectibles/collectibles_030_momsheels.png	Moms Heels	Moms Heels
+C	31	1	0	game/gfx/items/collectibles/collectibles_031_momslipstick.png	Moms Lipstick	Moms Lipstick
+C	32	3	0	game/gfx/items/collectibles/collectibles_032_wirecoathanger.png	Wire Coat Hanger	Wire Coat Hanger
+C	33	1	4	game/gfx/items/collectibles/collectibles_033_thebible.png	The Bible	The Bible
+C	34	2	3	game/gfx/items/collectibles/collectibles_034_thebookofbelial.png	The Book Of Belial	The Book Of Belial
+C	35	0	4	game/gfx/items/collectibles/collectibles_035_thenecronomicon.png	The Necronomicon	The Necronomicon
+C	36	0	1	game/gfx/items/collectibles/collectibles_036_thepoop.png	The Poop	The Poop
+C	37	1	2	game/gfx/items/collectibles/collectibles_037_mrboom.png	Mr Boom	Mr Boom
+C	38	1	1	game/gfx/items/collectibles/collectibles_038_tammyshead.png	Tammys Head	Tammys Head
+C	39	0	3	game/gfx/items/collectibles/collectibles_039_momsbra.png	Moms Bra	Moms Bra
+C	40	0	0	game/gfx/items/collectibles/collectibles_040_kamikaze.png	Kamikaze	Kamikaze
+C	41	0	2	game/gfx/items/collectibles/collectibles_041_momspad.png	Moms Pad	Moms Pad
+C	42	1	2	game/gfx/items/collectibles/collectibles_042_bobsrottenhead.png	Bobs Rotten Head	Bobs Rotten Head
+C	44	0	2	game/gfx/items/collectibles/collectibles_044_teleport.png	Teleport	Teleport
+C	45	1	4	game/gfx/items/collectibles/collectibles_045_yumheart.png	Yum Heart	Yum Heart
+C	46	2	0	game/gfx/items/collectibles/collectibles_046_luckyfoot.png	Lucky Foot	Lucky Foot
+C	47	1	2	game/gfx/items/collectibles/collectibles_047_doctorsremote.png	Doctors Remote	Doctors Remote
+C	48	2	0	game/gfx/items/collectibles/collectibles_048_cupidsarrow.png	Cupids Arrow	Cupids Arrow
+C	49	2	2	game/gfx/items/collectibles/collectibles_049_shoopdawhoop.png	Shoop Da Whoop	Shoop Da Whoop
+C	50	3	0	game/gfx/items/collectibles/collectibles_050_steven.png	Steven	Steven
+C	51	3	0	game/gfx/items/collectibles/collectibles_051_pentagram.png	Pentagram	Pentagram
+C	52	4	0	game/gfx/items/collectibles/collectibles_052_drfetus.png	Dr Fetus	Dr Fetus
+C	53	1	0	game/gfx/items/collectibles/collectibles_053_magneto.png	Magneto	Magneto
+C	54	1	0	game/gfx/items/collectibles/collectibles_054_treasuremap.png	Treasure Map	Treasure Map
+C	55	1	0	game/gfx/items/collectibles/collectibles_055_momseye.png	Moms Eye	Moms Eye
+C	56	0	2	game/gfx/items/collectibles/collectibles_056_lemonmishap.png	Lemon Mishap	Lemon Mishap
+C	57	1	0	game/gfx/items/collectibles/collectibles_057_distantadmiration.png	Distant Admiration	Distant Admiration
+C	58	3	3	game/gfx/items/collectibles/collectibles_058_bookofshadows.png	Book Of Shadows	Book Of Shadows
+C	59	0	3	game/gfx/items/collectibles/collectibles_034_thebookofbelial.png	The Book Of Belial	The Book Of Belial
+C	60	1	0	game/gfx/items/collectibles/collectibles_060_theladder.png	The Ladder	The Ladder
+C	62	2	0	game/gfx/items/collectibles/collectibles_062_charmofthevampire.png	Charm Of The Vampire	Charm Of The Vampire
+C	63	2	0	game/gfx/items/collectibles/collectibles_063_thebattery.png	The Battery	The Battery
+C	64	2	0	game/gfx/items/collectibles/collectibles_064_steamsale.png	Steam Sale	Steam Sale
+C	65	0	3	game/gfx/items/collectibles/collectibles_065_anarchistcookbook.png	Anarchist Cookbook	Anarchist Cookbook
+C	66	0	2	game/gfx/items/collectibles/collectibles_066_thehourglass.png	The Hourglass	The Hourglass
+C	67	1	0	game/gfx/items/collectibles/collectibles_067_sistermaggy.png	Sister Maggy	Sister Maggy
+C	68	3	0	game/gfx/items/collectibles/collectibles_068_technology.png	Technology	Technology
+C	69	3	0	game/gfx/items/collectibles/collectibles_069_chocolatemilk.png	Chocolate Milk	Chocolate Milk
+C	70	3	0	game/gfx/items/collectibles/collectibles_070_growthhormones.png	Growth Hormones	Growth Hormones
+C	71	2	0	game/gfx/items/collectibles/collectibles_071_minimushroom.png	Mini Mush	Mini Mush
+C	72	2	0	game/gfx/items/collectibles/collectibles_072_rosary.png	Rosary	Rosary
+C	73	1	0	game/gfx/items/collectibles/collectibles_073_cubeofmeat.png	Cube Of Meat	Cube Of Meat
+C	74	0	0	game/gfx/items/collectibles/collectibles_074_aquarter.png	A Quarter	A Quarter
+C	75	2	0	game/gfx/items/collectibles/collectibles_075_phd.png	Phd	Phd
+C	76	2	0	game/gfx/items/collectibles/collectibles_076_xrayvision.png	Xray Vision	Xray Vision
+C	77	1	4	game/gfx/items/collectibles/collectibles_077_mylittleunicorn.png	My Little Unicorn	My Little Unicorn
+C	78	3	6	game/gfx/items/collectibles/collectibles_078_bookofrevelations.png	Book Of Revelations	Book Of Revelations
+C	79	3	0	game/gfx/items/collectibles/collectibles_079_themark.png	The Mark	The Mark
+C	80	3	0	game/gfx/items/collectibles/collectibles_080_thepact.png	The Pact	The Pact
+C	81	3	0	game/gfx/items/collectibles/collectibles_081_deadcat.png	Dead Cat	Dead Cat
+C	82	3	0	game/gfx/items/collectibles/collectibles_082_lordofthepit.png	Lord Of The Pit	Lord Of The Pit
+C	83	2	6	game/gfx/items/collectibles/collectibles_083_thenail.png	The Nail	The Nail
+C	84	2	6	game/gfx/items/collectibles/collectibles_084_weneedtogodeeper.png	We Need To Go Deeper	We Need To Go Deeper
+C	85	2	6	game/gfx/items/collectibles/collectibles_085_deckofcards.png	Deck Of Cards	Deck Of Cards
+C	86	0	3	game/gfx/items/collectibles/collectibles_086_monstrostooth.png	Monstros Tooth	Monstros Tooth
+C	87	1	0	game/gfx/items/collectibles/collectibles_087_lokishorns.png	Lokis Horns	Lokis Horns
+C	88	1	0	game/gfx/items/collectibles/collectibles_088_littlechubby.png	Little Chubby	Little Chubby
+C	89	2	0	game/gfx/items/collectibles/collectibles_089_spidersbite.png	Spider Bite	Spider Bite
+C	90	3	0	game/gfx/items/collectibles/collectibles_090_smallrock.png	The Small Rock	The Small Rock
+C	91	2	0	game/gfx/items/collectibles/collectibles_091_spelunkerhat.png	Spelunker Hat	Spelunker Hat
+C	92	2	0	game/gfx/items/collectibles/collectibles_092_superbandage.png	Super Bandage	Super Bandage
+C	93	1	4	game/gfx/items/collectibles/collectibles_093_thegamekid.png	The Gamekid	The Gamekid
+C	94	1	0	game/gfx/items/collectibles/collectibles_094_sackofpennies.png	Sack Of Pennies	Sack Of Pennies
+C	95	1	0	game/gfx/items/collectibles/collectibles_095_robobaby.png	Robobaby	Robobaby
+C	96	2	0	game/gfx/items/collectibles/collectibles_096_littlechad.png	Little Chad	Little Chad
+C	97	1	4	game/gfx/items/collectibles/collectibles_097_bookofsin.png	The Book Of Sin	The Book Of Sin
+C	98	3	0	game/gfx/items/collectibles/collectibles_098_therelic.png	The Relic	The Relic
+C	99	1	0	game/gfx/items/collectibles/collectibles_099_littlegish.png	Little Gish	Little Gish
+C	100	2	0	game/gfx/items/collectibles/collectibles_100_littlesteve.png	Little Steven	Little Steven
+C	101	3	0	game/gfx/items/collectibles/collectibles_101_thehalo.png	The Halo	The Halo
+C	102	1	6	game/gfx/items/collectibles/collectibles_102_momsbottleofpills.png	Moms Bottle Of Pills	Moms Bottle Of Pills
+C	103	1	0	game/gfx/items/collectibles/collectibles_103_thecommoncold.png	The Common Cold	The Common Cold
+C	104	3	0	game/gfx/items/collectibles/collectibles_104_theparasite.png	The Parasite	The Parasite
+C	105	4	6	game/gfx/items/collectibles/collectibles_105_dice.png	The D6	The D6
+C	106	2	0	game/gfx/items/collectibles/collectibles_106_mrmega.png	Mr Mega	Mr Mega
+C	107	2	4	game/gfx/items/collectibles/collectibles_107_pinkingshears.png	The Pinking Shears	The Pinking Shears
+C	108	4	0	game/gfx/items/collectibles/collectibles_108_thewafer.png	The Wafer	The Wafer
+C	109	3	0	game/gfx/items/collectibles/collectibles_109_moneyispower.png	Money  Power	Money  Power
+C	110	3	0	game/gfx/items/collectibles/collectibles_110_momscontacts.png	Moms Contacts	Moms Contacts
+C	111	0	120	game/gfx/items/collectibles/collectibles_111_thebean.png	The Bean	The Bean
+C	112	1	0	game/gfx/items/collectibles/collectibles_112_guardianangel.png	Guardian Angel	Guardian Angel
+C	113	1	0	game/gfx/items/collectibles/collectibles_113_demonbaby.png	Demon Baby	Demon Baby
+C	114	4	0	game/gfx/items/collectibles/collectibles_114_momsknife.png	Moms Knife	Moms Knife
+C	115	2	0	game/gfx/items/collectibles/collectibles_115_ouijaboard.png	Ouija Board	Ouija Board
+C	116	2	0	game/gfx/items/collectibles/collectibles_116_9volt.png	9 Volt	9 Volt
+C	117	0	0	game/gfx/items/collectibles/collectibles_117_deadbird.png	Dead Bird	Dead Bird
+C	118	4	0	game/gfx/items/collectibles/collectibles_118_brimstone.png	Brimstone	Brimstone
+C	119	2	0	game/gfx/items/collectibles/collectibles_119_bloodbag.png	Blood Bag	Blood Bag
+C	120	2	0	game/gfx/items/collectibles/collectibles_120_oddmushroomthin.png	Odd Mushroom Thin	Odd Mushroom Thin
+C	121	2	0	game/gfx/items/collectibles/collectibles_121_oddmushroomlarge.png	Odd Mushroom Large	Odd Mushroom Large
+C	122	2	0	game/gfx/items/collectibles/collectibles_122_whoreofbabylon.png	Whore Of Babylon	Whore Of Babylon
+C	123	1	6	game/gfx/items/collectibles/collectibles_123_monstermanual.png	Monster Manual	Monster Manual
+C	124	1	2	game/gfx/items/collectibles/collectibles_124_deadseascrolls.png	Dead Sea Scrolls	Dead Sea Scrolls
+C	125	1	0	game/gfx/items/collectibles/collectibles_125_bobbybomb.png	Bobbybomb	Bobbybomb
+C	126	0	0	game/gfx/items/collectibles/collectibles_126_razorblade.png	Razor Blade	Razor Blade
+C	127	3	0	game/gfx/items/collectibles/collectibles_127_forgetmenow.png	Forget Me Now	Forget Me Now
+C	128	1	0	game/gfx/items/collectibles/collectibles_128_foreveralone.png	Forever Alone	Forever Alone
+C	129	1	0	game/gfx/items/collectibles/collectibles_129_bucketoflard.png	Bucket Of Lard	Bucket Of Lard
+C	130	2	2	game/gfx/items/collectibles/collectibles_130_apony.png	A Pony	A Pony
+C	131	1	0	game/gfx/items/collectibles/collectibles_131_bombbag.png	Bomb Bag	Bomb Bag
+C	132	3	0	game/gfx/items/collectibles/collectibles_132_alumpofcoal.png	A Lump Of Coal	A Lump Of Coal
+C	133	3	0	game/gfx/items/collectibles/collectibles_133_guppyspaw.png	Guppys Paw	Guppys Paw
+C	134	2	0	game/gfx/items/collectibles/collectibles_134_guppystail.png	Guppys Tail	Guppys Tail
+C	135	2	0	game/gfx/items/collectibles/collectibles_135_ivbag.png	Iv Bag	Iv Bag
+C	136	0	3	game/gfx/items/collectibles/collectibles_136_bestfriend.png	Best Friend	Best Friend
+C	137	0	0	game/gfx/items/collectibles/collectibles_137_remotedetonator.png	Remote Detonator	Remote Detonator
+C	138	2	0	game/gfx/items/collectibles/collectibles_138_stigmata.png	Stigmata	Stigmata
+C	139	2	0	game/gfx/items/collectibles/collectibles_139_momspurse.png	Moms Purse	Moms Purse
+C	140	1	0	game/gfx/items/collectibles/collectibles_140_bobscurse.png	Bobs Curse	Bobs Curse
+C	141	0	0	game/gfx/items/collectibles/collectibles_141_pageantboy.png	Pageant Boy	Pageant Boy
+C	142	2	0	game/gfx/items/collectibles/collectibles_142_scapular.png	Scapular	Scapular
+C	143	2	0	game/gfx/items/collectibles/collectibles_143_speedball.png	Speed Ball	Speed Ball
+C	144	1	0	game/gfx/items/collectibles/collectibles_144_bumfriend.png	Bum Friend	Bum Friend
+C	145	2	1	game/gfx/items/collectibles/collectibles_145_guppyshead.png	Guppys Head	Guppys Head
+C	146	3	6	game/gfx/items/collectibles/collectibles_146_prayercard.png	Prayer Card	Prayer Card
+C	147	1	64	game/gfx/items/collectibles/collectibles_147_notchedaxe.png	Notched Axe	Notched Axe
+C	148	0	0	game/gfx/items/collectibles/collectibles_148_infestation.png	Infestation	Infestation
+C	149	4	0	game/gfx/items/collectibles/collectibles_149_ipecac.png	Ipecac	Ipecac
+C	150	3	0	game/gfx/items/collectibles/collectibles_150_toughlove.png	Tough Love	Tough Love
+C	151	3	0	game/gfx/items/collectibles/collectibles_151_themulligan.png	The Mulligan	The Mulligan
+C	152	2	0	game/gfx/items/collectibles/collectibles_152_technology2.png	Technology 2	Technology 2
+C	153	3	0	game/gfx/items/collectibles/collectibles_153_mutantspider.png	Mutant Spider	Mutant Spider
+C	154	2	0	game/gfx/items/collectibles/collectibles_154_chemicalpeel.png	Chemical Peel	Chemical Peel
+C	155	2	0	game/gfx/items/collectibles/collectibles_155_thepeeper.png	The Peeper	The Peeper
+C	156	2	0	game/gfx/items/collectibles/collectibles_156_habit.png	Habit	Habit
+C	157	2	0	game/gfx/items/collectibles/collectibles_157_bloodylust.png	Bloody Lust	Bloody Lust
+C	158	3	6	game/gfx/items/collectibles/collectibles_158_crystalball.png	Crystal Ball	Crystal Ball
+C	159	3	0	game/gfx/items/collectibles/collectibles_159_spiritofthenight.png	Spirit Of The Night	Spirit Of The Night
+C	160	1	4	game/gfx/items/collectibles/collectibles_160_crackthesky.png	Crack The Sky	Crack The Sky
+C	161	0	0	game/gfx/items/collectibles/collectibles_161_ankh.png	Ankh	Ankh
+C	162	1	0	game/gfx/items/collectibles/collectibles_162_celticcross.png	Celtic Cross	Celtic Cross
+C	163	1	0	game/gfx/items/collectibles/collectibles_163_ghostbaby.png	Ghost Baby	Ghost Baby
+C	164	2	110	game/gfx/items/collectibles/collectibles_164_bluecandle.png	The Candle	The Candle
+C	165	3	0	game/gfx/items/collectibles/collectibles_165_catoninetails.png	Catoninetails	Catoninetails
+C	166	2	6	game/gfx/items/collectibles/collectibles_166_d20.png	D20	D20
+C	167	1	0	game/gfx/items/collectibles/collectibles_167_harlequinbaby.png	Harlequin Baby	Harlequin Baby
+C	168	4	0	game/gfx/items/collectibles/collectibles_168_epicfetus.png	Epic Fetus	Epic Fetus
+C	169	4	0	game/gfx/items/collectibles/collectibles_169_polyphemus.png	Polyphemus	Polyphemus
+C	170	3	0	game/gfx/items/collectibles/collectibles_170_daddylonglegs.png	Daddy Longlegs	Daddy Longlegs
+C	171	1	2	game/gfx/items/collectibles/collectibles_171_spiderbutt.png	Spider Butt	Spider Butt
+C	172	2	0	game/gfx/items/collectibles/collectibles_172_sacrificialdagger.png	Sacrificial Dagger	Sacrificial Dagger
+C	173	3	0	game/gfx/items/collectibles/collectibles_173_mitre.png	Mitre	Mitre
+C	174	1	0	game/gfx/items/collectibles/collectibles_174_rainbowbaby.png	Rainbow Baby	Rainbow Baby
+C	175	2	2	game/gfx/items/collectibles/collectibles_175_dadskey.png	Dads Key	Dads Key
+C	176	1	0	game/gfx/items/collectibles/collectibles_176_stemcells.png	Stem Cells	Stem Cells
+C	177	0	0	game/gfx/items/collectibles/collectibles_177_portableslot.png	Portable Slot	Portable Slot
+C	178	3	0	game/gfx/items/collectibles/collectibles_178_holywater.png	Holy Water	Holy Water
+C	179	3	0	game/gfx/items/collectibles/collectibles_179_fate.png	Fate	Fate
+C	180	0	0	game/gfx/items/collectibles/collectibles_180_blackbean.png	The Black Bean	The Black Bean
+C	181	3	2	game/gfx/items/collectibles/collectibles_181_whitepony.png	White Pony	White Pony
+C	182	4	0	game/gfx/items/collectibles/collectibles_182_sacredheart.png	Sacred Heart	Sacred Heart
+C	183	3	0	game/gfx/items/collectibles/collectibles_183_toothpicks.png	Tooth Picks	Tooth Picks
+C	184	3	0	game/gfx/items/collectibles/collectibles_184_holygrail.png	Holy Grail	Holy Grail
+C	185	3	0	game/gfx/items/collectibles/collectibles_185_deaddove.png	Dead Dove	Dead Dove
+C	186	0	0	game/gfx/items/collectibles/collectibles_186_bloodrights.png	Blood Rights	Blood Rights
+C	187	1	0	game/gfx/items/collectibles/collectibles_187_guppyshairball.png	Guppys Hairball	Guppys Hairball
+C	188	0	0	game/gfx/items/collectibles/collectibles_188_abel.png	Abel	Abel
+C	189	3	0	game/gfx/items/collectibles/collectibles_189_smbsuperfan.png	Smb Super Fan	Smb Super Fan
+C	190	3	0	game/gfx/items/collectibles/collectibles_190_pyro.png	Pyro	Pyro
+C	191	2	0	game/gfx/items/collectibles/collectibles_191_3dollarbill.png	3 Dollar Bill	3 Dollar Bill
+C	192	1	2	game/gfx/items/collectibles/collectibles_192_telepathyfordummies.png	Telepathy For Dummies	Telepathy For Dummies
+C	193	2	0	game/gfx/items/collectibles/collectibles_193_meat.png	Meat	Meat
+C	194	1	0	game/gfx/items/collectibles/collectibles_194_magic8ball.png	Magic 8 Ball	Magic 8 Ball
+C	195	0	0	game/gfx/items/collectibles/collectibles_195_momscoinpurse.png	Moms Coin Purse	Moms Coin Purse
+C	196	3	0	game/gfx/items/collectibles/collectibles_196_squeezy.png	Squeezy	Squeezy
+C	197	2	0	game/gfx/items/collectibles/collectibles_197_jesusjuice.png	Jesus Juice	Jesus Juice
+C	198	0	0	game/gfx/items/collectibles/collectibles_198_box.png	Box	Box
+C	199	3	0	game/gfx/items/collectibles/collectibles_199_momskey.png	Moms Key	Moms Key
+C	200	1	0	game/gfx/items/collectibles/collectibles_200_momseyeshadow.png	Moms Eyeshadow	Moms Eyeshadow
+C	201	2	0	game/gfx/items/collectibles/collectibles_201_ironbar.png	Iron Bar	Iron Bar
+C	202	1	0	game/gfx/items/collectibles/collectibles_202_midastouch.png	Midas Touch	Midas Touch
+C	203	3	0	game/gfx/items/collectibles/collectibles_203_humblingbundle.png	Humbleing Bundle	Humbleing Bundle
+C	204	1	0	game/gfx/items/collectibles/collectibles_204_fannypack.png	Fanny Pack	Fanny Pack
+C	205	2	0	game/gfx/items/collectibles/collectibles_205_sharpplug.png	Sharp Plug	Sharp Plug
+C	206	0	0	game/gfx/items/collectibles/collectibles_206_guillotine.png	Guillotine	Guillotine
+C	207	1	0	game/gfx/items/collectibles/collectibles_207_ballofbandages.png	Ball Of Bandages	Ball Of Bandages
+C	208	3	0	game/gfx/items/collectibles/collectibles_208_championbelt.png	Champion Belt	Champion Belt
+C	209	1	0	game/gfx/items/collectibles/collectibles_209_buttbombs.png	Butt Bombs	Butt Bombs
+C	210	1	0	game/gfx/items/collectibles/collectibles_210_gnawedleaf.png	Gnawed Leaf	Gnawed Leaf
+C	211	0	0	game/gfx/items/collectibles/collectibles_211_spiderbaby.png	Spiderbaby	Spiderbaby
+C	212	1	0	game/gfx/items/collectibles/collectibles_212_guppyscollar.png	Guppys Collar	Guppys Collar
+C	213	2	0	game/gfx/items/collectibles/collectibles_213_lostcontact.png	Lost Contact	Lost Contact
+C	214	1	0	game/gfx/items/collectibles/collectibles_214_anemic.png	Anemic	Anemic
+C	215	3	0	game/gfx/items/collectibles/collectibles_215_goathead.png	Goat Head	Goat Head
+C	216	3	0	game/gfx/items/collectibles/collectibles_216_ceremonialrobes.png	Ceremonial Robes	Ceremonial Robes
+C	217	2	0	game/gfx/items/collectibles/collectibles_217_momswig.png	Moms Wig	Moms Wig
+C	218	2	0	game/gfx/items/collectibles/collectibles_218_placenta.png	Placenta	Placenta
+C	219	2	0	game/gfx/items/collectibles/collectibles_219_oldbandage.png	Old Bandage	Old Bandage
+C	220	2	0	game/gfx/items/collectibles/collectibles_220_sadbombs.png	Sad Bombs	Sad Bombs
+C	221	3	0	game/gfx/items/collectibles/collectibles_221_rubbercement.png	Rubber Cement	Rubber Cement
+C	222	1	0	game/gfx/items/collectibles/collectibles_222_antigravity.png	Antigravity	Antigravity
+C	223	4	0	game/gfx/items/collectibles/collectibles_223_pyromaniac.png	Pyromaniac	Pyromaniac
+C	224	3	0	game/gfx/items/collectibles/collectibles_224_cricketsbody.png	Crickets Body	Crickets Body
+C	225	2	0	game/gfx/items/collectibles/collectibles_225_gimpy.png	Gimpy	Gimpy
+C	226	2	0	game/gfx/items/collectibles/collectibles_226_blacklotus.png	Black Lotus	Black Lotus
+C	227	1	0	game/gfx/items/collectibles/collectibles_227_piggybank.png	Piggy Bank	Piggy Bank
+C	228	2	0	game/gfx/items/collectibles/collectibles_228_momsperfume.png	Moms Perfume	Moms Perfume
+C	229	2	0	game/gfx/items/collectibles/collectibles_229_monstroslung.png	Monstros Lung	Monstros Lung
+C	230	3	0	game/gfx/items/collectibles/collectibles_230_abaddon.png	Abaddon	Abaddon
+C	231	2	0	game/gfx/items/collectibles/collectibles_231_balloftar.png	Ball Of Tar	Ball Of Tar
+C	232	4	0	game/gfx/items/collectibles/collectibles_232_stopwatch.png	Stop Watch	Stop Watch
+C	233	0	0	game/gfx/items/collectibles/collectibles_233_tinyplanet.png	Tiny Planet	Tiny Planet
+C	234	3	0	game/gfx/items/collectibles/collectibles_234_infestation2.png	Infestation 2	Infestation 2
+C	236	0	0	game/gfx/items/collectibles/collectibles_236_ecoli.png	E Coli	E Coli
+C	237	3	0	game/gfx/items/collectibles/collectibles_237_deathstouch.png	Deaths Touch	Deaths Touch
+C	238	0	0	game/gfx/items/collectibles/collectibles_238_keypiece1.png	Key Piece 1	Key Piece 1
+C	239	0	0	game/gfx/items/collectibles/collectibles_239_keypiece2.png	Key Piece 2	Key Piece 2
+C	240	1	0	game/gfx/items/collectibles/collectibles_240_experimentaltreatment.png	Experimental Treatment	Experimental Treatment
+C	241	2	0	game/gfx/items/collectibles/collectibles_241_contractfrombelow.png	Contract From Below	Contract From Below
+C	242	2	0	game/gfx/items/collectibles/collectibles_242_infamy.png	Infamy	Infamy
+C	243	2	0	game/gfx/items/collectibles/collectibles_243_trinityshield.png	Trinity Shield	Trinity Shield
+C	244	3	0	game/gfx/items/collectibles/collectibles_244_techpointfive.png	Tech5	Tech5
+C	245	4	0	game/gfx/items/collectibles/collectibles_245_2020.png	2020	2020
+C	246	1	0	game/gfx/items/collectibles/collectibles_246_bluemap.png	Blue Map	Blue Map
+C	247	2	0	game/gfx/items/collectibles/collectibles_247_bffs.png	Bffs	Bffs
+C	248	2	0	game/gfx/items/collectibles/collectibles_248_hivemind.png	Hive Mind	Hive Mind
+C	249	3	0	game/gfx/items/collectibles/collectibles_249_theresoptions.png	Theres Options	Theres Options
+C	250	1	0	game/gfx/items/collectibles/collectibles_250_bogobombs.png	Bogo Bombs	Bogo Bombs
+C	251	2	0	game/gfx/items/collectibles/collectibles_251_starterdeck.png	Starter Deck	Starter Deck
+C	252	0	0	game/gfx/items/collectibles/collectibles_252_littlebaggy.png	Little Baggy	Little Baggy
+C	253	2	0	game/gfx/items/collectibles/collectibles_253_magicscab.png	Magic Scab	Magic Scab
+C	254	2	0	game/gfx/items/collectibles/collectibles_254_bloodclot.png	Blood Clot	Blood Clot
+C	255	2	0	game/gfx/items/collectibles/collectibles_255_screw.png	Screw	Screw
+C	256	1	0	game/gfx/items/collectibles/collectibles_256_hotbombs.png	Hot Bombs	Hot Bombs
+C	257	2	0	game/gfx/items/collectibles/collectibles_257_firemind.png	Fire Mind	Fire Mind
+C	258	0	0	game/gfx/items/collectibles/collectibles_258_missingno.png	Missing No	Missing No
+C	259	3	0	game/gfx/items/collectibles/collectibles_259_darkmatter.png	Dark Matter	Dark Matter
+C	260	3	0	game/gfx/items/collectibles/collectibles_260_blackcandle.png	Black Candle	Black Candle
+C	261	3	0	game/gfx/items/collectibles/collectibles_261_proptosis.png	Proptosis	Proptosis
+C	262	0	0	game/gfx/items/collectibles/collectibles_262_missingpage2.png	Missing Page 2	Missing Page 2
+C	263	2	4	game/gfx/items/collectibles/collectibles_263_blankrune.png	Clear Rune	Clear Rune
+C	264	1	0	game/gfx/items/collectibles/collectibles_264_smartfly.png	Smart Fly	Smart Fly
+C	265	3	0	game/gfx/items/collectibles/collectibles_265_drybaby.png	Dry Baby	Dry Baby
+C	266	2	0	game/gfx/items/collectibles/collectibles_266_juicysack.png	Juicy Sack	Juicy Sack
+C	267	1	0	game/gfx/items/collectibles/collectibles_267_robobaby2.png	Robobaby 20	Robobaby 20
+C	268	3	0	game/gfx/items/collectibles/collectibles_268_rottenbaby.png	Rotten Baby	Rotten Baby
+C	269	1	0	game/gfx/items/collectibles/collectibles_269_headlessbaby.png	Headless Baby	Headless Baby
+C	270	2	0	game/gfx/items/collectibles/collectibles_270_leech.png	Leech	Leech
+C	271	2	0	game/gfx/items/collectibles/collectibles_271_mysterysack.png	Mystery Sack	Mystery Sack
+C	272	0	0	game/gfx/items/collectibles/collectibles_272_bff.png	Bbf	Bbf
+C	273	0	0	game/gfx/items/collectibles/collectibles_273_bobsbrain.png	Bobs Brain	Bobs Brain
+C	274	0	0	game/gfx/items/collectibles/collectibles_274_bestbud.png	Best Bud	Best Bud
+C	275	2	0	game/gfx/items/collectibles/collectibles_275_lilbrimstone.png	Lil Brimstone	Lil Brimstone
+C	276	0	0	game/gfx/items/collectibles/collectibles_276_isaacsheart.png	Isaacs Heart	Isaacs Heart
+C	277	1	0	game/gfx/items/collectibles/collectibles_277_lilhaunt.png	Lil Haunt	Lil Haunt
+C	278	3	0	game/gfx/items/collectibles/collectibles_278_darkbum.png	Dark Bum	Dark Bum
+C	279	1	0	game/gfx/items/collectibles/collectibles_279_bigfan.png	Big Fan	Big Fan
+C	280	1	0	game/gfx/items/collectibles/collectibles_280_sissylonglegs.png	Sissy Longlegs	Sissy Longlegs
+C	281	1	0	game/gfx/items/collectibles/collectibles_281_punchingbag.png	Punching Bag	Punching Bag
+C	282	1	0	game/gfx/items/collectibles/collectibles_282_howtojump.png	How To Jump	How To Jump
+C	283	1	6	game/gfx/items/collectibles/collectibles_283_d100.png	D100	D100
+C	284	1	6	game/gfx/items/collectibles/collectibles_284_d4.png	D4	D4
+C	285	1	2	game/gfx/items/collectibles/collectibles_285_d10.png	D10	D10
+C	286	2	4	game/gfx/items/collectibles/collectibles_286_blankcard.png	Blank Card	Blank Card
+C	287	0	6	game/gfx/items/collectibles/collectibles_287_bookofsecrets.png	Book Of Secrets	Book Of Secrets
+C	288	1	2	game/gfx/items/collectibles/collectibles_288_boxofspiders.png	Box Of Spiders	Box Of Spiders
+C	289	1	110	game/gfx/items/collectibles/collectibles_289_redcandle.png	Red Candle	Red Candle
+C	290	0	0	game/gfx/items/collectibles/collectibles_290_thejar.png	The Jar	The Jar
+C	291	1	4	game/gfx/items/collectibles/collectibles_291_flush.png	Flush	Flush
+C	292	3	6	game/gfx/items/collectibles/collectibles_292_satanicbible.png	Satanic Bible	Satanic Bible
+C	293	1	3	game/gfx/items/collectibles/collectibles_293_headofkrampus.png	Head Of Krampus	Head Of Krampus
+C	294	0	60	game/gfx/items/collectibles/collectibles_294_butterbean.png	Butter Bean	Butter Bean
+C	295	0	0	game/gfx/items/collectibles/collectibles_295_magicfingers.png	Magic Fingers	Magic Fingers
+C	296	1	3	game/gfx/items/collectibles/collectibles_296_converter.png	Converter	Converter
+C	297	2	0	game/gfx/items/collectibles/collectibles_297_bluebox.png	Pandoras Box	Pandoras Box
+C	298	1	1	game/gfx/items/collectibles/collectibles_298_unicornstump.png	Unicorn Stump	Unicorn Stump
+C	299	1	0	game/gfx/items/collectibles/collectibles_299_taurus.png	Taurus	Taurus
+C	300	2	0	game/gfx/items/collectibles/collectibles_300_aries.png	Aries	Aries
+C	301	3	0	game/gfx/items/collectibles/collectibles_301_cancer.png	Cancer	Cancer
+C	302	1	0	game/gfx/items/collectibles/collectibles_302_leo.png	Leo	Leo
+C	303	2	0	game/gfx/items/collectibles/collectibles_303_virgo.png	Virgo	Virgo
+C	304	1	0	game/gfx/items/collectibles/collectibles_304_libra.png	Libra	Libra
+C	305	3	0	game/gfx/items/collectibles/collectibles_305_scorpio.png	Scorpio	Scorpio
+C	306	3	0	game/gfx/items/collectibles/collectibles_306_sagittarius.png	Sagittarius	Sagittarius
+C	307	3	0	game/gfx/items/collectibles/collectibles_307_capricorn.png	Capricorn	Capricorn
+C	308	2	0	game/gfx/items/collectibles/collectibles_308_aquarius.png	Aquarius	Aquarius
+C	309	2	0	game/gfx/items/collectibles/collectibles_309_pisces.png	Pisces	Pisces
+C	310	3	0	game/gfx/items/collectibles/collectibles_310_evesmascara.png	Eves Mascara	Eves Mascara
+C	311	3	0	game/gfx/items/collectibles/collectibles_311_judasshadow.png	Judas Shadow	Judas Shadow
+C	312	2	0	game/gfx/items/collectibles/collectibles_312_maggysbow.png	Maggys Bow	Maggys Bow
+C	313	4	0	game/gfx/items/collectibles/collectibles_313_holymantle.png	Holy Mantle	Holy Mantle
+C	314	1	0	game/gfx/items/collectibles/collectibles_314_thunderthighs.png	Thunder Thighs	Thunder Thighs
+C	315	0	0	game/gfx/items/collectibles/collectibles_315_strangeattractor.png	Strange Attractor	Strange Attractor
+C	316	0	0	game/gfx/items/collectibles/collectibles_316_cursedeye.png	Cursed Eye	Cursed Eye
+C	317	3	0	game/gfx/items/collectibles/collectibles_317_mysteriousliquid.png	Mysterious Liquid	Mysterious Liquid
+C	318	1	0	game/gfx/items/collectibles/collectibles_318_gemini.png	Gemini	Gemini
+C	319	2	0	game/gfx/items/collectibles/collectibles_319_cainseye.png	Cains Other Eye	Cains Other Eye
+C	320	1	0	game/gfx/items/collectibles/collectibles_320_bluebabysonlyfriend.png	S Only Friend	S Only Friend
+C	321	1	0	game/gfx/items/collectibles/collectibles_321_samsonschains.png	Samsons Chains	Samsons Chains
+C	322	2	0	game/gfx/items/collectibles/collectibles_322_mongobaby.png	Mongo Baby	Mongo Baby
+C	323	1	6	game/gfx/items/collectibles/collectibles_323_isaacstears.png	Isaacs Tears	Isaacs Tears
+C	324	1	6	game/gfx/items/collectibles/collectibles_324_undefined.png	Undefined	Undefined
+C	325	0	4	game/gfx/items/collectibles/collectibles_325_scissors.png	Scissors	Scissors
+C	326	1	90	game/gfx/items/collectibles/collectibles_326_breathoflife.png	Breath Of Life	Breath Of Life
+C	327	2	0	game/gfx/items/collectibles/collectibles_327_thepolaroid.png	The Polaroid	The Polaroid
+C	328	2	0	game/gfx/items/collectibles/collectibles_328_thenegative.png	The Negative	The Negative
+C	329	1	0	game/gfx/items/collectibles/collectibles_329_theludovicotechnique.png	The Ludovico Technique	The Ludovico Technique
+C	330	2	0	game/gfx/items/collectibles/collectibles_330_soymilk.png	Soy Milk	Soy Milk
+C	331	4	0	game/gfx/items/collectibles/collectibles_331_godhead.png	Godhead	Godhead
+C	332	1	0	game/gfx/items/collectibles/collectibles_332_lazarusrags.png	Lazarus Rags	Lazarus Rags
+C	333	3	0	game/gfx/items/collectibles/collectibles_333_mind.png	The Mind	The Mind
+C	334	3	0	game/gfx/items/collectibles/collectibles_334_body.png	The Body	The Body
+C	335	3	0	game/gfx/items/collectibles/collectibles_335_soul.png	The Soul	The Soul
+C	336	2	0	game/gfx/items/collectibles/collectibles_336_deadonion.png	Dead Onion	Dead Onion
+C	337	1	0	game/gfx/items/collectibles/collectibles_337_brokenwatch.png	Broken Watch	Broken Watch
+C	338	1	70	game/gfx/items/collectibles/collectibles_338_boomerang.png	The Boomerang	The Boomerang
+C	339	1	0	game/gfx/items/collectibles/collectibles_339_safetypin.png	Safety Pin	Safety Pin
+C	340	1	0	game/gfx/items/collectibles/collectibles_340_caffeinepill.png	Caffeine Pill	Caffeine Pill
+C	341	3	0	game/gfx/items/collectibles/collectibles_341_tornphoto.png	Torn Photo	Torn Photo
+C	342	3	0	game/gfx/items/collectibles/collectibles_342_bluecap.png	Blue Cap	Blue Cap
+C	343	1	0	game/gfx/items/collectibles/collectibles_343_latchkey.png	Latch Key	Latch Key
+C	344	1	0	game/gfx/items/collectibles/collectibles_344_matchbook.png	Match Book	Match Book
+C	345	3	0	game/gfx/items/collectibles/collectibles_345_synthoil.png	Synthoil	Synthoil
+C	346	1	0	game/gfx/items/collectibles/collectibles_346_asnack.png	A Snack	A Snack
+C	347	3	0	game/gfx/items/collectibles/collectibles_347_diplopia.png	Diplopia	Diplopia
+C	348	1	4	game/gfx/items/collectibles/collectibles_348_placebo.png	Placebo	Placebo
+C	349	1	1	game/gfx/items/collectibles/collectibles_349_woodennickel.png	Wooden Nickel	Wooden Nickel
+C	350	3	0	game/gfx/items/collectibles/collectibles_350_toxicshock.png	Toxic Shock	Toxic Shock
+C	351	1	6	game/gfx/items/collectibles/collectibles_351_megabean.png	Mega Bean	Mega Bean
+C	352	1	110	game/gfx/items/collectibles/collectibles_352_glasscannon.png	Glass Cannon	Glass Cannon
+C	353	2	0	game/gfx/items/collectibles/collectibles_353_bomberboy.png	Bomber Boy	Bomber Boy
+C	354	2	0	game/gfx/items/collectibles/collectibles_354_crackjacks.png	Crack Jacks	Crack Jacks
+C	355	2	0	game/gfx/items/collectibles/collectibles_355_momspearls.png	Moms Pearls	Moms Pearls
+C	356	3	0	game/gfx/items/collectibles/collectibles_356_carbattery.png	Car Battery	Car Battery
+C	357	1	3	game/gfx/items/collectibles/collectibles_357_pandorasbox.png	Box Of Friends	Box Of Friends
+C	358	0	0	game/gfx/items/collectibles/collectibles_358_thewiz.png	The Wiz	The Wiz
+C	359	3	0	game/gfx/items/collectibles/collectibles_359_8inchnails.png	8 Inch Nails	8 Inch Nails
+C	360	4	0	game/gfx/items/collectibles/collectibles_360_incubus.png	Incubus	Incubus
+C	361	2	0	game/gfx/items/collectibles/collectibles_361_fatesreward.png	Fates Reward	Fates Reward
+C	362	2	0	game/gfx/items/collectibles/collectibles_362_lilchest.png	Lil Chest	Lil Chest
+C	363	2	0	game/gfx/items/collectibles/collectibles_363_swornprotector.png	Sworn Protector	Sworn Protector
+C	364	1	0	game/gfx/items/collectibles/collectibles_364_friendzone.png	Friend Zone	Friend Zone
+C	365	2	0	game/gfx/items/collectibles/collectibles_365_lostfly.png	Lost Fly	Lost Fly
+C	366	1	0	game/gfx/items/collectibles/collectibles_366_scatterbombs.png	Scatter Bombs	Scatter Bombs
+C	367	1	0	game/gfx/items/collectibles/collectibles_367_stickybombs.png	Sticky Bombs	Sticky Bombs
+C	368	1	0	game/gfx/items/collectibles/collectibles_368_epiphora.png	Epiphora	Epiphora
+C	369	2	0	game/gfx/items/collectibles/collectibles_369_continuum.png	Continuum	Continuum
+C	370	3	0	game/gfx/items/collectibles/collectibles_370_mrdolly.png	Mr Dolly	Mr Dolly
+C	371	0	0	game/gfx/items/collectibles/collectibles_371_curseofthetower.png	Curse Of The Tower	Curse Of The Tower
+C	372	2	0	game/gfx/items/collectibles/collectibles_372_chargedbaby.png	Charged Baby	Charged Baby
+C	373	3	0	game/gfx/items/collectibles/collectibles_373_deadeye.png	Dead Eye	Dead Eye
+C	374	3	0	game/gfx/items/collectibles/collectibles_374_holylight.png	Holy Light	Holy Light
+C	375	3	0	game/gfx/items/collectibles/collectibles_375_hosthat.png	Host Hat	Host Hat
+C	376	2	0	game/gfx/items/collectibles/collectibles_376_restock.png	Restock	Restock
+C	377	1	0	game/gfx/items/collectibles/collectibles_377_burstingsack.png	Bursting Sack	Bursting Sack
+C	378	2	0	game/gfx/items/collectibles/collectibles_378_numbertwo.png	Number Two	Number Two
+C	379	2	0	game/gfx/items/collectibles/collectibles_379_pupuladuplex.png	Pupula Duplex	Pupula Duplex
+C	380	2	0	game/gfx/items/collectibles/collectibles_380_paytoplay.png	Pay To Play	Pay To Play
+C	381	3	0	game/gfx/items/collectibles/collectibles_381_edensblessing.png	Edens Blessing	Edens Blessing
+C	382	1	2	game/gfx/items/collectibles/collectibles_382_friendlyball.png	Friendly Ball	Friendly Ball
+C	383	1	450	game/gfx/items/collectibles/collectibles_383_teardetonator.png	Tear Detonator	Tear Detonator
+C	384	1	0	game/gfx/items/collectibles/collectibles_384_lilgurdy.png	Lil Gurdy	Lil Gurdy
+C	385	1	0	game/gfx/items/collectibles/collectibles_385_bumbo.png	Bumbo	Bumbo
+C	386	1	3	game/gfx/items/collectibles/collectibles_386_d12.png	D12	D12
+C	387	2	0	game/gfx/items/collectibles/collectibles_387_censer.png	Censer	Censer
+C	388	0	0	game/gfx/items/collectibles/collectibles_388_keybum.png	Key Bum	Key Bum
+C	389	3	0	game/gfx/items/collectibles/collectibles_389_runebag.png	Rune Bag	Rune Bag
+C	390	3	0	game/gfx/items/collectibles/collectibles_390_seraphim.png	Seraphim	Seraphim
+C	391	1	0	game/gfx/items/collectibles/collectibles_391_betrayal.png	Betrayal	Betrayal
+C	392	1	0	game/gfx/items/collectibles/collectibles_392_zodiac.png	Zodiac	Zodiac
+C	393	2	0	game/gfx/items/collectibles/collectibles_393_serpentskiss.png	Serpents Kiss	Serpents Kiss
+C	394	0	0	game/gfx/items/collectibles/collectibles_394_marked.png	Marked	Marked
+C	395	4	0	game/gfx/items/collectibles/collectibles_395_techx.png	Tech X	Tech X
+C	396	0	0	game/gfx/items/collectibles/collectibles_396_ventriclerazor.png	Ventricle Razor	Ventricle Razor
+C	397	3	0	game/gfx/items/collectibles/collectibles_397_tractorbeam.png	Tractor Beam	Tractor Beam
+C	398	1	0	game/gfx/items/collectibles/collectibles_398_godsflesh.png	Gods Flesh	Gods Flesh
+C	399	3	0	game/gfx/items/collectibles/collectibles_399_mawofthevoid.png	Maw Of The Void	Maw Of The Void
+C	400	1	0	game/gfx/items/collectibles/collectibles_400_spearofdestiny.png	Spear Of Destiny	Spear Of Destiny
+C	401	3	0	game/gfx/items/collectibles/collectibles_401_explosivo.png	Explosivo	Explosivo
+C	402	3	0	game/gfx/items/collectibles/collectibles_402_chaos.png	Chaos	Chaos
+C	403	1	0	game/gfx/items/collectibles/collectibles_403_spidermod.png	Spider Mod	Spider Mod
+C	404	1	0	game/gfx/items/collectibles/collectibles_404_fartbaby.png	Farting Baby	Farting Baby
+C	405	1	0	game/gfx/items/collectibles/collectibles_405_gbbug.png	Gb Bug	Gb Bug
+C	406	1	4	game/gfx/items/collectibles/collectibles_406_d8.png	D8	D8
+C	407	3	0	game/gfx/items/collectibles/collectibles_407_purity.png	Purity	Purity
+C	408	3	0	game/gfx/items/collectibles/collectibles_408_athame.png	Athame	Athame
+C	409	2	0	game/gfx/items/collectibles/collectibles_409_emptyvessel.png	Empty Vessel	Empty Vessel
+C	410	2	0	game/gfx/items/collectibles/collectibles_410_evileye.png	Evil Eye	Evil Eye
+C	411	3	0	game/gfx/items/collectibles/collectibles_411_lustyblood.png	Lusty Blood	Lusty Blood
+C	412	1	0	game/gfx/items/collectibles/collectibles_412_cambionconception.png	Cambion Conception	Cambion Conception
+C	413	1	0	game/gfx/items/collectibles/collectibles_413_immaculateconception.png	Immaculate Conception	Immaculate Conception
+C	414	3	0	game/gfx/items/collectibles/collectibles_414_moreoptions.png	More Options	More Options
+C	415	4	0	game/gfx/items/collectibles/collectibles_415_crownoflight.png	Crown Of Light	Crown Of Light
+C	416	2	0	game/gfx/items/collectibles/collectibles_416_deeppockets.png	Deep Pockets	Deep Pockets
+C	417	3	0	game/gfx/items/collectibles/collectibles_417_succubus.png	Succubus	Succubus
+C	418	2	0	game/gfx/items/collectibles/collectibles_418_fruitcake.png	Fruit Cake	Fruit Cake
+C	419	3	4	game/gfx/items/collectibles/collectibles_419_teleport20.png	Teleport 20	Teleport 20
+C	420	0	0	game/gfx/items/collectibles/collectibles_420_blackpowder.png	Black Powder	Black Powder
+C	421	0	120	game/gfx/items/collectibles/collectibles_421_kidneybean.png	Kidney Bean	Kidney Bean
+C	422	3	2	game/gfx/items/collectibles/collectibles_422_glowinghourglass.png	Glowing Hour Glass	Glowing Hour Glass
+C	423	2	0	game/gfx/items/collectibles/collectibles_423_circleofprotection.png	Circle Of Protection	Circle Of Protection
+C	424	3	0	game/gfx/items/collectibles/collectibles_424_sackhead.png	Sack Head	Sack Head
+C	425	1	0	game/gfx/items/collectibles/collectibles_425_nightlight.png	Night Light	Night Light
+C	426	0	0	game/gfx/items/collectibles/collectibles_426_obsessedfan.png	Obsessed Fan	Obsessed Fan
+C	427	1	1	game/gfx/items/collectibles/collectibles_427_minecrafter.png	Mine Crafter	Mine Crafter
+C	428	2	0	game/gfx/items/collectibles/collectibles_428_pjs.png	Pjs	Pjs
+C	429	2	0	game/gfx/items/collectibles/collectibles_429_headofthekeeper.png	Head Of The Keeper	Head Of The Keeper
+C	430	1	0	game/gfx/items/collectibles/collectibles_430_papafly.png	Papa Fly	Papa Fly
+C	431	2	0	game/gfx/items/collectibles/collectibles_431_multidimensionalbaby.png	Multidimensional Baby	Multidimensional Baby
+C	432	2	0	game/gfx/items/collectibles/collectibles_432_glitterbombs.png	Glitter Bombs	Glitter Bombs
+C	433	1	0	game/gfx/items/collectibles/collectibles_433_myshadow.png	My Shadow	My Shadow
+C	434	2	0	game/gfx/items/collectibles/collectibles_434_jarofflies.png	Jar Of Flies	Jar Of Flies
+C	435	1	0	game/gfx/items/collectibles/collectibles_435_lilloki.png	Lil Loki	Lil Loki
+C	436	1	0	game/gfx/items/collectibles/collectibles_436_milk.png	Milk	Milk
+C	437	1	3	game/gfx/items/collectibles/collectibles_437_d7.png	D7	D7
+C	438	3	0	game/gfx/items/collectibles/collectibles_438_binky.png	Binky	Binky
+C	439	2	4	game/gfx/items/collectibles/collectibles_439_momsbox.png	Moms Box	Moms Box
+C	440	2	0	game/gfx/items/collectibles/collectibles_440_kidneystone.png	Kidney Stone	Kidney Stone
+C	441	4	12	game/gfx/items/collectibles/collectibles_441_megasatansbreath.png	Mega Blast	Mega Blast
+C	442	1	0	game/gfx/items/collectibles/collectibles_442_darkprincescrown.png	Dark Princes Crown	Dark Princes Crown
+C	443	3	0	game/gfx/items/collectibles/collectibles_443_apple.png	Apple	Apple
+C	444	3	0	game/gfx/items/collectibles/collectibles_444_leadpencil.png	Lead Pencil	Lead Pencil
+C	445	2	0	game/gfx/items/collectibles/collectibles_445_dogtooth.png	Dog Tooth	Dog Tooth
+C	446	1	0	game/gfx/items/collectibles/collectibles_446_deadtooth.png	Dead Tooth	Dead Tooth
+C	447	0	0	game/gfx/items/collectibles/collectibles_447_lingerbean.png	Linger Bean	Linger Bean
+C	448	1	0	game/gfx/items/collectibles/collectibles_448_shardofglass.png	Shard Of Glass	Shard Of Glass
+C	449	1	0	game/gfx/items/collectibles/collectibles_449_metalplate.png	Metal Plate	Metal Plate
+C	450	2	0	game/gfx/items/collectibles/collectibles_450_eyeofgreed.png	Eye Of Greed	Eye Of Greed
+C	451	2	0	game/gfx/items/collectibles/collectibles_451_tarotcloth.png	Tarot Cloth	Tarot Cloth
+C	452	0	0	game/gfx/items/collectibles/collectibles_452_varicoseveins.png	Varicose Veins	Varicose Veins
+C	453	3	0	game/gfx/items/collectibles/collectibles_453_compoundfracture.png	Compound Fracture	Compound Fracture
+C	454	2	0	game/gfx/items/collectibles/collectibles_454_polydactyly.png	Polydactyly	Polydactyly
+C	455	1	0	game/gfx/items/collectibles/collectibles_455_dadslostcoin.png	Dads Lost Coin	Dads Lost Coin
+C	456	1	0	game/gfx/items/collectibles/collectibles_456_moldybread.png	Midnight Snack	Midnight Snack
+C	457	2	0	game/gfx/items/collectibles/collectibles_457_conehead.png	Cone Head	Cone Head
+C	458	2	0	game/gfx/items/collectibles/collectibles_458_bellybutton.png	Belly Button	Belly Button
+C	459	3	0	game/gfx/items/collectibles/collectibles_459_sinusinfection.png	Sinus Infection	Sinus Infection
+C	460	1	0	game/gfx/items/collectibles/collectibles_460_glaucoma.png	Glaucoma	Glaucoma
+C	461	3	0	game/gfx/items/collectibles/collectibles_461_parasitoid.png	Parasitoid	Parasitoid
+C	462	3	0	game/gfx/items/collectibles/collectibles_462_eyeofbelial.png	Eye Of Belial	Eye Of Belial
+C	463	2	0	game/gfx/items/collectibles/collectibles_463_sulfuricacid.png	Sulfuric Acid	Sulfuric Acid
+C	464	2	0	game/gfx/items/collectibles/collectibles_464_glyphofbalance.png	Glyph Of Balance	Glyph Of Balance
+C	465	2	0	game/gfx/items/collectibles/collectibles_465_analogstick.png	Analog Stick	Analog Stick
+C	466	2	0	game/gfx/items/collectibles/collectibles_466_contagion.png	Contagion	Contagion
+C	467	1	0	game/gfx/items/collectibles/collectibles_467_finger.png	Finger	Finger
+C	468	0	0	game/gfx/items/collectibles/collectibles_468_shade.png	Shade	Shade
+C	469	1	0	game/gfx/items/collectibles/collectibles_469_depression.png	Depression	Depression
+C	470	0	0	game/gfx/items/collectibles/collectibles_470_hushy.png	Hushy	Hushy
+C	471	2	0	game/gfx/items/collectibles/collectibles_471_lilmonstro.png	Lil Monstro	Lil Monstro
+C	472	1	0	game/gfx/items/collectibles/collectibles_472_kingbaby.png	King Baby	King Baby
+C	473	1	0	game/gfx/items/collectibles/collectibles_473_bigchubby.png	Big Chubby	Big Chubby
+C	474	0	4	game/gfx/items/collectibles/collectibles_474_brokenglasscannon.png	Broken Glass Cannon	Broken Glass Cannon
+C	475	0	0	game/gfx/items/collectibles/collectibles_475_planc.png	Plan C	Plan C
+C	476	2	4	game/gfx/items/collectibles/collectibles_476_d1.png	D1	D1
+C	477	3	4	game/gfx/items/collectibles/collectibles_477_void.png	Void	Void
+C	478	0	2	game/gfx/items/collectibles/collectibles_478_pause.png	Pause	Pause
+C	479	2	6	game/gfx/items/collectibles/collectibles_479_smelter.png	Smelter	Smelter
+C	480	0	2	game/gfx/items/collectibles/collectibles_480_compost.png	Compost	Compost
+C	481	0	4	game/gfx/items/collectibles/collectibles_481_dataminer.png	Dataminer	Dataminer
+C	482	0	6	game/gfx/items/collectibles/collectibles_482_clicker.png	Clicker	Clicker
+C	483	3	0	game/gfx/items/collectibles/collectibles_483_mamamega.png	Mama Mega	Mama Mega
+C	484	1	300	game/gfx/items/collectibles/collectibles_484_waitwhat.png	Wait What	Wait What
+C	485	2	4	game/gfx/items/collectibles/collectibles_485_crookedpenny.png	Crooked Penny	Crooked Penny
+C	486	0	2	game/gfx/items/collectibles/collectibles_486_dullrazor.png	Dull Razor	Dull Razor
+C	487	2	0	game/gfx/items/collectibles/collectibles_487_potatopeeler.png	Potato Peeler	Potato Peeler
+C	488	1	2	game/gfx/items/collectibles/collectibles_488_metronome.png	Metronome	Metronome
+C	489	4	4	game/gfx/items/collectibles/collectibles_489_dinfinity.png	D Infinity	D Infinity
+C	490	2	12	game/gfx/items/collectibles/collectibles_490_edenssoul.png	Edens Soul	Edens Soul
+C	491	2	0	game/gfx/items/collectibles/collectibles_491_acidbaby.png	Acid Baby	Acid Baby
+C	492	2	0	game/gfx/items/collectibles/collectibles_492_yolisten.png	Yo Listen	Yo Listen
+C	493	1	0	game/gfx/items/collectibles/collectibles_493_adderline.png	Adrenaline	Adrenaline
+C	494	3	0	game/gfx/items/collectibles/collectibles_494_jacobsladder.png	Jacobs Ladder	Jacobs Ladder
+C	495	3	0	game/gfx/items/collectibles/collectibles_495_ghostpepper.png	Ghost Pepper	Ghost Pepper
+C	496	3	0	game/gfx/items/collectibles/collectibles_496_euthanasia.png	Euthanasia	Euthanasia
+C	497	3	0	game/gfx/items/collectibles/collectibles_497_camoundies.png	Camo Undies	Camo Undies
+C	498	1	0	game/gfx/items/collectibles/collectibles_498_duality.png	Duality	Duality
+C	499	3	0	game/gfx/items/collectibles/collectibles_499_eucharist.png	Eucharist	Eucharist
+C	500	2	0	game/gfx/items/collectibles/collectibles_500_sackofsacks.png	Sack Of Sacks	Sack Of Sacks
+C	501	1	0	game/gfx/items/collectibles/collectibles_501_greedsgullet.png	Greeds Gullet	Greeds Gullet
+C	502	1	0	game/gfx/items/collectibles/collectibles_502_largezit.png	Large Zit	Large Zit
+C	503	3	0	game/gfx/items/collectibles/collectibles_503_littlehorn.png	Little Horn	Little Horn
+C	504	0	250	game/gfx/items/collectibles/collectibles_504_brownnugget.png	Brown Nugget	Brown Nugget
+C	505	2	0	game/gfx/items/collectibles/collectibles_505_pokego.png	Poke Go	Poke Go
+C	506	3	0	game/gfx/items/collectibles/collectibles_506_backstabber.png	Backstabber	Backstabber
+C	507	2	300	game/gfx/items/collectibles/collectibles_507_sharpstraw.png	Sharp Straw	Sharp Straw
+C	508	1	0	game/gfx/items/collectibles/collectibles_508_momsrazor.png	Moms Razor	Moms Razor
+C	509	1	0	game/gfx/items/collectibles/collectibles_509_bloodshoteye.png	Bloodshot Eye	Bloodshot Eye
+C	510	1	12	game/gfx/items/collectibles/collectibles_510_delirious.png	Delirious	Delirious
+C	511	1	0	game/gfx/items/collectibles/collectibles_511_angryfly.png	Angry Fly	Angry Fly
+C	512	1	4	game/gfx/items/collectibles/collectibles_512_blackhole.png	Black Hole	Black Hole
+C	513	2	0	game/gfx/items/collectibles/collectibles_513_bozo.png	Bozo	Bozo
+C	514	3	0	game/gfx/items/collectibles/collectibles_514_brokenmodem.png	Broken Modem	Broken Modem
+C	515	3	0	game/gfx/items/collectibles/collectibles_515_mysterygift.png	Mystery Gift	Mystery Gift
+C	516	1	4	game/gfx/items/collectibles/collectibles_516_sprinkler.png	Sprinkler	Sprinkler
+C	517	1	0	game/gfx/items/collectibles/collectibles_517_fastbombs.png	Fast Bombs	Fast Bombs
+C	518	2	0	game/gfx/items/collectibles/collectibles_518_buddybox.png	Buddy In A Box	Buddy In A Box
+C	519	1	0	game/gfx/items/collectibles/collectibles_519_lildelirium.png	Lil Delirium	Lil Delirium
+C	520	2	0	game/gfx/items/collectibles/collectibles_520_jumpercable.png	Jumper Cables	Jumper Cables
+C	521	2	6	game/gfx/items/collectibles/collectibles_521_cerealcutout.png	Coupon	Coupon
+C	522	1	200	game/gfx/items/collectibles/collectibles_522_telekinesis.png	Telekinesis	Telekinesis
+C	523	1	4	game/gfx/items/collectibles/collectibles_523_movingbox.png	Moving Box	Moving Box
+C	524	3	0	game/gfx/items/collectibles/collectibles_524_technologyzero.png	Technology Zero	Technology Zero
+C	525	0	0	game/gfx/items/collectibles/collectibles_525_leprosy.png	Leprosy	Leprosy
+C	526	2	0	game/gfx/items/collectibles/collectibles_526_7seals.png	7 Seals	7 Seals
+C	527	3	4	game/gfx/items/collectibles/collectibles_527_mr_me.png	Mr Me	Mr Me
+C	528	3	0	game/gfx/items/collectibles/collectibles_528_angelic prism.png	Angelic Prism	Angelic Prism
+C	529	1	0	game/gfx/items/collectibles/collectibles_529_pop.png	Pop	Pop
+C	530	1	0	game/gfx/items/collectibles/collectibles_530_deathslist.png	Deaths List	Deaths List
+C	531	4	0	game/gfx/items/collectibles/collectibles_531_haemolacria.png	Haemolacria	Haemolacria
+C	532	3	0	game/gfx/items/collectibles/collectibles_532_lachryphagy.png	Lachryphagy	Lachryphagy
+C	533	3	0	game/gfx/items/collectibles/collectibles_533_trisagion.png	Trisagion	Trisagion
+C	534	3	0	game/gfx/items/collectibles/collectibles_534_schoolbag.png	Schoolbag	Schoolbag
+C	535	2	0	game/gfx/items/collectibles/collectibles_535_blanket.png	Blanket	Blanket
+C	536	1	0	game/gfx/items/collectibles/collectibles_536_sacrificialaltar.png	Sacrificial Altar	Sacrificial Altar
+C	537	1	0	game/gfx/items/collectibles/collectibles_537_lilspewer.png	Lil Spewer	Lil Spewer
+C	538	2	0	game/gfx/items/collectibles/collectibles_538_marbles.png	Marbles	Marbles
+C	539	0	0	game/gfx/items/collectibles/collectibles_539_mysteryegg.png	Mystery Egg	Mystery Egg
+C	540	2	0	game/gfx/items/collectibles/collectibles_540_flatstone.png	Flat Stone	Flat Stone
+C	541	1	0	game/gfx/items/collectibles/collectibles_541_marrow.png	Marrow	Marrow
+C	542	1	0	game/gfx/items/collectibles/collectibles_542_slippedrib.png	Slipped Rib	Slipped Rib
+C	543	1	0	game/gfx/items/collectibles/collectibles_543_hallowedground.png	Hallowed Ground	Hallowed Ground
+C	544	1	0	game/gfx/items/collectibles/collectibles_544_pointyrib.png	Pointy Rib	Pointy Rib
+C	545	2	6	game/gfx/items/collectibles/collectibles_545_bookofthedead.png	Book Of The Dead	Book Of The Dead
+C	546	2	0	game/gfx/items/collectibles/collectibles_546_dadsring.png	Dads Ring	Dads Ring
+C	547	3	0	game/gfx/items/collectibles/collectibles_547_divorcepapers.png	Divorce Papers	Divorce Papers
+C	548	1	0	game/gfx/items/collectibles/collectibles_548_jawbone.png	Jaw Bone	Jaw Bone
+C	549	3	0	game/gfx/items/collectibles/collectibles_549_brittlebones.png	Brittle Bones	Brittle Bones
+C	550	4	4	game/gfx/items/collectibles/collectibles_550_shovelpiece1.png	Broken Shovel	Broken Shovel
+C	551	4	0	game/gfx/items/collectibles/collectibles_551_shovelpiece2.png	Broken Shovel2	Broken Shovel2
+C	552	4	4	game/gfx/items/collectibles/collectibles_552_momsshovel.png	Moms Shovel	Moms Shovel
+C	553	3	0	game/gfx/items/collectibles/collectibles_553_mucormycosis.png	Mucormycosis	Mucormycosis
+C	554	1	0	game/gfx/items/collectibles/collectibles_554_2spooky.png	2Spooky	2Spooky
+C	555	0	0	game/gfx/items/collectibles/collectibles_555_goldenrazor.png	Golden Razor	Golden Razor
+C	556	2	3	game/gfx/items/collectibles/collectibles_556_sulfur.png	Sulfur	Sulfur
+C	557	2	2	game/gfx/items/collectibles/collectibles_557_fortunecookie.png	Fortune Cookie	Fortune Cookie
+C	558	1	0	game/gfx/items/collectibles/collectibles_558_eyesore.png	Eye Sore	Eye Sore
+C	559	2	0	game/gfx/items/collectibles/collectibles_559_120volt.png	120 Volt	120 Volt
+C	560	1	0	game/gfx/items/collectibles/collectibles_560_ithurts.png	It Hurts	It Hurts
+C	561	1	0	game/gfx/items/collectibles/collectibles_561_almondmilk.png	Almond Milk	Almond Milk
+C	562	4	0	game/gfx/items/collectibles/collectibles_562_rockbottom.png	Rock Bottom	Rock Bottom
+C	563	1	0	game/gfx/items/collectibles/collectibles_563_enigmabombs.png	Nancy Bombs	Nancy Bombs
+C	564	2	0	game/gfx/items/collectibles/collectibles_564_barofsoap.png	A Bar Of Soap	A Bar Of Soap
+C	565	1	0	game/gfx/items/collectibles/collectibles_565_bloodpuppy.png	Blood Puppy	Blood Puppy
+C	566	2	0	game/gfx/items/collectibles/collectibles_566_dreamcatcher.png	Dream Catcher	Dream Catcher
+C	567	3	0	game/gfx/items/collectibles/collectibles_567_paschalcandle.png	Paschal Candle	Paschal Candle
+C	568	1	0	game/gfx/items/collectibles/collectibles_568_divineintervention.png	Divine Intervention	Divine Intervention
+C	569	1	0	game/gfx/items/collectibles/collectibles_569_bloodoath.png	Blood Oath	Blood Oath
+C	570	2	0	game/gfx/items/collectibles/collectibles_570_playdohcookie.png	Playdough Cookie	Playdough Cookie
+C	571	2	0	game/gfx/items/collectibles/collectibles_571_socks.png	Orphan Socks	Orphan Socks
+C	572	3	0	game/gfx/items/collectibles/collectibles_572_occulteye.png	Eye Of The Occult	Eye Of The Occult
+C	573	3	0	game/gfx/items/collectibles/collectibles_573_immaculateheart.png	Immaculate Heart	Immaculate Heart
+C	574	1	0	game/gfx/items/collectibles/collectibles_574_monstrance.png	Monstrance	Monstrance
+C	575	2	0	game/gfx/items/collectibles/collectibles_575_theintruder.png	The Intruder	The Intruder
+C	576	1	0	game/gfx/items/collectibles/collectibles_576_dirtymind.png	Dirty Mind	Dirty Mind
+C	577	3	0	game/gfx/items/collectibles/collectibles_577_damocles.png	Damocles	Damocles
+C	578	0	4	game/gfx/items/collectibles/collectibles_578_freelemonade.png	Free Lemonade	Free Lemonade
+C	579	3	0	game/gfx/items/collectibles/collectibles_579_spiritsword.png	Spirit Sword	Spirit Sword
+C	580	3	4	game/gfx/items/collectibles/collectibles_580_secretkey.png	Red Key	Red Key
+C	581	4	0	game/gfx/items/collectibles/collectibles_581_psyfly.png	Psy Fly	Psy Fly
+C	582	0	900	game/gfx/items/collectibles/collectibles_582_wavycap.png	Wavy Cap	Wavy Cap
+C	583	1	0	game/gfx/items/collectibles/collectibles_583_rocketinajar.png	Rocket In A Jar	Rocket In A Jar
+C	584	3	4	game/gfx/items/collectibles/collectibles_584_bookofvirtues.png	Book Of Virtues	Book Of Virtues
+C	585	1	12	game/gfx/items/collectibles/collectibles_585_alabasterbox.png	Alabaster Box	Alabaster Box
+C	586	3	0	game/gfx/items/collectibles/collectibles_586_jacobsladder.png	The Stairway	The Stairway
+C	588	2	0	game/gfx/items/collectibles/collectibles_588_sol.png	Sol	Sol
+C	589	3	0	game/gfx/items/collectibles/collectibles_589_luna.png	Luna	Luna
+C	590	2	0	game/gfx/items/collectibles/collectibles_590_mercurius.png	Mercurius	Mercurius
+C	591	2	0	game/gfx/items/collectibles/collectibles_591_venus.png	Venus	Venus
+C	592	3	0	game/gfx/items/collectibles/collectibles_592_terra.png	Terra	Terra
+C	593	0	0	game/gfx/items/collectibles/collectibles_593_mars.png	Mars	Mars
+C	594	2	0	game/gfx/items/collectibles/collectibles_594_jupiter.png	Jupiter	Jupiter
+C	595	2	0	game/gfx/items/collectibles/collectibles_595_saturnus.png	Saturnus	Saturnus
+C	596	3	0	game/gfx/items/collectibles/collectibles_596_uranus.png	Uranus	Uranus
+C	597	3	0	game/gfx/items/collectibles/collectibles_597_neptunus.png	Neptunus	Neptunus
+C	598	3	0	game/gfx/items/collectibles/collectibles_598_pluto.png	Pluto	Pluto
+C	599	2	0	game/gfx/items/collectibles/collectibles_599_voodoohead.png	Voodoo Head	Voodoo Head
+C	600	3	0	game/gfx/items/collectibles/collectibles_600_eyedrops.png	Eye Drops	Eye Drops
+C	601	3	0	game/gfx/items/collectibles/collectibles_601_actofcontrition.png	Act Of Contrition	Act Of Contrition
+C	602	2	0	game/gfx/items/collectibles/collectibles_602_membercard.png	Member Card	Member Card
+C	603	0	0	game/gfx/items/collectibles/collectibles_603_batterypack.png	Battery Pack	Battery Pack
+C	604	1	30	game/gfx/items/collectibles/collectibles_604_momsbracelet.png	Moms Bracelet	Moms Bracelet
+C	605	0	3	game/gfx/items/collectibles/collectibles_605_thescooper.png	The Scooper	The Scooper
+C	606	2	0	game/gfx/items/collectibles/collectibles_606_oculusrift.png	Ocular Rift	Ocular Rift
+C	607	1	0	game/gfx/items/collectibles/collectibles_607_boiledbaby.png	Boiled Baby	Boiled Baby
+C	608	2	0	game/gfx/items/collectibles/collectibles_608_freezerbaby.png	Freezer Baby	Freezer Baby
+C	609	3	2	game/gfx/items/collectibles/collectibles_609_floriansd6.png	Eternal D6	Eternal D6
+C	610	0	0	game/gfx/items/collectibles/collectibles_610_birdcage.png	Bird Cage	Bird Cage
+C	611	2	12	game/gfx/items/collectibles/collectibles_611_larynx.png	Larynx	Larynx
+C	612	1	0	game/gfx/items/collectibles/collectibles_612_lostsoul.png	Lost Soul	Lost Soul
+C	614	2	0	game/gfx/items/collectibles/collectibles_614_bloodbombs.png	Blood Bombs	Blood Bombs
+C	615	3	0	game/gfx/items/collectibles/collectibles_615_lildumpy.png	Lil Dumpy	Lil Dumpy
+C	616	3	0	game/gfx/items/collectibles/collectibles_616_birdseye.png	Birds Eye	Birds Eye
+C	617	2	0	game/gfx/items/collectibles/collectibles_617_lodestone.png	Lodestone	Lodestone
+C	618	2	0	game/gfx/items/collectibles/collectibles_618_rottentomato.png	Rotten Tomato	Rotten Tomato
+C	619	3	0	game/gfx/items/collectibles/collectibles_619_birthright.png	Birthright	Birthright
+C	621	2	0	game/gfx/items/collectibles/collectibles_621_redstew.png	Red Stew	Red Stew
+C	622	2	0	game/gfx/items/collectibles/collectibles_622_genesis.png	Genesis	Genesis
+C	623	1	0	game/gfx/items/collectibles/collectibles_623_sharpkey.png	Sharp Key	Sharp Key
+C	624	1	0	game/gfx/items/collectibles/collectibles_624_boosterpack.png	Booster Pack	Booster Pack
+C	625	4	12	game/gfx/items/collectibles/collectibles_625_megamush.png	Mega Mush	Mega Mush
+C	626	0	0	game/gfx/items/collectibles/collectibles_626_knifepiece1.png	Knife Piece 1	Knife Piece 1
+C	627	0	0	game/gfx/items/collectibles/collectibles_627_knifepiece2.png	Knife Piece 2	Knife Piece 2
+C	628	4	0	game/gfx/items/collectibles/collectibles_628_deathcertificate.png	Death Certificate	Death Certificate
+C	629	3	0	game/gfx/items/collectibles/collectibles_629_botfly.png	Bot Fly	Bot Fly
+C	631	0	2	game/gfx/items/collectibles/collectibles_631_meatcleaver.png	Meat Cleaver	Meat Cleaver
+C	632	1	0	game/gfx/items/collectibles/collectibles_632_evilcharm.png	Evil Charm	Evil Charm
+C	633	3	0	game/gfx/items/collectibles/collectibles_633_dogma.png	Dogma	Dogma
+C	634	1	0	game/gfx/items/collectibles/collectibles_634_purgatory.png	Purgatory	Purgatory
+C	635	1	90	game/gfx/items/collectibles/collectibles_635_stitches.png	Stitches	Stitches
+C	636	4	0	game/gfx/items/collectibles/collectibles_636_rkey.png	R Key	R Key
+C	637	2	0	game/gfx/items/collectibles/collectibles_637_knockoutdrops.png	Knockout Drops	Knockout Drops
+C	638	1	1	game/gfx/items/collectibles/collectibles_638_eraser.png	Eraser	Eraser
+C	639	1	4	game/gfx/items/collectibles/collectibles_639_yuckheart.png	Yuck Heart	Yuck Heart
+C	640	3	0	game/gfx/items/collectibles/collectibles_640_urnofsouls.png	Urn Of Souls	Urn Of Souls
+C	641	1	0	game/gfx/items/collectibles/collectibles_641_akeldama.png	Akeldama	Akeldama
+C	642	2	6	game/gfx/items/collectibles/collectibles_642_magicskin.png	Magic Skin	Magic Skin
+C	643	4	0	game/gfx/items/collectibles/collectibles_643_revelation.png	Revelation	Revelation
+C	644	1	0	game/gfx/items/collectibles/collectibles_644_consolationprize.png	Consolation Prize	Consolation Prize
+C	645	1	0	game/gfx/items/collectibles/collectibles_645_tinytoma.png	Tinytoma	Tinytoma
+C	646	2	0	game/gfx/items/collectibles/collectibles_646_brimstonebombs.png	Brimstone Bombs	Brimstone Bombs
+C	647	2	0	game/gfx/items/collectibles/collectibles_647_assaultbattery.png	4 5 Volt	4 5 Volt
+C	649	1	0	game/gfx/items/collectibles/collectibles_649_fruityplum.png	Fruity Plum	Fruity Plum
+C	650	0	4	game/gfx/items/collectibles/collectibles_650_plumflute.png	Plum Flute	Plum Flute
+C	651	3	0	game/gfx/items/collectibles/collectibles_651_starofbethlehem.png	Star Of Bethlehem	Star Of Bethlehem
+C	652	1	0	game/gfx/items/collectibles/collectibles_652_cubebaby.png	Cube Baby	Cube Baby
+C	653	1	0	game/gfx/items/collectibles/collectibles_653_vaderetro.png	Vade Retro	Vade Retro
+C	654	2	0	game/gfx/items/collectibles/collectibles_654_falsephd.png	False Phd	False Phd
+C	655	0	90	game/gfx/items/collectibles/collectibles_655_spintowin.png	Spin To Win	Spin To Win
+C	656	2	0	game/gfx/items/collectibles/collectibles_577_damocles.png	Damocles	Damocles
+C	657	1	0	game/gfx/items/collectibles/collectibles_657_vasculitis.png	Vasculitis	Vasculitis
+C	658	1	0	game/gfx/items/collectibles/collectibles_658_giantcell.png	Giant Cell	Giant Cell
+C	659	1	0	game/gfx/items/collectibles/collectibles_659_tropicamide.png	Tropicamide	Tropicamide
+C	660	3	0	game/gfx/items/collectibles/collectibles_660_cardreading.png	Card Reading	Card Reading
+C	661	2	0	game/gfx/items/collectibles/collectibles_661_quints.png	Quints	Quints
+C	663	2	0	game/gfx/items/collectibles/collectibles_663_toothandnail.png	Tooth And Nail	Tooth And Nail
+C	664	4	0	game/gfx/items/collectibles/collectibles_664_bingeeater.png	Binge Eater	Binge Eater
+C	665	2	0	game/gfx/items/collectibles/collectibles_665_guppyseye.png	Guppys Eye	Guppys Eye
+C	667	1	0	game/gfx/items/collectibles/collectibles_667_strawman.png	Strawman	Strawman
+C	668	0	0	game/gfx/items/collectibles/collectibles_668_dadsnote.png	Dads Note	Dads Note
+C	669	3	0	game/gfx/items/collectibles/collectibles_669_sausage.png	Sausage	Sausage
+C	670	2	0	game/gfx/items/collectibles/collectibles_670_options.png	Options	Options
+C	671	1	0	game/gfx/items/collectibles/collectibles_671_candyheart.png	Candy Heart	Candy Heart
+C	672	0	0	game/gfx/items/collectibles/collectibles_672_poundofflesh.png	A Pound Of Flesh	A Pound Of Flesh
+C	673	2	0	game/gfx/items/collectibles/collectibles_673_redemption.png	Redemption	Redemption
+C	674	1	0	game/gfx/items/collectibles/collectibles_674_spiritshackles.png	Spirit Shackles	Spirit Shackles
+C	675	1	0	game/gfx/items/collectibles/collectibles_675_crackedorb.png	Cracked Orb	Cracked Orb
+C	676	1	0	game/gfx/items/collectibles/collectibles_676_emptyheart.png	Empty Heart	Empty Heart
+C	677	1	0	game/gfx/items/collectibles/collectibles_677_astralprojection.png	Astral Projection	Astral Projection
+C	678	4	0	game/gfx/items/collectibles/collectibles_678_csection.png	C Section	C Section
+C	679	2	0	game/gfx/items/collectibles/collectibles_679_lilabaddon.png	Lil Abaddon	Lil Abaddon
+C	680	2	0	game/gfx/items/collectibles/collectibles_680_montezumasrevenge.png	Montezumas Revenge	Montezumas Revenge
+C	681	0	0	game/gfx/items/collectibles/collectibles_681_lilportal.png	Lil Portal	Lil Portal
+C	682	3	0	game/gfx/items/collectibles/collectibles_682_wormfriend.png	Worm Friend	Worm Friend
+C	683	2	0	game/gfx/items/collectibles/collectibles_683_bonespurs.png	Bone Spurs	Bone Spurs
+C	684	2	0	game/gfx/items/collectibles/collectibles_684_hungrysoul.png	Hungry Soul	Hungry Soul
+C	685	1	12	game/gfx/items/collectibles/collectibles_685_jarofwisps.png	Jar Of Wisps	Jar Of Wisps
+C	686	1	0	game/gfx/items/collectibles/collectibles_686_soullocket.png	Soul Locket	Soul Locket
+C	687	2	4	game/gfx/items/collectibles/collectibles_687_friendfinder.png	Friend Finder	Friend Finder
+C	688	2	0	game/gfx/items/collectibles/collectibles_688_innerchild.png	Inner Child	Inner Child
+C	689	4	0	game/gfx/items/collectibles/collectibles_689_glitchedcrown.png	Glitched Crown	Glitched Crown
+C	690	3	0	game/gfx/items/collectibles/collectibles_690_bellyjelly.png	Belly Jelly	Belly Jelly
+C	691	4	0	game/gfx/items/collectibles/collectibles_691_sacredorb.png	Sacred Orb	Sacred Orb
+C	692	1	0	game/gfx/items/collectibles/collectibles_692_sanguinebond.png	Sanguine Bond	Sanguine Bond
+C	693	2	0	game/gfx/items/collectibles/collectibles_693_theswarm.png	The Swarm	The Swarm
+C	694	3	0	game/gfx/items/collectibles/collectibles_694_heartbreak.png	Heartbreak	Heartbreak
+C	695	2	0	game/gfx/items/collectibles/collectibles_695_bloodygust.png	Bloody Gust	Bloody Gust
+C	696	3	0	game/gfx/items/collectibles/collectibles_696_salvation.png	Salvation	Salvation
+C	697	1	0	game/gfx/items/collectibles/collectibles_697_vanishingtwin.png	Vanishing Twin	Vanishing Twin
+C	698	4	0	game/gfx/items/collectibles/collectibles_698_twistedpair.png	Twisted Pair	Twisted Pair
+C	699	2	0	game/gfx/items/collectibles/collectibles_699_azazelsrage.png	Azazels Rage	Azazels Rage
+C	700	3	0	game/gfx/items/collectibles/collectibles_700_echochamber.png	Echo Chamber	Echo Chamber
+C	701	2	0	game/gfx/items/collectibles/collectibles_701_isaacstomb.png	Isaacs Tomb	Isaacs Tomb
+C	702	1	0	game/gfx/items/collectibles/collectibles_702_bloodsoul.png	Vengeful Spirit	Vengeful Spirit
+C	703	1	1	game/gfx/items/collectibles/collectibles_703_esaujr.png	Esau Jr	Esau Jr
+C	704	1	100000	game/gfx/items/collectibles/collectibles_704_berserk.png	Berserk	Berserk
+C	705	1	180	game/gfx/items/collectibles/collectibles_705_darkarts.png	Dark Arts	Dark Arts
+C	706	3	4	game/gfx/items/collectibles/collectibles_706_abyss.png	Abyss	Abyss
+C	707	1	0	game/gfx/items/collectibles/collectibles_707_supper.png	Supper	Supper
+C	708	3	0	game/gfx/items/collectibles/collectibles_708_stapler.png	Stapler	Stapler
+C	709	1	200	game/gfx/items/collectibles/collectibles_709_suplex.png	Suplex	Suplex
+C	710	3	0	game/gfx/items/collectibles/collectibles_710_bagofcrafting.png	Bag Of Crafting	Bag Of Crafting
+C	711	4	6	game/gfx/items/collectibles/collectibles_711_flip.png	Flip	Flip
+C	712	3	6	game/gfx/items/collectibles/collectibles_712_lemegeton.png	Lemegeton	Lemegeton
+C	713	3	300	game/gfx/items/collectibles/collectibles_713_sumptorium.png	Sumptorium	Sumptorium
+C	714	0	90	game/gfx/items/collectibles/collectibles_714_recall.png	Recall	Recall
+C	715	0	0	game/gfx/items/collectibles/collectibles_715_hold.png	Hold	Hold
+C	716	3	0	game/gfx/items/collectibles/collectibles_716_keeperssack.png	Keepers Sack	Keepers Sack
+C	717	2	0	game/gfx/items/collectibles/collectibles_717_keeperskin.png	Keepers Kin	Keepers Kin
+C	719	1	4	game/gfx/items/collectibles/collectibles_719_keepersbox.png	Keepers Box	Keepers Box
+C	720	2	12	game/gfx/items/collectibles/collectibles_720_everythingjar.png	Everything Jar	Everything Jar
+C	721	0	0	game/gfx/items/collectibles/collectibles_721_tmtrainer.png	Tmtrainer	Tmtrainer
+C	722	2	450	game/gfx/items/collectibles/collectibles_722_animasola.png	Anima Sola	Anima Sola
+C	723	4	6	game/gfx/items/collectibles/collectibles_723_spindowndice.png	Spindown Dice	Spindown Dice
+C	724	2	0	game/gfx/items/collectibles/collectibles_724_hypercoagulation.png	Hypercoagulation	Hypercoagulation
+C	725	0	0	game/gfx/items/collectibles/collectibles_725_ibs.png	Ibs	Ibs
+C	726	1	0	game/gfx/items/collectibles/collectibles_726_hemoptysis.png	Hemoptysis	Hemoptysis
+C	727	1	0	game/gfx/items/collectibles/collectibles_727_ghostbombs.png	Ghost Bombs	Ghost Bombs
+C	728	3	2	game/gfx/items/collectibles/collectibles_728_gello.png	Gello	Gello
+C	729	1	110	game/gfx/items/collectibles/collectibles_729_decapattack.png	Decap Attack	Decap Attack
+C	730	3	0	game/gfx/items/collectibles/collectibles_730_glasseye.png	Glass Eye	Glass Eye
+C	731	2	0	game/gfx/items/collectibles/collectibles_731_stye.png	Stye	Stye
+C	732	3	0	game/gfx/items/collectibles/collectibles_732_momsring.png	Moms Ring	Moms Ring
+T	1	-1	0	game/gfx/items/trinkets/trinket_001_swallowedpenny.png	Swallowed Penny	Swallowed Penny
+T	2	-1	0	game/gfx/items/trinkets/trinket_002_petrifiedpoop.png	Petrified Poop	Petrified Poop
+T	3	-1	0	game/gfx/items/trinkets/trinket_003_aaabattery.png	Aaa Battery	Aaa Battery
+T	4	-1	0	game/gfx/items/trinkets/trinket_004_brokenremote.png	Broken Remote	Broken Remote
+T	5	-1	0	game/gfx/items/trinkets/trinket_005_purpleheart.png	Purple Heart	Purple Heart
+T	6	-1	0	game/gfx/items/trinkets/trinket_006_brokenmagnet.png	Broken Magnet	Broken Magnet
+T	7	-1	0	game/gfx/items/trinkets/trinket_007_rosarybead.png	Rosary Bead	Rosary Bead
+T	8	-1	0	game/gfx/items/trinkets/trinket_008_cartridge.png	Cartridge	Cartridge
+T	9	-1	0	game/gfx/items/trinkets/trinket_009_pulseworm.png	Pulse Worm	Pulse Worm
+T	10	-1	0	game/gfx/items/trinkets/trinket_010_wiggleworm.png	Wiggle Worm	Wiggle Worm
+T	11	-1	0	game/gfx/items/trinkets/trinket_011_ringworm.png	Ring Worm	Ring Worm
+T	12	-1	0	game/gfx/items/trinkets/trinket_012_flatworm.png	Flat Worm	Flat Worm
+T	13	-1	0	game/gfx/items/trinkets/trinket_013_storecredit.png	Store Credit	Store Credit
+T	14	-1	0	game/gfx/items/trinkets/trinket_014_callus.png	Callus	Callus
+T	15	-1	0	game/gfx/items/trinkets/trinket_015_luckyrock.png	Lucky Rock	Lucky Rock
+T	16	-1	0	game/gfx/items/trinkets/trinket_016_momstoenail.png	Moms Toenail	Moms Toenail
+T	17	-1	0	game/gfx/items/trinkets/trinket_017_blacklipstick.png	Black Lipstick	Black Lipstick
+T	18	-1	0	game/gfx/items/trinkets/trinket_018_bibletract.png	Bible Tract	Bible Tract
+T	19	-1	0	game/gfx/items/trinkets/trinket_019_paperclip.png	Paper Clip	Paper Clip
+T	20	-1	0	game/gfx/items/trinkets/trinket_020_monkeypaw.png	Monkey Paw	Monkey Paw
+T	21	-1	0	game/gfx/items/trinkets/trinket_021_mysteriouspaper.png	Mysterious Paper	Mysterious Paper
+T	22	-1	0	game/gfx/items/trinkets/trinket_022_daemonstail.png	Daemons Tail	Daemons Tail
+T	23	-1	0	game/gfx/items/trinkets/trinket_023_missingposter.png	Missing Poster	Missing Poster
+T	24	-1	0	game/gfx/items/trinkets/trinket_024_buttpenny.png	Butt Penny	Butt Penny
+T	25	-1	0	game/gfx/items/trinkets/trinket_025_mysteriouscandy.png	Mysterious Candy	Mysterious Candy
+T	26	-1	0	game/gfx/items/trinkets/trinket_026_hookworm.png	Hook Worm	Hook Worm
+T	27	-1	0	game/gfx/items/trinkets/trinket_027_whipworm.png	Whip Worm	Whip Worm
+T	28	-1	0	game/gfx/items/trinkets/trinket_028_brokenankh.png	Broken Ankh	Broken Ankh
+T	29	-1	0	game/gfx/items/trinkets/trinket_029_fishhead.png	Fish Head	Fish Head
+T	30	-1	0	game/gfx/items/trinkets/trinket_030_pinkyeye.png	Pinky Eye	Pinky Eye
+T	31	-1	0	game/gfx/items/trinkets/trinket_031_pushpin.png	Push Pin	Push Pin
+T	32	-1	0	game/gfx/items/trinkets/trinket_032_libertycap.png	Liberty Cap	Liberty Cap
+T	33	-1	0	game/gfx/items/trinkets/trinket_033_umbilicalcord.png	Umbilical Cord	Umbilical Cord
+T	34	-1	0	game/gfx/items/trinkets/trinket_034_childsheart.png	Childs Heart	Childs Heart
+T	35	-1	0	game/gfx/items/trinkets/trinket_035_curvedhorn.png	Curved Horn	Curved Horn
+T	36	-1	0	game/gfx/items/trinkets/trinket_036_rustedkey.png	Rusted Key	Rusted Key
+T	37	-1	0	game/gfx/items/trinkets/trinket_037_goathoof.png	Goat Hoof	Goat Hoof
+T	38	-1	0	game/gfx/items/trinkets/trinket_038_momspearl.png	Moms Pearl	Moms Pearl
+T	39	-1	0	game/gfx/items/trinkets/trinket_039_cancer.png	Cancer Trinket	Cancer Trinket
+T	40	-1	0	game/gfx/items/trinkets/trinket_040_redpatch.png	Red Patch	Red Patch
+T	41	-1	0	game/gfx/items/trinkets/trinket_041_matchstick.png	Match Stick	Match Stick
+T	42	-1	0	game/gfx/items/trinkets/trinket_042_luckytoe.png	Lucky Toe	Lucky Toe
+T	43	-1	0	game/gfx/items/trinkets/trinket_043_cursedskull.png	Cursed Skull	Cursed Skull
+T	44	-1	0	game/gfx/items/trinkets/trinket_044_safetycap.png	Safety Cap	Safety Cap
+T	45	-1	0	game/gfx/items/trinkets/trinket_045_aceofspades.png	Ace Of Spades	Ace Of Spades
+T	46	-1	0	game/gfx/items/trinkets/trinket_046_isaacsfork.png	Isaacs Fork	Isaacs Fork
+T	48	-1	0	game/gfx/items/trinkets/trinket_048_amissingpage.png	A Missing Page	A Missing Page
+T	49	-1	0	game/gfx/items/trinkets/trinket_049_bloodypenny.png	Bloody Penny	Bloody Penny
+T	50	-1	0	game/gfx/items/trinkets/trinket_050_burntpenny.png	Burnt Penny	Burnt Penny
+T	51	-1	0	game/gfx/items/trinkets/trinket_051_flatpenny.png	Flat Penny	Flat Penny
+T	52	-1	0	game/gfx/items/trinkets/trinket_052_counterfeitpenny.png	Counterfeit Penny	Counterfeit Penny
+T	53	-1	0	game/gfx/items/trinkets/trinket_053_tick.png	Tick	Tick
+T	54	-1	0	game/gfx/items/trinkets/trinket_054_isaacshead.png	Isaacs Head	Isaacs Head
+T	55	-1	0	game/gfx/items/trinkets/trinket_055_maggysfaith.png	Maggys Faith	Maggys Faith
+T	56	-1	0	game/gfx/items/trinkets/trinket_056_judastongue.png	Judas Tongue	Judas Tongue
+T	57	-1	0	game/gfx/items/trinkets/trinket_057_qmarkssoul.png	S Soul	S Soul
+T	58	-1	0	game/gfx/items/trinkets/trinket_058_samsonslock.png	Samsons Lock	Samsons Lock
+T	59	-1	0	game/gfx/items/trinkets/trinket_059_cainseye.png	Cains Eye	Cains Eye
+T	60	-1	0	game/gfx/items/trinkets/trinket_060_evesbirdfoot.png	Eves Bird Foot	Eves Bird Foot
+T	61	-1	0	game/gfx/items/trinkets/trinket_061_thelefthand.png	The Left Hand	The Left Hand
+T	62	-1	0	game/gfx/items/trinkets/trinket_062_shinyrock.png	Shiny Rock	Shiny Rock
+T	63	-1	0	game/gfx/items/trinkets/trinket_063_safetyscissors.png	Safety Scissors	Safety Scissors
+T	64	-1	0	game/gfx/items/trinkets/trinket_064_rainbowworm.png	Rainbow Worm	Rainbow Worm
+T	65	-1	0	game/gfx/items/trinkets/trinket_065_tapeworm.png	Tape Worm	Tape Worm
+T	66	-1	0	game/gfx/items/trinkets/trinket_066_lazyworm.png	Lazy Worm	Lazy Worm
+T	67	-1	0	game/gfx/items/trinkets/trinket_067_crackeddice.png	Cracked Dice	Cracked Dice
+T	68	-1	0	game/gfx/items/trinkets/trinket_068_supermagnet.png	Super Magnet	Super Magnet
+T	69	-1	0	game/gfx/items/trinkets/trinket_069_fadedpolaroid.png	Faded Polaroid	Faded Polaroid
+T	70	-1	0	game/gfx/items/trinkets/trinket_070_louse.png	Louse	Louse
+T	71	-1	0	game/gfx/items/trinkets/trinket_071_bobsbladder.png	Bobs Bladder	Bobs Bladder
+T	72	-1	0	game/gfx/items/trinkets/trinket_072_watchbattery.png	Watch Battery	Watch Battery
+T	73	-1	0	game/gfx/items/trinkets/trinket_073_blastingcap.png	Blasting Cap	Blasting Cap
+T	74	-1	0	game/gfx/items/trinkets/trinket_074_studfinder.png	Stud Finder	Stud Finder
+T	75	-1	0	game/gfx/items/trinkets/trinket_075_error.png	Error	Error
+T	76	-1	0	game/gfx/items/trinkets/trinket_076_pokerchip.png	Poker Chip	Poker Chip
+T	77	-1	0	game/gfx/items/trinkets/trinket_077_blister.png	Blister	Blister
+T	78	-1	0	game/gfx/items/trinkets/trinket_078_secondhand.png	Second Hand	Second Hand
+T	79	-1	0	game/gfx/items/trinkets/trinket_079_endlessnameless.png	Endless Nameless	Endless Nameless
+T	80	-1	0	game/gfx/items/trinkets/trinket_080_blackfeather.png	Black Feather	Black Feather
+T	81	-1	0	game/gfx/items/trinkets/trinket_081_blindrage.png	Blind Rage	Blind Rage
+T	82	-1	0	game/gfx/items/trinkets/trinket_082_goldenhorseshoe.png	Golden Horse Shoe	Golden Horse Shoe
+T	83	-1	0	game/gfx/items/trinkets/trinket_083_storekey.png	Store Key	Store Key
+T	84	-1	0	game/gfx/items/trinkets/trinket_084_ribofgreed.png	Rib Of Greed	Rib Of Greed
+T	85	-1	0	game/gfx/items/trinkets/trinket_085_karma.png	Karma	Karma
+T	86	-1	0	game/gfx/items/trinkets/trinket_086_lillarva.png	Lil Larva	Lil Larva
+T	87	-1	0	game/gfx/items/trinkets/trinket_087_momslocket.png	Moms Locket	Moms Locket
+T	88	-1	0	game/gfx/items/trinkets/trinket_088_no.png	No	No
+T	89	-1	0	game/gfx/items/trinkets/trinket_089_childleash.png	Child Leash	Child Leash
+T	90	-1	0	game/gfx/items/trinkets/trinket_090_browncap.png	Brown Cap	Brown Cap
+T	91	-1	0	game/gfx/items/trinkets/trinket_091_meconium.png	Meconium	Meconium
+T	92	-1	0	game/gfx/items/trinkets/trinket_092_crackedcrown.png	Cracked Crown	Cracked Crown
+T	93	-1	0	game/gfx/items/trinkets/trinket_093_useddiaper.png	Used Diaper	Used Diaper
+T	94	-1	0	game/gfx/items/trinkets/trinket_094_fishtail.png	Fish Tail	Fish Tail
+T	95	-1	0	game/gfx/items/trinkets/trinket_095_blacktooth.png	Black Tooth	Black Tooth
+T	96	-1	0	game/gfx/items/trinkets/trinket_096_ouroborosworm.png	Ouroboros Worm	Ouroboros Worm
+T	97	-1	0	game/gfx/items/trinkets/trinket_097_tonsil.png	Tonsil	Tonsil
+T	98	-1	0	game/gfx/items/trinkets/trinket_098_nosegoblin.png	Nose Goblin	Nose Goblin
+T	99	-1	0	game/gfx/items/trinkets/trinket_099_superball.png	Super Ball	Super Ball
+T	100	-1	0	game/gfx/items/trinkets/trinket_100_vibrantbulb.png	Vibrant Bulb	Vibrant Bulb
+T	101	-1	0	game/gfx/items/trinkets/trinket_101_dimbulb.png	Dim Bulb	Dim Bulb
+T	102	-1	0	game/gfx/items/trinkets/trinket_102_fragmentedcard.png	Fragmented Card	Fragmented Card
+T	103	-1	0	game/gfx/items/trinkets/trinket_103_equality.png	Equality	Equality
+T	104	-1	0	game/gfx/items/trinkets/trinket_104_wishbone.png	Wish Bone	Wish Bone
+T	105	-1	0	game/gfx/items/trinkets/trinket_105_baglunch.png	Bag Lunch	Bag Lunch
+T	106	-1	0	game/gfx/items/trinkets/trinket_106_lostcork.png	Lost Cork	Lost Cork
+T	107	-1	0	game/gfx/items/trinkets/trinket_107_crowheart.png	Crow Heart	Crow Heart
+T	108	-1	0	game/gfx/items/trinkets/trinket_108_walnut.png	Walnut	Walnut
+T	109	-1	0	game/gfx/items/trinkets/trinket_109_ducttape.png	Duct Tape	Duct Tape
+T	110	-1	0	game/gfx/items/trinkets/trinket_110_silverdollar.png	Silver Dollar	Silver Dollar
+T	111	-1	0	game/gfx/items/trinkets/trinket_111_bloodycrown.png	Bloody Crown	Bloody Crown
+T	112	-1	0	game/gfx/items/trinkets/trinket_112_paytowin.png	Pay To Win	Pay To Win
+T	113	-1	0	game/gfx/items/trinkets/trinket_113_locustofwrath.png	Locust Of War	Locust Of War
+T	114	-1	0	game/gfx/items/trinkets/trinket_114_locustofpestilence.png	Locust Of Pestilence	Locust Of Pestilence
+T	115	-1	0	game/gfx/items/trinkets/trinket_115_locustoffamine.png	Locust Of Famine	Locust Of Famine
+T	116	-1	0	game/gfx/items/trinkets/trinket_116_locustofdeath.png	Locust Of Death	Locust Of Death
+T	117	-1	0	game/gfx/items/trinkets/trinket_117_locustofconquest.png	Locust Of Conquest	Locust Of Conquest
+T	118	-1	0	game/gfx/items/trinkets/trinket_118_batwing.png	Bat Wing	Bat Wing
+T	119	-1	0	game/gfx/items/trinkets/trinket_119_stemcell.png	Stem Cell	Stem Cell
+T	120	-1	0	game/gfx/items/trinkets/trinket_120_hairpin.png	Hairpin	Hairpin
+T	121	-1	0	game/gfx/items/trinkets/trinket_121_woodencross.png	Wooden Cross	Wooden Cross
+T	122	-1	0	game/gfx/items/trinkets/trinket_122_butter.png	Butter	Butter
+T	123	-1	0	game/gfx/items/trinkets/trinket_123_filigreefeather.png	Filigree Feather	Filigree Feather
+T	124	-1	0	game/gfx/items/trinkets/trinket_124_woodendoorstop.png	Door Stop	Door Stop
+T	125	-1	0	game/gfx/items/trinkets/trinket_125_extensioncord.png	Extension Cord	Extension Cord
+T	126	-1	0	game/gfx/items/trinkets/trinket_126_rottenpenny.png	Rotten Penny	Rotten Penny
+T	127	-1	0	game/gfx/items/trinkets/trinket_127_babybender.png	Babybender	Babybender
+T	128	-1	0	game/gfx/items/trinkets/trinket_128_fingerbone.png	Finger Bone	Finger Bone
+T	129	-1	0	game/gfx/items/trinkets/trinket_129_jawbreaker.png	Jawbreaker	Jawbreaker
+T	130	-1	0	game/gfx/items/trinkets/trinket_130_chewedpen.png	Chewed Pen	Chewed Pen
+T	131	-1	0	game/gfx/items/trinkets/trinket_131_blessedpenny.png	Blessed Penny	Blessed Penny
+T	132	-1	0	game/gfx/items/trinkets/trinket_132_brokensyringe.png	Broken Syringe	Broken Syringe
+T	133	-1	0	game/gfx/items/trinkets/trinket_133_explodedfirecracker.png	Short Fuse	Short Fuse
+T	134	-1	0	game/gfx/items/trinkets/trinket_134_giantbean.png	Gigante Bean	Gigante Bean
+T	135	-1	0	game/gfx/items/trinkets/trinket_135_lighter.png	A Lighter	A Lighter
+T	136	-1	0	game/gfx/items/trinkets/trinket_136_brokenpadlock.png	Broken Padlock	Broken Padlock
+T	137	-1	0	game/gfx/items/trinkets/trinket_137_myosotis.png	Myosotis	Myosotis
+T	138	-1	0	game/gfx/items/trinkets/trinket_138_m.png	M	M
+T	139	-1	0	game/gfx/items/trinkets/trinket_139_teardropcharm.png	Teardrop Charm	Teardrop Charm
+T	140	-1	0	game/gfx/items/trinkets/trinket_140_appleofsodom.png	Apple Of Sodom	Apple Of Sodom
+T	141	-1	0	game/gfx/items/trinkets/trinket_141_songofthesiren.png	Forgotten Lullaby	Forgotten Lullaby
+T	142	-1	0	game/gfx/items/trinkets/trinket_142_bethsfaith.png	Beths Faith	Beths Faith
+T	143	-1	0	game/gfx/items/trinkets/trinket_143_oldcapacitor.png	Old Capacitor	Old Capacitor
+T	144	-1	0	game/gfx/items/trinkets/trinket_144_brainworm.png	Brain Worm	Brain Worm
+T	145	-1	0	game/gfx/items/trinkets/trinket_145_perfection.png	Perfection	Perfection
+T	146	-1	0	game/gfx/items/trinkets/trinket_146_devilscrown.png	Devils Crown	Devils Crown
+T	147	-1	0	game/gfx/items/trinkets/trinket_147_chargedpenny.png	Charged Penny	Charged Penny
+T	148	-1	0	game/gfx/items/trinkets/trinket_148_friendshipnecklace.png	Friendship Necklace	Friendship Necklace
+T	149	-1	0	game/gfx/items/trinkets/trinket_149_panicbutton.png	Panic Button	Panic Button
+T	150	-1	0	game/gfx/items/trinkets/trinket_150_bluekey.png	Blue Key	Blue Key
+T	151	-1	0	game/gfx/items/trinkets/trinket_151_flatfile.png	Flat File	Flat File
+T	152	-1	0	game/gfx/items/trinkets/trinket_152_telescopelens.png	Telescope Lens	Telescope Lens
+T	153	-1	0	game/gfx/items/trinkets/trinket_153_momslock.png	Moms Lock	Moms Lock
+T	154	-1	0	game/gfx/items/trinkets/trinket_154_dicebag.png	Dice Bag	Dice Bag
+T	155	-1	0	game/gfx/items/trinkets/trinket_155_holycrown.png	Holy Crown	Holy Crown
+T	156	-1	0	game/gfx/items/trinkets/trinket_156_motherskiss.png	Mothers Kiss	Mothers Kiss
+T	157	-1	0	game/gfx/items/trinkets/trinket_157_torncard.png	Torn Card	Torn Card
+T	158	-1	0	game/gfx/items/trinkets/trinket_158_tornpocket.png	Torn Pocket	Torn Pocket
+T	159	-1	0	game/gfx/items/trinkets/trinket_159_gildedkey.png	Gilded Key	Gilded Key
+T	160	-1	0	game/gfx/items/trinkets/trinket_160_luckysack.png	Lucky Sack	Lucky Sack
+T	161	-1	0	game/gfx/items/trinkets/trinket_161_wickedcrown.png	Wicked Crown	Wicked Crown
+T	162	-1	0	game/gfx/items/trinkets/trinket_162_azazelsstump.png	Azazels Stump	Azazels Stump
+T	163	-1	0	game/gfx/items/trinkets/trinket_163_dingleberry.png	Dingle Berry	Dingle Berry
+T	164	-1	0	game/gfx/items/trinkets/trinket_164_ringcap.png	Ring Cap	Ring Cap
+T	165	-1	0	game/gfx/items/trinkets/trinket_165_nuhuh.png	Nuh Uh	Nuh Uh
+T	166	-1	0	game/gfx/items/trinkets/trinket_166_modelingclay.png	Modeling Clay	Modeling Clay
+T	167	-1	0	game/gfx/items/trinkets/trinket_167_polishedbone.png	Polished Bone	Polished Bone
+T	168	-1	0	game/gfx/items/trinkets/trinket_168_hollowheart.png	Hollow Heart	Hollow Heart
+T	169	-1	0	game/gfx/items/trinkets/trinket_169_kidsdrawing.png	Kids Drawing	Kids Drawing
+T	170	-1	0	game/gfx/items/trinkets/trinket_170_crystalkey.png	Crystal Key	Crystal Key
+T	171	-1	0	game/gfx/items/trinkets/trinket_171_keepersbargain.png	Keepers Bargain	Keepers Bargain
+T	172	-1	0	game/gfx/items/trinkets/trinket_172_cursedpenny.png	Cursed Penny	Cursed Penny
+T	173	-1	0	game/gfx/items/trinkets/trinket_173_yoursoul.png	Your Soul	Your Soul
+T	174	-1	0	game/gfx/items/trinkets/trinket_174_numbermagnet.png	Number Magnet	Number Magnet
+T	175	-1	0	game/gfx/items/trinkets/trinket_175_strangekey.png	Strange Key	Strange Key
+T	176	-1	0	game/gfx/items/trinkets/trinket_176_lilclot.png	Lil Clot	Lil Clot
+T	177	-1	0	game/gfx/items/trinkets/trinket_177_temporarytattoo.png	Temporary Tattoo	Temporary Tattoo
+T	178	-1	0	game/gfx/items/trinkets/trinket_178_swallowedm80.png	Swallowed M80	Swallowed M80
+T	179	-1	0	game/gfx/items/trinkets/trinket_179_rcremote.png	Rc Remote	Rc Remote
+T	180	-1	0	game/gfx/items/trinkets/trinket_180_foundsoul.png	Found Soul	Found Soul
+T	181	-1	0	game/gfx/items/trinkets/trinket_181_expansionpack.png	Expansion Pack	Expansion Pack
+T	182	-1	0	game/gfx/items/trinkets/trinket_182_bethsessence.png	Beths Essence	Beths Essence
+T	183	-1	0	game/gfx/items/trinkets/trinket_183_thetwins.png	The Twins	The Twins
+T	184	-1	0	game/gfx/items/trinkets/trinket_184_adoptionpapers.png	Adoption Papers	Adoption Papers
+T	185	-1	0	game/gfx/items/trinkets/trinket_185_cricketleg.png	Cricket Leg	Cricket Leg
+T	186	-1	0	game/gfx/items/trinkets/trinket_186_apollyonsbestfriend.png	Apollyons Best Friend	Apollyons Best Friend
+T	187	-1	0	game/gfx/items/trinkets/trinket_187_brokenglasses.png	Broken Glasses	Broken Glasses
+T	188	-1	0	game/gfx/items/trinkets/trinket_188_icecube.png	Ice Cube	Ice Cube
+T	189	-1	0	game/gfx/items/trinkets/trinket_189_sigilofbaphomet.png	Sigil Of Baphomet	Sigil Of Baphomet
+P	0	game/gfx/ui/stage/playerportrait_isaac.png	Isaac
+P	1	game/gfx/ui/stage/playerportrait_magdalene.png	Magdalene
+P	2	game/gfx/ui/stage/playerportrait_cain.png	Cain
+P	3	game/gfx/ui/stage/playerportrait_judas.png	Judas
+P	4	game/gfx/ui/stage/playerportrait_bluebaby.png	Bluebaby
+P	5	game/gfx/ui/stage/playerportrait_eve.png	Eve
+P	6	game/gfx/ui/stage/playerportrait_samson.png	Samson
+P	7	game/gfx/ui/stage/playerportrait_azazel.png	Azazel
+P	8	game/gfx/ui/stage/playerportrait_lazarus.png	Lazarus
+P	9	game/gfx/ui/stage/playerportrait_eden.png	Eden
+P	10	game/gfx/ui/stage/playerportrait_thelost.png	The Lost
+P	11	game/gfx/ui/stage/playerportrait_lazarus2.png	Lazarus2
+P	12	game/gfx/ui/stage/playerportrait_darkjudas.png	Black Judas
+P	13	game/gfx/ui/stage/playerportrait_lilith.png	Lilith
+P	14	game/gfx/ui/stage/playerportrait_keeper.png	Keeper
+P	15	game/gfx/ui/stage/playerportrait_apollyon.png	Apollyon
+P	16	game/gfx/ui/stage/playerportrait_theforgotten.png	The Forgotten
+P	17	game/gfx/ui/stage/playerportrait_theforgotten.png	The Soul
+P	18	game/gfx/ui/stage/playerportrait_bethany.png	Bethany
+P	19	game/gfx/ui/stage/playerportrait_jacob.png	Jacob
+P	20	game/gfx/ui/stage/playerportrait_jacob.png	Esau
+P	21	game/gfx/ui/stage/playerportrait_isaac_b.png	Isaac
+P	22	game/gfx/ui/stage/playerportrait_magdalene_b.png	Magdalene
+P	23	game/gfx/ui/stage/playerportrait_cain_b.png	Cain
+P	24	game/gfx/ui/stage/playerportrait_judas_b.png	Judas
+P	25	game/gfx/ui/stage/playerportrait_bluebaby_b.png	Bluebaby
+P	26	game/gfx/ui/stage/playerportrait_eve_b.png	Eve
+P	27	game/gfx/ui/stage/playerportrait_samson_b.png	Samson
+P	28	game/gfx/ui/stage/playerportrait_azazel_b.png	Azazel
+P	29	game/gfx/ui/stage/playerportrait_lazarus_b.png	Lazarus
+P	30	game/gfx/ui/stage/playerportrait_eden_b.png	Eden
+P	31	game/gfx/ui/stage/playerportrait_thelost_b.png	The Lost
+P	32	game/gfx/ui/stage/playerportrait_lilith_b.png	Lilith
+P	33	game/gfx/ui/stage/playerportrait_keeper_b.png	Keeper
+P	34	game/gfx/ui/stage/playerportrait_apollyon_b.png	Apollyon
+P	35	game/gfx/ui/stage/playerportrait_theforgotten_b.png	The Forgotten
+P	36	game/gfx/ui/stage/playerportrait_bethany_b.png	Bethany
+P	37	game/gfx/ui/stage/playerportrait_jacob_b.png	Jacob
+P	38	game/gfx/ui/stage/playerportrait_lazarus_b_dead.png	Lazarus
+P	39	game/gfx/ui/stage/playerportrait_jacob_b.png	Jacob
+P	40	game/gfx/ui/stage/playerportrait_theforgotten_b.png	The Soul
+K	0	0	Bad Gas	Unknown
+K	1	0	Bad Trip	Unknown
+K	2	0	Balls Of Steel	Unknown
+K	3	0	Bombs Are Key	Unknown
+K	4	0	Explosive Diarrhea	Unknown
+K	5	0	Full Health	Unknown
+K	6	0	Health Down	Unknown
+K	7	0	Health Up	Unknown
+K	8	0	I Found Pills	I Found Pills
+K	9	0	Puberty	Unknown
+K	10	0	Pretty Fly	Unknown
+K	11	0	Range Down	Unknown
+K	12	0	Range Up	Unknown
+K	13	0	Speed Down	Unknown
+K	14	0	Speed Up	Unknown
+K	15	0	Tears Down	Unknown
+K	16	0	Tears Up	Unknown
+K	17	0	Luck Down	Unknown
+K	18	0	Luck Up	Unknown
+K	19	0	Telepills	Unknown
+K	20	0	48 Hour Energy	Unknown
+K	21	0	Hematemesis	Unknown
+K	22	0	Paralysis	Unknown
+K	23	0	I Can See Forever	Unknown
+K	24	0	Pheromones	Unknown
+K	25	0	Amnesia	Unknown
+K	26	0	Lemon Party	Unknown
+K	27	0	R U A Wizard	Unknown
+K	28	0	Percs	Unknown
+K	29	0	Addicted	Unknown
+K	30	0	Relax	Unknown
+K	31	0	Question Marks	Unknown
+K	32	0	One Makes You Larger	Unknown
+K	33	0	One Makes You Small	Unknown
+K	34	0	Infested Name 1	Unknown
+K	35	0	Infested Name 2	Unknown
+K	36	0	Power Pill	Unknown
+K	37	0	Retro Vision	Unknown
+K	38	0	Friends Till The End	Unknown
+K	39	0	Xlax	Unknown
+K	40	0	Somethings Wrong	Unknown
+K	41	0	Im Drowsy	Unknown
+K	42	0	Im Excited	Unknown
+K	43	0	Gulp	Unknown
+K	44	0	Horf	Unknown
+K	45	0	Feels Like Im Walking On Sunshine	Unknown
+K	46	0	Vurp	Unknown
+K	47	0	Shot Speed Down	Unknown
+K	48	0	Shot Speed Up	Unknown
+K	49	0	Experimental Pill	Unknown
+K	50	5	Emergency Contact	Emergency Contact
+K	51	11	Holy Card	Holy Card
+K	52	8	Huge Growth	Huge Growth
+K	53	8	Ancient Recall	Ancient Recall
+K	54	8	Era Walk	Era Walk
+K	55	13	Rune Shard	Rune Shard
+K	56	14	The Fool R	The Fool R
+K	57	14	The Magician R	The Magician R
+K	58	14	The High Priestess R	The High Priestess R
+K	59	14	The Empress R	The Empress R
+K	60	14	The Emperor R	The Emperor R
+K	61	14	The Hierophant R	The Hierophant R
+K	62	14	The Lovers R	The Lovers R
+K	63	14	The Chariot R	The Chariot R
+K	64	14	Justice R	Justice R
+K	65	14	The Hermit R	The Hermit R
+K	66	14	Wheel Of Fortune R	Wheel Of Fortune R
+K	67	14	Strength R	Strength R
+K	68	14	The Hanged Man R	The Hanged Man R
+K	69	14	Death R	Death R
+K	70	14	Temperance R	Temperance R
+K	71	14	The Devil R	The Devil R
+K	72	14	The Tower R	The Tower R
+K	73	14	The Stars R	The Stars R
+K	74	14	The Moon R	The Moon R
+K	75	14	The Sun R	The Sun R
+K	76	14	Judgement R	Judgement R
+K	77	14	The World R	The World R
+K	78	15	Cracked Key	Cracked Key
+K	79	2	Queen Of Hearts	Queen Of Hearts
+K	80	17	Wild Card	Wild Card
+K	81	18	Soul Of Isaac	Soul Of Isaac
+K	82	19	Soul Of Magdalene	Soul Of Magdalene
+K	83	20	Soul Of Cain	Soul Of Cain
+K	84	21	Soul Of Judas	Soul Of Judas
+K	85	22	Soul Of Bluebaby	Soul Of Bluebaby
+K	86	23	Soul Of Eve	Soul Of Eve
+K	87	24	Soul Of Samson	Soul Of Samson
+K	88	25	Soul Of Azazel	Soul Of Azazel
+K	89	26	Soul Of Lazarus	Soul Of Lazarus
+K	90	27	Soul Of Eden	Soul Of Eden
+K	91	28	Soul Of The Lost	Soul Of The Lost
+K	92	29	Soul Of Lilith	Soul Of Lilith
+K	93	30	Soul Of The Keeper	Soul Of The Keeper
+K	94	31	Soul Of Apollyon	Soul Of Apollyon
+K	95	32	Soul Of The Forgotten	Soul Of The Forgotten
+K	96	33	Soul Of Bethany	Soul Of Bethany
+K	97	34	Soul Of Jacob And Esau	Soul Of Jacob And Esau
+A	hudpickups	Destination	0	game/gfx/ui/hudpickups.png	0	48	16	16
+A	hudpickups	Destination	1	game/gfx/ui/hudpickups.png	16	48	16	16
+A	hudpickups	Destination	2	game/gfx/ui/hudpickups.png	32	48	16	16
+A	hudpickups	Destination	3	game/gfx/ui/hudpickups.png	48	48	16	16
+A	hudpickups	Destination	4	game/gfx/ui/hudpickups.png	64	48	24	16
+A	hudpickups	Destination	5	game/gfx/ui/hudpickups.png	112	48	16	16
+A	hudpickups	Destination	6	game/gfx/ui/hudpickups.png	88	48	24	16
+A	hudpickups	Destination	7	game/gfx/ui/hudpickups.png	0	64	16	16
+A	hudpickups	Destination	8	game/gfx/ui/hudpickups.png	16	64	16	16
+A	hudpickups	Destination	9	game/gfx/ui/hudpickups.png	32	64	16	16
+A	hudpickups	Destination	10	game/gfx/ui/hudpickups.png	48	64	16	16
+A	hudpickups	Idle	0	game/gfx/ui/hudpickups.png	0	0	16	16
+A	hudpickups	Idle	1	game/gfx/ui/hudpickups.png	16	0	16	16
+A	hudpickups	Idle	2	game/gfx/ui/hudpickups.png	0	16	16	16
+A	hudpickups	Idle	3	game/gfx/ui/hudpickups.png	16	16	16	16
+A	hudpickups	Idle	4	game/gfx/ui/hudpickups.png	32	0	16	16
+A	hudpickups	Idle	5	game/gfx/ui/hudpickups.png	32	16	16	16
+A	hudpickups	Idle	6	game/gfx/ui/hudpickups.png	48	16	16	16
+A	hudpickups	Idle	7	game/gfx/ui/hudpickups.png	48	0	16	16
+A	hudpickups	Idle	8	game/gfx/ui/hudpickups.png	0	32	16	16
+A	hudpickups	Idle	9	game/gfx/ui/hudpickups.png	64	0	16	16
+A	hudpickups	Idle	10	game/gfx/ui/hudpickups.png	64	16	16	16
+A	hudpickups	Idle	11	game/gfx/ui/hudpickups.png	80	0	16	16
+A	hudpickups	Idle	12	game/gfx/ui/hudpickups.png	96	0	16	16
+A	hudpickups	Idle	13	game/gfx/ui/hudpickups.png	112	0	16	16
+A	hudpickups	Idle	14	game/gfx/ui/hudpickups.png	96	16	16	16
+A	hudpickups	Idle	15	game/gfx/ui/hudpickups.png	112	16	16	16
+A	hudpickups	Idle	16	game/gfx/ui/hudpickups.png	80	16	16	16
+A	minimap_icons	IconAmbushRoom	0	game/gfx/ui/minimap_icons.png	32	16	16	16
+A	minimap_icons	IconAngelRoom	0	game/gfx/ui/minimap_icons.png	80	0	16	16
+A	minimap_icons	IconArcade	0	game/gfx/ui/minimap_icons.png	96	16	16	16
+A	minimap_icons	IconBarrenRoom	0	game/gfx/ui/minimap_icons.png	16	32	16	16
+A	minimap_icons	IconBattery	0	game/gfx/ui/minimap_icons.png	32	64	16	16
+A	minimap_icons	IconBattery	1	game/gfx/ui/minimap_icons.png	80	128	16	16
+A	minimap_icons	IconBeggar	0	game/gfx/ui/minimap_icons.png	96	96	16	16
+A	minimap_icons	IconBeggar	1	game/gfx/ui/minimap_icons.png	0	144	16	16
+A	minimap_icons	IconBeggar	2	game/gfx/ui/minimap_icons.png	112	96	16	16
+A	minimap_icons	IconBeggar	3	game/gfx/ui/minimap_icons.png	96	112	16	16
+A	minimap_icons	IconBeggar	4	game/gfx/ui/minimap_icons.png	112	112	16	16
+A	minimap_icons	IconBeggar	5	game/gfx/ui/minimap_icons.png	80	112	16	16
+A	minimap_icons	IconBomb	0	game/gfx/ui/minimap_icons.png	112	48	16	16
+A	minimap_icons	IconBomb	1	game/gfx/ui/minimap_icons.png	112	64	16	16
+A	minimap_icons	IconBoss	0	game/gfx/ui/minimap_icons.png	16	16	16	16
+A	minimap_icons	IconBossAmbushRoom	0	game/gfx/ui/minimap_icons.png	48	16	16	16
+A	minimap_icons	IconCard	0	game/gfx/ui/minimap_icons.png	48	64	16	16
+A	minimap_icons	IconChest	0	game/gfx/ui/minimap_icons.png	80	80	16	16
+A	minimap_icons	IconChest	1	game/gfx/ui/minimap_icons.png	48	80	16	16
+A	minimap_icons	IconChest	2	game/gfx/ui/minimap_icons.png	96	80	16	16
+A	minimap_icons	IconChest	3	game/gfx/ui/minimap_icons.png	48	128	16	16
+A	minimap_icons	IconChest	4	game/gfx/ui/minimap_icons.png	0	80	16	16
+A	minimap_icons	IconChest	5	game/gfx/ui/minimap_icons.png	32	80	16	16
+A	minimap_icons	IconChest	6	game/gfx/ui/minimap_icons.png	16	128	16	16
+A	minimap_icons	IconChest	7	game/gfx/ui/minimap_icons.png	64	80	16	16
+A	minimap_icons	IconChest	8	game/gfx/ui/minimap_icons.png	16	80	16	16
+A	minimap_icons	IconChest	9	game/gfx/ui/minimap_icons.png	32	128	16	16
+A	minimap_icons	IconChestRoom	0	game/gfx/ui/minimap_icons.png	112	16	16	16
+A	minimap_icons	IconCoin	0	game/gfx/ui/minimap_icons.png	80	48	16	16
+A	minimap_icons	IconCoin	1	game/gfx/ui/minimap_icons.png	96	144	16	16
+A	minimap_icons	IconCoin	2	game/gfx/ui/minimap_icons.png	112	144	16	16
+A	minimap_icons	IconCoin	3	game/gfx/ui/minimap_icons.png	16	144	16	16
+A	minimap_icons	IconCurseRoom	0	game/gfx/ui/minimap_icons.png	64	16	16	16
+A	minimap_icons	IconDevilRoom	0	game/gfx/ui/minimap_icons.png	96	0	16	16
+A	minimap_icons	IconDiceRoom	0	game/gfx/ui/minimap_icons.png	112	0	16	16
+A	minimap_icons	IconHeart	0	game/gfx/ui/minimap_icons.png	64	48	16	16
+A	minimap_icons	IconHeart	1	game/gfx/ui/minimap_icons.png	0	48	16	16
+A	minimap_icons	IconHeart	2	game/gfx/ui/minimap_icons.png	64	112	16	16
+A	minimap_icons	IconHeart	3	game/gfx/ui/minimap_icons.png	16	112	16	16
+A	minimap_icons	IconHeart	4	game/gfx/ui/minimap_icons.png	48	112	16	16
+A	minimap_icons	IconHeart	5	game/gfx/ui/minimap_icons.png	32	48	16	16
+A	minimap_icons	IconHeart	6	game/gfx/ui/minimap_icons.png	48	48	16	16
+A	minimap_icons	IconHeart	7	game/gfx/ui/minimap_icons.png	32	112	16	16
+A	minimap_icons	IconHeart	8	game/gfx/ui/minimap_icons.png	0	112	16	16
+A	minimap_icons	IconHeart	9	game/gfx/ui/minimap_icons.png	16	48	16	16
+A	minimap_icons	IconIsaacsRoom	0	game/gfx/ui/minimap_icons.png	0	32	16	16
+A	minimap_icons	IconItem	0	game/gfx/ui/minimap_icons.png	0	64	16	16
+A	minimap_icons	IconKey	0	game/gfx/ui/minimap_icons.png	96	48	16	16
+A	minimap_icons	IconKey	1	game/gfx/ui/minimap_icons.png	96	64	16	16
+A	minimap_icons	IconKey	2	game/gfx/ui/minimap_icons.png	112	80	16	16
+A	minimap_icons	IconLadder	0	game/gfx/ui/minimap_icons.png	112	32	16	16
+A	minimap_icons	IconLibrary	0	game/gfx/ui/minimap_icons.png	48	0	16	16
+A	minimap_icons	IconLockedRoom	0	game/gfx/ui/minimap_icons.png	32	32	16	16
+A	minimap_icons	IconMinecartRoom	0	game/gfx/ui/minimap_icons.png	48	144	16	16
+A	minimap_icons	IconMiniboss	0	game/gfx/ui/minimap_icons.png	0	16	16	16
+A	minimap_icons	IconMirrorRoom	0	game/gfx/ui/minimap_icons.png	32	144	16	16
+A	minimap_icons	IconPill	0	game/gfx/ui/minimap_icons.png	64	64	16	16
+A	minimap_icons	IconPill	1	game/gfx/ui/minimap_icons.png	64	128	16	16
+A	minimap_icons	IconPlanetarium	0	game/gfx/ui/minimap_icons.png	64	32	16	16
+A	minimap_icons	IconPoop	0	game/gfx/ui/minimap_icons.png	64	144	16	16
+A	minimap_icons	IconPortal	0	game/gfx/ui/minimap_icons.png	0	160	16	16
+A	minimap_icons	IconRune	0	game/gfx/ui/minimap_icons.png	80	64	16	16
+A	minimap_icons	IconSacrificeRoom	0	game/gfx/ui/minimap_icons.png	80	16	16	16
+A	minimap_icons	IconSecretRoom	0	game/gfx/ui/minimap_icons.png	16	0	16	16
+A	minimap_icons	IconShop	0	game/gfx/ui/minimap_icons.png	0	0	16	16
+A	minimap_icons	IconSlot	0	game/gfx/ui/minimap_icons.png	80	96	16	16
+A	minimap_icons	IconSlot	1	game/gfx/ui/minimap_icons.png	48	96	16	16
+A	minimap_icons	IconSlot	2	game/gfx/ui/minimap_icons.png	0	96	16	16
+A	minimap_icons	IconSlot	3	game/gfx/ui/minimap_icons.png	16	96	16	16
+A	minimap_icons	IconSlot	4	game/gfx/ui/minimap_icons.png	32	96	16	16
+A	minimap_icons	IconSlot	5	game/gfx/ui/minimap_icons.png	112	128	16	16
+A	minimap_icons	IconSlot	6	game/gfx/ui/minimap_icons.png	64	96	16	16
+A	minimap_icons	IconSlot	7	game/gfx/ui/minimap_icons.png	96	128	16	16
+A	minimap_icons	IconSlot	8	game/gfx/ui/minimap_icons.png	80	144	16	16
+A	minimap_icons	IconSuperSecretRoom	0	game/gfx/ui/minimap_icons.png	32	0	16	16
+A	minimap_icons	IconTeleporterRoom	0	game/gfx/ui/minimap_icons.png	80	32	16	16
+A	minimap_icons	IconTreasureRoom	0	game/gfx/ui/minimap_icons.png	64	0	16	16
+A	minimap_icons	IconTreasureRoomGreed	0	game/gfx/ui/minimap_icons.png	48	32	16	16
+A	minimap_icons	IconTreasureRoomRed	0	game/gfx/ui/minimap_icons.png	96	32	16	16
+A	minimap_icons	IconTrinket	0	game/gfx/ui/minimap_icons.png	16	64	16	16
+A	minimap_icons	IconUltraSecretRoom	0	game/gfx/ui/minimap_icons.png	0	128	16	16
+A	minimap_icons	ItemPoolChests	0	game/gfx/ui/minimap_icons.png	16	160	16	16
+A	minimap_icons	ItemPoolChests	1	game/gfx/ui/minimap_icons.png	32	160	16	16
+A	minimap_icons	ItemPoolChests	2	game/gfx/ui/minimap_icons.png	48	160	16	16
+A	minimap_icons	ItemPoolChests	3	game/gfx/ui/minimap_icons.png	64	160	16	16
+A	minimap_icons	ItemPoolChests	4	game/gfx/ui/minimap_icons.png	80	160	16	16
+A	ui_cardfronts	00_TheFool	0	game/gfx/ui/ui_cardfronts.png	0	0	16	24
+A	ui_cardfronts	01_TheMagician	0	game/gfx/ui/ui_cardfronts.png	0	24	16	24
+A	ui_cardfronts	02_TheHighPriestess	0	game/gfx/ui/ui_cardfronts.png	0	48	16	24
+A	ui_cardfronts	03_TheEmpress	0	game/gfx/ui/ui_cardfronts.png	0	72	16	24
+A	ui_cardfronts	04_TheEmperor	0	game/gfx/ui/ui_cardfronts.png	0	96	16	24
+A	ui_cardfronts	05_TheHierophant	0	game/gfx/ui/ui_cardfronts.png	0	120	16	24
+A	ui_cardfronts	06_TheLovers	0	game/gfx/ui/ui_cardfronts.png	32	0	16	24
+A	ui_cardfronts	07_TheChariot	0	game/gfx/ui/ui_cardfronts.png	32	24	16	24
+A	ui_cardfronts	08_TheJustice	0	game/gfx/ui/ui_cardfronts.png	32	48	16	24
+A	ui_cardfronts	09_TheHermit	0	game/gfx/ui/ui_cardfronts.png	32	72	16	24
+A	ui_cardfronts	10_WheelOfFortune	0	game/gfx/ui/ui_cardfronts.png	32	96	16	24
+A	ui_cardfronts	11_Strength	0	game/gfx/ui/ui_cardfronts.png	16	0	16	24
+A	ui_cardfronts	12_TheHangedMan	0	game/gfx/ui/ui_cardfronts.png	16	24	16	24
+A	ui_cardfronts	13_Death	0	game/gfx/ui/ui_cardfronts.png	16	48	16	24
+A	ui_cardfronts	14_Temperance	0	game/gfx/ui/ui_cardfronts.png	16	120	16	24
+A	ui_cardfronts	15_TheDevil	0	game/gfx/ui/ui_cardfronts.png	16	96	16	24
+A	ui_cardfronts	16_TheTower	0	game/gfx/ui/ui_cardfronts.png	16	72	16	24
+A	ui_cardfronts	17_TheStars	0	game/gfx/ui/ui_cardfronts.png	48	0	16	24
+A	ui_cardfronts	18_TheMoon	0	game/gfx/ui/ui_cardfronts.png	48	24	16	24
+A	ui_cardfronts	19_TheSun	0	game/gfx/ui/ui_cardfronts.png	48	48	16	24
+A	ui_cardfronts	20_Judgement	0	game/gfx/ui/ui_cardfronts.png	48	72	16	24
+A	ui_cardfronts	21_TheWorld	0	game/gfx/ui/ui_cardfronts.png	48	96	16	24
+A	ui_cardfronts	22_TheJoker	0	game/gfx/ui/ui_cardfronts.png	64	96	16	24
+A	ui_cardfronts	23_TwoOfHearts	0	game/gfx/ui/ui_cardfronts.png	64	0	16	24
+A	ui_cardfronts	24_TwoOfSpades	0	game/gfx/ui/ui_cardfronts.png	64	24	16	24
+A	ui_cardfronts	25_TwoOfClubs	0	game/gfx/ui/ui_cardfronts.png	64	48	16	24
+A	ui_cardfronts	26_TwoOfDiamonds	0	game/gfx/ui/ui_cardfronts.png	64	72	16	24
+A	ui_cardfronts	27_SuicideKing	0	game/gfx/ui/ui_cardfronts.png	80	0	16	24
+A	ui_cardfronts	28_ChaosCard	0	game/gfx/ui/ui_cardfronts.png	80	24	16	24
+A	ui_cardfronts	29_CreditCard	0	game/gfx/ui/ui_cardfronts.png	80	48	16	24
+A	ui_cardfronts	30_RulesCard	0	game/gfx/ui/ui_cardfronts.png	80	72	16	24
+A	ui_cardfronts	31_CardAgainstHumanity	0	game/gfx/ui/ui_cardfronts.png	80	96	16	24
+A	ui_cardfronts	32_GetOutOfJail	0	game/gfx/ui/ui_cardfronts.png	64	120	16	24
+A	ui_cardfronts	33_MysteryCard	0	game/gfx/ui/ui_cardfronts.png	80	120	16	24
+A	ui_cardfronts	34_DiceShard	0	game/gfx/ui/ui_cardfronts.png	32	120	16	24
+A	ui_cardfronts	35_EmergencyContact	0	game/gfx/ui/ui_cardfronts.png	48	120	16	24
+A	ui_cardfronts	36_AceOfSpades	0	game/gfx/ui/ui_cardfronts.png	96	24	16	24
+A	ui_cardfronts	37_AceOfHearts	0	game/gfx/ui/ui_cardfronts.png	96	0	16	24
+A	ui_cardfronts	38_AceOfClubs	0	game/gfx/ui/ui_cardfronts.png	96	48	16	24
+A	ui_cardfronts	39_AceOfDiamonds	0	game/gfx/ui/ui_cardfronts.png	96	72	16	24
+A	ui_cardfronts	40_HolyCard	0	game/gfx/ui/ui_cardfronts.png	96	96	16	24
+A	ui_cardfronts	52_HugeGrowth	0	game/gfx/ui/ui_cardfronts.png	112	0	16	24
+A	ui_cardfronts	53_AncientRecall	0	game/gfx/ui/ui_cardfronts.png	112	24	16	24
+A	ui_cardfronts	54_EraWalk	0	game/gfx/ui/ui_cardfronts.png	112	120	16	24
+A	ui_cardfronts	Outline	0	game/gfx/ui/ui_cardfronts.png	96	120	16	24
+A	ui_cardspills	CardFronts	0	game/gfx/ui/ui_cardfronts.png	0	0	16	24
+A	ui_cardspills	CardFronts	1	game/gfx/ui/ui_cardfronts.png	0	24	16	24
+A	ui_cardspills	CardFronts	2	game/gfx/ui/ui_cardfronts.png	0	48	16	24
+A	ui_cardspills	CardFronts	3	game/gfx/ui/ui_cardfronts.png	0	72	16	24
+A	ui_cardspills	CardFronts	4	game/gfx/ui/ui_cardfronts.png	0	96	16	24
+A	ui_cardspills	CardFronts	5	game/gfx/ui/ui_cardfronts.png	0	120	16	24
+A	ui_cardspills	CardFronts	6	game/gfx/ui/ui_cardfronts.png	32	0	16	24
+A	ui_cardspills	CardFronts	7	game/gfx/ui/ui_cardfronts.png	32	24	16	24
+A	ui_cardspills	CardFronts	8	game/gfx/ui/ui_cardfronts.png	32	48	16	24
+A	ui_cardspills	CardFronts	9	game/gfx/ui/ui_cardfronts.png	32	72	16	24
+A	ui_cardspills	CardFronts	10	game/gfx/ui/ui_cardfronts.png	32	96	16	24
+A	ui_cardspills	CardFronts	11	game/gfx/ui/ui_cardfronts.png	16	0	16	24
+A	ui_cardspills	CardFronts	12	game/gfx/ui/ui_cardfronts.png	16	24	16	24
+A	ui_cardspills	CardFronts	13	game/gfx/ui/ui_cardfronts.png	16	48	16	24
+A	ui_cardspills	CardFronts	14	game/gfx/ui/ui_cardfronts.png	16	120	16	24
+A	ui_cardspills	CardFronts	15	game/gfx/ui/ui_cardfronts.png	16	96	16	24
+A	ui_cardspills	CardFronts	16	game/gfx/ui/ui_cardfronts.png	16	72	16	24
+A	ui_cardspills	CardFronts	17	game/gfx/ui/ui_cardfronts.png	48	0	16	24
+A	ui_cardspills	CardFronts	18	game/gfx/ui/ui_cardfronts.png	48	24	16	24
+A	ui_cardspills	CardFronts	19	game/gfx/ui/ui_cardfronts.png	48	48	16	24
+A	ui_cardspills	CardFronts	20	game/gfx/ui/ui_cardfronts.png	48	72	16	24
+A	ui_cardspills	CardFronts	21	game/gfx/ui/ui_cardfronts.png	48	96	16	24
+A	ui_cardspills	CardFronts	22	game/gfx/ui/ui_cardfronts.png	64	48	16	24
+A	ui_cardspills	CardFronts	23	game/gfx/ui/ui_cardfronts.png	64	72	16	24
+A	ui_cardspills	CardFronts	24	game/gfx/ui/ui_cardfronts.png	64	24	16	24
+A	ui_cardspills	CardFronts	25	game/gfx/ui/ui_cardfronts.png	64	0	16	24
+A	ui_cardspills	CardFronts	26	game/gfx/ui/ui_cardfronts.png	96	48	16	24
+A	ui_cardspills	CardFronts	27	game/gfx/ui/ui_cardfronts.png	96	72	16	24
+A	ui_cardspills	CardFronts	28	game/gfx/ui/ui_cardfronts.png	96	24	16	24
+A	ui_cardspills	CardFronts	29	game/gfx/ui/ui_cardfronts.png	96	0	16	24
+A	ui_cardspills	CardFronts	30	game/gfx/ui/ui_cardfronts.png	64	96	16	24
+A	ui_cardspills	CardFronts	31	game/gfx/ui/ui_cardfronts.png	80	24	16	24
+A	ui_cardspills	CardFronts	32	game/gfx/ui/ui_cardfronts.png	80	48	16	24
+A	ui_cardspills	CardFronts	33	game/gfx/ui/ui_cardfronts.png	80	72	16	24
+A	ui_cardspills	CardFronts	34	game/gfx/ui/ui_cardfronts.png	80	96	16	24
+A	ui_cardspills	CardFronts	35	game/gfx/ui/ui_cardfronts.png	80	0	16	24
+A	ui_cardspills	CardFronts	36	game/gfx/ui/ui_cardfronts.png	64	120	16	24
+A	ui_cardspills	CardFronts	37	game/gfx/ui/ui_cardfronts.png	80	120	16	24
+A	ui_cardspills	CardFronts	38	game/gfx/ui/ui_cardfronts.png	32	120	16	24
+A	ui_cardspills	CardFronts	39	game/gfx/ui/ui_cardfronts.png	48	120	16	24
+A	ui_cardspills	CardFronts	40	game/gfx/ui/ui_cardfronts.png	96	96	16	24
+A	ui_cardspills	CardFronts	41	game/gfx/ui/ui_cardfronts.png	112	0	16	24
+A	ui_cardspills	CardFronts	42	game/gfx/ui/ui_cardfronts.png	112	24	16	24
+A	ui_cardspills	CardFronts	43	game/gfx/ui/ui_cardfronts.png	112	120	16	24
+A	ui_cardspills	CardFronts	44	game/gfx/ui/ui_cardfronts.png	176	120	16	24
+A	ui_cardspills	CardFronts	45	game/gfx/ui/ui_cardfronts.png	176	96	16	24
+A	ui_cardspills	CardFronts	46	game/gfx/ui/ui_cardfronts.png	176	72	16	24
+A	ui_cardspills	CardFronts	47	game/gfx/ui/ui_cardfronts.png	176	48	16	24
+A	ui_cardspills	CardFronts	48	game/gfx/ui/ui_cardfronts.png	176	24	16	24
+A	ui_cardspills	CardFronts	49	game/gfx/ui/ui_cardfronts.png	176	0	16	24
+A	ui_cardspills	CardFronts	50	game/gfx/ui/ui_cardfronts.png	144	120	16	24
+A	ui_cardspills	CardFronts	51	game/gfx/ui/ui_cardfronts.png	144	96	16	24
+A	ui_cardspills	CardFronts	52	game/gfx/ui/ui_cardfronts.png	144	72	16	24
+A	ui_cardspills	CardFronts	53	game/gfx/ui/ui_cardfronts.png	144	48	16	24
+A	ui_cardspills	CardFronts	54	game/gfx/ui/ui_cardfronts.png	144	24	16	24
+A	ui_cardspills	CardFronts	55	game/gfx/ui/ui_cardfronts.png	160	120	16	24
+A	ui_cardspills	CardFronts	56	game/gfx/ui/ui_cardfronts.png	160	96	16	24
+A	ui_cardspills	CardFronts	57	game/gfx/ui/ui_cardfronts.png	160	72	16	24
+A	ui_cardspills	CardFronts	58	game/gfx/ui/ui_cardfronts.png	160	0	16	24
+A	ui_cardspills	CardFronts	59	game/gfx/ui/ui_cardfronts.png	160	24	16	24
+A	ui_cardspills	CardFronts	60	game/gfx/ui/ui_cardfronts.png	160	48	16	24
+A	ui_cardspills	CardFronts	61	game/gfx/ui/ui_cardfronts.png	128	120	16	24
+A	ui_cardspills	CardFronts	62	game/gfx/ui/ui_cardfronts.png	128	96	16	24
+A	ui_cardspills	CardFronts	63	game/gfx/ui/ui_cardfronts.png	128	72	16	24
+A	ui_cardspills	CardFronts	64	game/gfx/ui/ui_cardfronts.png	128	48	16	24
+A	ui_cardspills	CardFronts	65	game/gfx/ui/ui_cardfronts.png	128	24	16	24
+A	ui_cardspills	CardFronts	66	game/gfx/ui/ui_cardfronts.png	112	48	16	24
+A	ui_cardspills	CardFronts	67	game/gfx/ui/ui_cardfronts.png	112	72	16	24
+A	ui_hearts	BlackHeartFull	0	game/gfx/ui/ui_hearts.png	32	16	16	16
+A	ui_hearts	BlackHeartHalf	0	game/gfx/ui/ui_hearts.png	48	16	16	16
+A	ui_hearts	BlueHeartFull	0	game/gfx/ui/ui_hearts.png	0	16	16	16
+A	ui_hearts	BlueHeartHalf	0	game/gfx/ui/ui_hearts.png	16	16	16	16
+A	ui_hearts	BoneHeartEmpty	0	game/gfx/ui/ui_hearts.png	96	32	16	16
+A	ui_hearts	BoneHeartFull	0	game/gfx/ui/ui_hearts.png	64	32	16	16
+A	ui_hearts	BoneHeartHalf	0	game/gfx/ui/ui_hearts.png	80	32	16	16
+A	ui_hearts	BrokenCoinHeart	0	game/gfx/ui/ui_hearts.png	48	32	16	16
+A	ui_hearts	BrokenHeart	0	game/gfx/ui/ui_hearts.png	96	48	16	16
+A	ui_hearts	CoinEmpty	0	game/gfx/ui/ui_hearts.png	96	0	16	16
+A	ui_hearts	CoinHeartFull	0	game/gfx/ui/ui_hearts.png	80	0	16	16
+A	ui_hearts	CoinHeartHalf	0	game/gfx/ui/ui_hearts.png	80	16	16	16
+A	ui_hearts	CurseHeart	0	game/gfx/ui/ui_hearts.png	16	48	16	16
+A	ui_hearts	EmptyHeart	0	game/gfx/ui/ui_hearts.png	32	0	16	16
+A	ui_hearts	GoldHeartOverlay	0	game/gfx/ui/ui_hearts.png	64	16	16	16
+A	ui_hearts	HolyMantle	0	game/gfx/ui/ui_hearts.png	32	32	16	16
+A	ui_hearts	HolyMantleBlanket	0	game/gfx/ui/ui_hearts.png	16	32	16	16
+A	ui_hearts	HolyMantleHolyCard	0	game/gfx/ui/ui_hearts.png	0	48	16	16
+A	ui_hearts	HolyMantleWoodenCross	0	game/gfx/ui/ui_hearts.png	0	32	16	16
+A	ui_hearts	RedHeartFull	0	game/gfx/ui/ui_hearts.png	0	0	16	16
+A	ui_hearts	RedHeartHalf	0	game/gfx/ui/ui_hearts.png	16	0	16	16
+A	ui_hearts	RottenBoneHeartFull	0	game/gfx/ui/ui_hearts.png	64	48	16	16
+A	ui_hearts	RottenBoneHeartHalf	0	game/gfx/ui/ui_hearts.png	80	48	16	16
+A	ui_hearts	RottenHeartFull	0	game/gfx/ui/ui_hearts.png	32	48	16	16
+A	ui_hearts	RottenHeartHalf	0	game/gfx/ui/ui_hearts.png	48	48	16	16
+A	ui_hearts	WhiteHeartHalf	0	game/gfx/ui/ui_hearts.png	48	0	16	16
+A	ui_hearts	WhiteHeartOverlay	0	game/gfx/ui/ui_hearts.png	64	0	16	16

@@ -125,11 +125,14 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
                 wineInfo != null && wineInfo.isArm64EC());
     }
 
-    /** Full authenticated identity for diagnostics; empty for an ordinary selection. */
+    /** Full authenticated WFC package identity; empty for an ordinary selection. */
     public String getPinnedBox64RuntimeDiagnostic() {
         SharedBox64RuntimeState.RuntimeRequest request = activeBox64RuntimeRequest != null
                 ? activeBox64RuntimeRequest : resolveBox64RuntimeRequest();
-        if (!request.forceBox64Translator) return "";
+        // Managed Steam runtimes also authenticate Box64, but do not carry a
+        // WOWBox64 digest. WFC pins both binaries even though ARM64EC Proton
+        // follows WEMU's normal FEX execution path.
+        if (request.requiredWowBox64Sha256 == null) return "";
         return request.version
                 + "/box64-sha256=" + request.requiredSha256
                 + "/wowbox64-sha256=" + request.requiredWowBox64Sha256;
@@ -441,8 +444,9 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             if (wineInfo.isArm64EC()) {
                 if (!SharedBox64RuntimeState.isEmpty(
                         container.getExtra(SharedBox64RuntimeState.PINNED_RUNTIME_KEY))) {
-                    // The ARM64EC path executes WOWBox64, but the requested
-                    // WEMU Box64 build is still staged and authenticated too.
+                    // Match WEMU's ARM64EC/FEX execution path, while retaining
+                    // the requested WEMU Box64 build as an installed and
+                    // authenticated component of the dedicated WFC container.
                     extractBox64Files();
                 }
                 extractEmulatorsDlls();

@@ -58,5 +58,7 @@ class InstallProgressTest {
     fun supportedGameLaunchesSuppressInvisibleWineAddonDialogs() {
         assertThat(supportedGameLaunchEnvironment())
             .contains("WINEDLLOVERRIDES=icu=n;mscoree=d;mshtml=d")
+        assertThat(supportedGameLaunchEnvironment("isaac-repentance"))
+            .contains("icu=n;winmm=n,b;mscoree=d;mshtml=d")
     }
 }

@@ -15,6 +15,7 @@ import com.wemu.engine.xserver.Cursor;
 import com.wemu.engine.xserver.Drawable;
 import com.wemu.engine.xserver.Pointer;
 import com.wemu.engine.xserver.Property;
+import com.wemu.engine.xserver.ScreenLayout;
 import com.wemu.engine.xserver.Window;
 import com.wemu.engine.xserver.WindowAttributes;
 import com.wemu.engine.xserver.WindowManager;
@@ -299,6 +300,7 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
     private int primaryWinX, primaryWinY, primaryWinW, primaryWinH;
     private String primaryWinClassName = "";
     private boolean fitGuestWindow = false;
+    private boolean transformersFitIdentityApplied = false;
 
     /**
      * Remembers the window the session is really showing, for [fitGuestWindow].
@@ -309,27 +311,101 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
      * every scene change, and it has to be: the window a game finally settles on
      * is rarely the first one it maps.
      */
+    /** Returns the WFC process class inherited by a drawable child, if any. */
+    private String transformersWfcProcessClass(Window window) {
+        int remaining = 64;
+        for (Window candidate = window; candidate != null && remaining-- > 0;
+             candidate = candidate.getParent()) {
+            String className = candidate.getClassName();
+            if (className != null && className.trim().equalsIgnoreCase("twfc.exe")) {
+                return className;
+            }
+        }
+        return "";
+    }
+
+    /** Records one fit target and updates the transform only when it changed. */
+    private void updatePrimaryWindowLocked(int x, int y, int w, int h,
+                                           String className,
+                                           boolean transformersFamily,
+                                           boolean gpuBacked) {
+        if (className == null) className = "";
+        if (x == primaryWinX && y == primaryWinY && w == primaryWinW
+                && h == primaryWinH && primaryWinClassName.equals(className)) return;
+        primaryWinX = x;
+        primaryWinY = y;
+        primaryWinW = w;
+        primaryWinH = h;
+        primaryWinClassName = className;
+        android.util.Log.i("Wemu_Diagnostics", "Fit primary selected: class=\""
+                + className + "\" position=" + x + "," + y + " size=" + w
+                + "x" + h + " transformersFamily=" + transformersFamily
+                + " gpuBacked=" + gpuBacked);
+        if (fitGuestWindow) updateTransform();
+    }
+
     private void notePrimaryWindow(ArrayList<RenderableWindow> list, int start) {
         int x = 0, y = 0, w = 0, h = 0;
         String className = "";
         long best = -1;
+        final boolean preferTransformers =
+                SecondScreenOutput.isTransformersWfcPanelActive();
+        boolean foundTransformers = false;
+        boolean foundTransformersGpu = false;
         for (int i = start; i < list.size(); i++) {
             RenderableWindow rw = list.get(i);
             if (rw.content == null) continue;
+            if (preferTransformers && SecondScreenOutput.isSecondMonitorPosition(
+                    rw.rootX, rw.rootY)) continue;
+            final boolean transformers = preferTransformers &&
+                    !transformersWfcProcessClass(rw.window).isEmpty();
+            final boolean transformersGpu = transformers &&
+                    rw.content.getTexture() instanceof GPUImage;
+            if (preferTransformers) {
+                if (foundTransformersGpu && !transformersGpu) continue;
+                if (transformersGpu && !foundTransformersGpu) {
+                    foundTransformers = true;
+                    foundTransformersGpu = true;
+                    best = -1;
+                } else if (!foundTransformersGpu && foundTransformers
+                        && !transformers) {
+                    continue;
+                } else if (!foundTransformersGpu && transformers
+                        && !foundTransformers) {
+                    foundTransformers = true;
+                    best = -1;
+                }
+            }
             long area = (long) rw.content.width * rw.content.height;
             if (area >= best) {
                 best = area;
                 x = rw.rootX; y = rw.rootY;
                 w = rw.content.width; h = rw.content.height;
-                className = rw.window.getClassName();
+                className = transformers
+                        ? transformersWfcProcessClass(rw.window)
+                        : rw.window.getClassName();
                 if (className == null) className = "";
             }
         }
-        if (x == primaryWinX && y == primaryWinY && w == primaryWinW && h == primaryWinH
-                && primaryWinClassName.equals(className)) return;
-        primaryWinX = x; primaryWinY = y; primaryWinW = w; primaryWinH = h;
-        primaryWinClassName = className;
-        if (fitGuestWindow) updateTransform();
+        updatePrimaryWindowLocked(x, y, w, h, className,
+                foundTransformers, foundTransformersGpu);
+    }
+
+    /**
+     * WFC creates its final DRI3 client after the last scene/configure event.
+     * Follow the accepted GPU producer itself so a stale CPU Wine helper can
+     * never remain the fitted top-screen window.
+     */
+    private void noteTransformersPrimaryGpuFrameLocked(
+            Window window, Drawable source, int rootX, int rootY) {
+        if (!SecondScreenOutput.isTransformersWfcPanelActive()
+                || source == null || !(source.getTexture() instanceof GPUImage)
+                || source.width <= 1 || source.height <= 1
+                || SecondScreenOutput.isSecondMonitorPosition(rootX, rootY)) return;
+        String className = transformersWfcProcessClass(window);
+        if (className.isEmpty()) return;
+        updatePrimaryWindowLocked(rootX, rootY, source.width, source.height,
+                className, true, true);
     }
 
     /**
@@ -408,10 +484,10 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
          * screen, and an offset of `-windowX * scale` puts its near edge on the
          * left.
          *
-         * One scale for both axes, and centred, so a game that picks 4:3 on a
-         * 16:9 panel is pillarboxed rather than stretched into the wrong shape.
-         * The magnifier is left alone: it is a transform of its own and two of
-         * them composed is not a thing anybody asked for.
+         * One scale is used for both axes, and centred, so a game that picks
+         * 4:3 on a 16:9 panel is pillarboxed rather than distorted. The
+         * magnifier is left alone: it is a transform of its own and two of them
+         * composed is not useful here.
          */
         if (fittingPrimaryWindow() && zoom == 1.0f) {
             final int screenW = guestWidth(), screenH = guestHeight();
@@ -448,11 +524,14 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
                 }
             }
 
-            float scale = Math.min((float) screenW / sourceW,
+            final float scale = Math.min((float) screenW / sourceW,
                     (float) screenH / sourceH);
-            float fx = (screenW - sourceW * scale) * 0.5f - sourceX * scale;
-            float fy = (screenH - sourceH * scale) * 0.5f - sourceY * scale;
-            nativeSetTransformAndScissor(nativeHandle, fx, fy, scale, scale, false, 0, 0, 0, 0);
+            final float fx = (screenW - sourceW * scale) * 0.5f
+                    - sourceX * scale;
+            final float fy = (screenH - sourceH * scale) * 0.5f
+                    - sourceY * scale;
+            nativeSetTransformAndScissor(nativeHandle, fx, fy, scale, scale,
+                    false, 0, 0, 0, 0);
             return;
         }
 
@@ -553,7 +632,8 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
              * a listed window decides what occludes what.
              */
             if (viewable && window.isInputOutput()
-                    && window.getWidth() > 1 && window.getHeight() > 1) {
+                    && window.getWidth() > 1 && window.getHeight() > 1
+                    && !isSecondScreenOnlyWindow(window, x, y)) {
                 list.add(new RenderableWindow(window.getContent(), window, x, y));
             }
         }
@@ -947,12 +1027,39 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
                     window.id, "dxhrdc.exe", deusEx.getName());
             setFitGuestWindow(true);
         } else {
-            SecondScreenOutput.noteGuestWindow(window);
+            ScreenLayout.Monitor second = SecondScreenOutput.getMonitor();
+            String processClass = transformersWfcProcessClass(window);
+            if (second != null && NativePanelIdentity.isTransformersWfcLowerPanelFallback(
+                    processClass, source.width, source.height,
+                    second.width, second.height)) {
+                // Wine drops the private Win32 class/title on WFC's drawable
+                // child.  Its process identity plus an exact lower-monitor fit
+                // uniquely identifies the panel without claiming the game.
+                SecondScreenOutput.noteGuestWindow(
+                        window.id, "TransformersWfcSecondScreenPanel",
+                        "Transformers: War for Cybertron Dual-Screen");
+            } else {
+                SecondScreenOutput.noteGuestWindow(window);
+            }
         }
         if (SecondScreenOutput.isStardewValleyPanelActive()) {
             // Stardew centres its 1280x720 Wine window in the full stacked
             // desktop. Fit the game client itself to the top panel.
             setFitGuestWindow(true);
+        }
+        if (SecondScreenOutput.isTransformersWfcPanelActive()) {
+            // WFC changes from its full-size startup movie to a smaller DRI3
+            // game client after the panel appears. Older shortcuts may not
+            // carry fitGuestWindow, so assert it at the observed transition.
+            setFitGuestWindow(true);
+            if (!transformersFitIdentityApplied) {
+                transformersFitIdentityApplied = true;
+                // The scene was normally collected before the lower window's
+                // first frame established its identity. Re-select immediately
+                // from that scene so the stale Wine desktop does not remain the
+                // fit target until an unrelated map/configure event occurs.
+                notePrimaryWindow(renderableWindows, 0);
+            }
         }
         final boolean submitted;
         if (source.getTexture() instanceof GPUImage) {
@@ -999,6 +1106,8 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
                 // into the primary scene while the lower Surface is recreated.
                 return true;
             }
+
+            noteTransformersPrimaryGpuFrameLocked(window, source, rootX, rootY);
 
             if (source.getTexture() instanceof GPUImage) {
                 GPUImage image = (GPUImage) source.getTexture();
@@ -1092,7 +1201,26 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
         });
     }
 
-    @Override public void onMapWindow(Window window) { xServerView.queueEvent(this::updateScene); }
+    @Override
+    public void onMapWindow(Window window) {
+        xServerView.queueEvent(() -> {
+            /*
+             * Native GDI panels commonly finish their first paint before
+             * ShowWindow. Mapping exposes retained pixels but does not produce
+             * another damage event, so the ordinary content callback never
+             * reaches SecondScreenOutput. Replay that one retained frame at
+             * the mapped transition; classification is checked again on the
+             * renderer worker after Wine has finished the topology change.
+             */
+            Drawable content = window != null ? window.getContent() : null;
+            if (content != null && isViewableWindow(window)
+                    && isSecondScreenOnlyWindow(
+                            window, window.getRootX(), window.getRootY())) {
+                onUpdateWindowContent(window);
+            }
+            updateScene();
+        });
+    }
 
     @Override
     public void onUnmapWindow(Window window) {

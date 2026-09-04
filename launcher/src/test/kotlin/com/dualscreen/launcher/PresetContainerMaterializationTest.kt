@@ -10,7 +10,7 @@ class PresetContainerMaterializationTest {
         assertThat(
             PresetContainerManager.shouldInvalidateRuntimeMaterialization(
                 configurationChanged = true,
-                materializationRevision = "4",
+                materializationRevision = "6",
             ),
         ).isTrue()
     }
@@ -20,7 +20,7 @@ class PresetContainerMaterializationTest {
         assertThat(
             PresetContainerManager.shouldInvalidateRuntimeMaterialization(
                 configurationChanged = false,
-                materializationRevision = "4",
+                materializationRevision = "7",
             ),
         ).isFalse()
     }
@@ -29,7 +29,7 @@ class PresetContainerMaterializationTest {
     fun invalidationClearsDxvkCacheAndMaterializationReceipts() {
         val extras = JSONObject()
             .put("dxvkCacheRevision", "2")
-            .put("companionPresetMaterialization", "4")
+            .put("companionPresetMaterialization", "7")
             .put("displaySecondScreen", "1")
 
         PresetContainerManager.removeRuntimeMaterializationReceipts(extras)

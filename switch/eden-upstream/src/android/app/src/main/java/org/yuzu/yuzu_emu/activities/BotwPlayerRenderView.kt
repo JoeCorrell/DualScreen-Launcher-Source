@@ -140,6 +140,8 @@ internal class BotwPlayerRenderView(
         private const val BOTW_PLAYER_CACHE_DIRECTORY = "dualscreen/botw/player"
         private const val SSHD_PLAYER_CACHE_DIRECTORY = "dualscreen/sshd/player"
         private const val MAX_PLAYER_ASSET_BYTES = 16L * 1024L * 1024L
+        private const val GLB_MAGIC = 0x46546C67
+        private const val GLB_JSON_CHUNK_TYPE = 0x4E4F534A
         private const val SLOT_BASE = "Base"
         private const val SLOT_HEAD = "Head"
         private const val SLOT_HAND_LEFT = "HandLeft"
@@ -318,7 +320,41 @@ internal class BotwPlayerRenderView(
             Log.error("[BOTW Companion] Player animation data failed: ${exception.message}")
             emptyMap()
         }
+
     }
+
+    private fun hasValidatedBotwBodyPose(bytes: ByteArray): Boolean {
+        return try {
+            if (bytes.size < 20) return false
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            if (
+                buffer.getInt(0) != GLB_MAGIC ||
+                buffer.getInt(4) != 2 ||
+                buffer.getInt(8) != bytes.size
+            ) {
+                return false
+            }
+            val jsonLength = buffer.getInt(12)
+            if (
+                buffer.getInt(16) != GLB_JSON_CHUNK_TYPE ||
+                jsonLength !in 2..(bytes.size - 20)
+            ) {
+                return false
+            }
+            val document = JSONObject(
+                String(bytes, 20, jsonLength, Charsets.UTF_8).trimEnd(' ', '\u0000')
+            )
+            val pose = document.optJSONObject("extras")?.optJSONObject("botwPose")
+                ?: return false
+            (document.optJSONArray("meshes")?.length() ?: 0) > 0 &&
+                (document.optJSONArray("skins")?.length() ?: 0) > 0 &&
+                pose.optString("animation") == "Nml_Wait" &&
+                pose.optInt("changedAnimatedNodes", 0) > 0
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private val missingActors = mutableSetOf<String>()
     private val desiredActors = mutableMapOf<String, String?>()
     private val requestedActors = mutableMapOf<String, String?>()
@@ -1047,7 +1083,7 @@ internal class BotwPlayerRenderView(
             val externalDirectory = context.getExternalFilesDir(null)
             fun loadActorCandidates(actor: String): List<AssetBytes> {
                 val file = indexedAssets[actor]?.file ?: return emptyList()
-                val source = listOfNotNull(
+                val externalSources = listOfNotNull(
                     configuredDirectory,
                     externalDirectory,
                     context.filesDir
@@ -1055,24 +1091,31 @@ internal class BotwPlayerRenderView(
                     .distinctBy(File::getAbsolutePath)
                     .asSequence()
                     .map { root -> File(root, "$playerCacheDirectory/$file") }
-                    .firstOrNull { candidate ->
+                    .filter { candidate ->
                         candidate.isFile && candidate.length() in 1..MAX_PLAYER_ASSET_BYTES
                     }
-                val loadedFromFile = if (
-                    source != null && source.length() in 1..MAX_PLAYER_ASSET_BYTES
-                ) {
+                val requiresValidatedPose = profile == PlayerRenderProfile.Botw &&
+                    (actor == "Link" || actor.startsWith("Armor_"))
+                val loadedFromFile = externalSources.mapNotNull { source ->
                     try {
-                        AssetBytes(actor, source.readBytes())
+                        val bytes = source.readBytes()
+                        if (requiresValidatedPose && !hasValidatedBotwBodyPose(bytes)) {
+                            Log.warning(
+                                "[BOTW Companion] Ignoring unposed external player model " +
+                                    "$actor at ${source.absolutePath}; using a packaged fallback"
+                            )
+                            null
+                        } else {
+                            AssetBytes(actor, bytes)
+                        }
                     } catch (exception: Exception) {
                         Log.warning(
-                            "[$logName Companion] Player model $actor could not be read: " +
-                                exception.message
+                            "[$logName Companion] Player model $actor could not be read from " +
+                                "${source.absolutePath}: ${exception.message}"
                         )
                         null
                     }
-                } else {
-                    null
-                }
+                }.firstOrNull()
                 val loadedFromPackage = try {
                     val assetDirectory = assetIndex.substringBeforeLast('/')
                     val bytes = context.assets.open("$assetDirectory/$file").use { stream ->

@@ -92,6 +92,7 @@ $sources = @(
     (Join-Path $sourceRoot 'IatHook.cpp'),
     (Join-Path $sourceRoot 'StateStore.cpp'),
     (Join-Path $sourceRoot 'CharacterSwap.cpp'),
+    (Join-Path $sourceRoot 'CampaignClassSystem.cpp'),
     (Join-Path $sourceRoot 'CheckpointGate.cpp'),
     (Join-Path $sourceRoot 'CharacterRoleAdapter.cpp'),
     (Join-Path $sourceRoot 'PanelInput.cpp'),

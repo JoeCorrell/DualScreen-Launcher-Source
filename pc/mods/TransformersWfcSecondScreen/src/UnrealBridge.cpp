@@ -377,6 +377,12 @@ bool NameEqualsPathSegment(void* object, const wchar_t* begin,
          CSTR_EQUAL;
 }
 
+bool NameEqualsText(void* object, const wchar_t* expected) {
+  if (!object || !expected || !*expected) return false;
+  return NameEqualsPathSegment(object, expected,
+                               expected + std::wcslen(expected));
+}
+
 bool ObjectPathMatches(void* object, const wchar_t* full_path) {
   if (!UnrealObjectValid(object) || !full_path || !*full_path) return false;
   const size_t path_length = std::wcslen(full_path);
@@ -394,12 +400,30 @@ bool ObjectPathMatches(void* object, const wchar_t* full_path) {
     if (!NameEqualsPathSegment(current, segment_begin, segment_end))
       return false;
     current = ObjectOuter(current);
-    if (segment_begin == full_path) return current == nullptr;
+    // Cooked WFC packages can retain an internal linker/package outer above
+    // the public Unreal reference path (for example
+    // `TransGame.TnGameLobbyGame`).  The public path is still an exact suffix
+    // of the runtime chain. Requiring the final matched package to have a null
+    // Outer rejected every otherwise exact UFunction in the live build.
+    if (segment_begin == full_path) return true;
     if (segment_begin == full_path + 1 || segment_begin[-1] != L'.')
       return false;
     segment_end = segment_begin - 1;
   }
   return false;
+}
+
+bool OwnerPathMatches(void* object, const wchar_t* full_path) {
+  if (ObjectPathMatches(object, full_path)) return true;
+  if (!UnrealObjectValid(object) || !full_path || !*full_path) return false;
+  const wchar_t* leaf = std::wcsrchr(full_path, L'.');
+  leaf = leaf ? leaf + 1 : full_path;
+  const wchar_t* end = full_path + std::wcslen(full_path);
+  // Keep this fallback exact at the declaring class/state leaf. Resolution by
+  // function name still rejects ambiguity process-wide, while tolerating a
+  // cooked package outer that is not represented in UObject's packed Outer
+  // identity.
+  return leaf < end && NameEqualsPathSegment(object, leaf, end);
 }
 
 uint64_t ObjectPathIdentityHash(void* object) {
@@ -587,14 +611,16 @@ void* FunctionContextClass(void* owner) {
 }
 
 bool FunctionIdentityMatches(void* function, uint32_t function_name_index,
+                             const wchar_t* function_name,
                              const wchar_t* full_owner_path) {
   if (!ValidScriptFunction(function) ||
-      !BaseNameIndexEquals(function, function_name_index))
+      (!BaseNameIndexEquals(function, function_name_index) &&
+       !NameEqualsText(function, function_name)))
     return false;
   void* owner = ObjectOuter(function);
   return owner && UnrealObjectIsA(owner, L"Struct") &&
          FunctionContextClass(owner) &&
-         ObjectPathMatches(owner, full_owner_path);
+         OwnerPathMatches(owner, full_owner_path);
 }
 
 bool BuildExactFunctionHandle(void* function,
@@ -773,6 +799,28 @@ bool SetObjectParameter(ReflectedCall* call, const wchar_t* parameter_name,
       offset + sizeof(value) > call->size)
     return false;
   std::memcpy(call->parameters.data() + offset, &value, sizeof(value));
+  return true;
+}
+
+bool SetStringParameter(ReflectedCall* call, const wchar_t* parameter_name,
+                        const wchar_t* value) {
+  if (!call || !call->function || !parameter_name || !value) return false;
+  void* field = FindCallField(*call, parameter_name);
+  if (!field || !UnrealObjectIsA(field, L"StrProperty") ||
+      !ValidInputParameter(field) || FieldArrayDim(field) != 1 ||
+      FieldElementSize(field) != sizeof(UnrealArrayView))
+    return false;
+  const size_t length = std::wcslen(value);
+  if (length > 4095) return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX ||
+      offset + sizeof(UnrealArrayView) > call->size)
+    return false;
+  UnrealArrayView string_value = {
+      const_cast<wchar_t*>(value), static_cast<int32_t>(length + 1),
+      static_cast<int32_t>(length + 1)};
+  std::memcpy(call->parameters.data() + offset, &string_value,
+              sizeof(string_value));
   return true;
 }
 
@@ -1071,7 +1119,8 @@ void* FindCallField(const ReflectedCall& call, const wchar_t* field_name) {
       static_cast<uint8_t*>(call.function) + 0x30);
   for (int count = 0; field && count < 128; ++count) {
     if (!Readable(field, 0x44)) return nullptr;
-    if (BaseNameIndexEquals(field, name_index)) {
+    if (BaseNameIndexEquals(field, name_index) ||
+        NameEqualsText(field, field_name)) {
       CacheLookup(&g_call_field_cache, &g_call_field_cache_count,
                   call.function, name_index, field);
       return field;
@@ -1431,9 +1480,14 @@ bool UnrealResolveExactScriptFunction(uint32_t expected_object_index,
   const uint32_t function_name_index = packed_function_name >> 14;
 
   void* match = nullptr;
+  uint32_t name_candidates = 0;
+  uint32_t text_name_candidates = 0;
+  uint32_t script_candidates = 0;
+  uint32_t owner_candidates = 0;
   if (expected_object_index) {
     void* candidate = ObjectByInternalIndex(expected_object_index);
     if (!FunctionIdentityMatches(candidate, function_name_index,
+                                 function_name,
                                  full_owner_path))
       return false;
     match = candidate;
@@ -1441,19 +1495,74 @@ bool UnrealResolveExactScriptFunction(uint32_t expected_object_index,
     for (int32_t index = 0; index < g_objects->count; ++index) {
       void* candidate = g_objects->data[index];
       if (!Readable(candidate, 8) ||
-          !BaseNameIndexEquals(candidate, function_name_index) ||
-          !FunctionIdentityMatches(candidate, function_name_index,
-                                   full_owner_path))
-        continue;
+          !BaseNameIndexEquals(candidate, function_name_index)) continue;
+      ++name_candidates;
+      if (!ValidScriptFunction(candidate)) continue;
+      ++script_candidates;
+      void* owner = ObjectOuter(candidate);
+      if (!owner || !UnrealObjectIsA(owner, L"Struct") ||
+          !FunctionContextClass(owner) ||
+          !OwnerPathMatches(owner, full_owner_path)) continue;
+      ++owner_candidates;
       // A fully qualified owner plus function name must be unique. Refuse an
       // ambiguous result instead of relying on package load order.
-      if (match && match != candidate) return false;
+      if (match && match != candidate) {
+        Log(LogLevel::kError,
+            "[Reflection] ambiguous exact function owner=%ls function=%ls first=%lu second=%lu",
+            full_owner_path, function_name,
+            static_cast<unsigned long>(UnrealObjectIndex(match)),
+            static_cast<unsigned long>(UnrealObjectIndex(candidate)));
+        return false;
+      }
       match = candidate;
     }
+
+    // High Moon's runtime FName lookup can return a packed comparison index
+    // which differs from the base index stored on cooked UFunction exports.
+    // Ordinary reflected calls still work because the engine resolves through
+    // the owning class. If the fast index pass found no object at all, compare
+    // the immutable GNames text once so exact hooks can reach those same
+    // functions without relying on the mismatched packed value.
+    if (!match && name_candidates == 0) {
+      for (int32_t index = 0; index < g_objects->count; ++index) {
+        void* candidate = g_objects->data[index];
+        if (!Readable(candidate, 8) ||
+            !NameEqualsText(candidate, function_name)) continue;
+        ++text_name_candidates;
+        if (!ValidScriptFunction(candidate)) continue;
+        ++script_candidates;
+        void* owner = ObjectOuter(candidate);
+        if (!owner || !UnrealObjectIsA(owner, L"Struct") ||
+            !FunctionContextClass(owner) ||
+            !OwnerPathMatches(owner, full_owner_path)) continue;
+        ++owner_candidates;
+        if (match && match != candidate) {
+          Log(LogLevel::kError,
+              "[Reflection] ambiguous textual function owner=%ls function=%ls first=%lu second=%lu",
+              full_owner_path, function_name,
+              static_cast<unsigned long>(UnrealObjectIndex(match)),
+              static_cast<unsigned long>(UnrealObjectIndex(candidate)));
+          return false;
+        }
+        match = candidate;
+      }
+    }
   }
-  return match && BuildExactFunctionHandle(match, output) &&
-         (!expected_object_index ||
-          output->function_object_index == expected_object_index);
+  const bool resolved =
+      match && BuildExactFunctionHandle(match, output) &&
+      (!expected_object_index ||
+       output->function_object_index == expected_object_index);
+  if (!resolved) {
+    Log(LogLevel::kError,
+        "[Reflection] exact function resolution failed owner=%ls function=%ls expected-object=%lu candidates[name=%lu text=%lu script=%lu owner=%lu]",
+        full_owner_path, function_name,
+        static_cast<unsigned long>(expected_object_index),
+        static_cast<unsigned long>(name_candidates),
+        static_cast<unsigned long>(text_name_candidates),
+        static_cast<unsigned long>(script_candidates),
+        static_cast<unsigned long>(owner_candidates));
+  }
+  return resolved;
 }
 
 bool UnrealResolveExactScriptFunctionForObject(
@@ -1468,6 +1577,15 @@ bool UnrealResolveExactScriptFunctionForObject(
   uint32_t packed_function_name = 0;
   if (!MakeName(function_name, &packed_function_name)) return false;
   const uint32_t function_name_index = packed_function_name >> 14;
+  // Ask WFC's own class resolver first. This is the same authoritative lookup
+  // used by normal reflected calls and reaches inherited cooked functions even
+  // when their export FName uses a different packed comparison index.
+  void* resolved = FindFunction(object, function_name);
+  if (resolved &&
+      FunctionIdentityMatches(resolved, function_name_index, function_name,
+                              full_owner_path) &&
+      BuildExactFunctionHandle(resolved, output))
+    return true;
   void* context_class = ClassOf(object);
   for (size_t depth = 0; context_class && depth < kMaxOuterDepth; ++depth) {
     if (!UnrealObjectValid(context_class) ||
@@ -1476,13 +1594,15 @@ bool UnrealResolveExactScriptFunctionForObject(
       return false;
 
     // Ordinary class-scoped UFunctions are direct children of the class.
-    if (ObjectPathMatches(context_class, full_owner_path)) {
+    if (OwnerPathMatches(context_class, full_owner_path)) {
       void* field = *reinterpret_cast<void**>(
           static_cast<uint8_t*>(context_class) + 0x30);
       for (size_t count = 0; field && count < 4096; ++count) {
         if (!Readable(field, 0x6C)) return false;
-        if (BaseNameIndexEquals(field, function_name_index) &&
+        if ((BaseNameIndexEquals(field, function_name_index) ||
+             NameEqualsText(field, function_name)) &&
             FunctionIdentityMatches(field, function_name_index,
+                                    function_name,
                                     full_owner_path))
           return BuildExactFunctionHandle(field, output);
         field = *reinterpret_cast<void**>(
@@ -1500,13 +1620,15 @@ bool UnrealResolveExactScriptFunctionForObject(
          ++state_count) {
       if (!Readable(state, 0x34)) return false;
       if (UnrealObjectIsA(state, L"State") &&
-          ObjectPathMatches(state, full_owner_path)) {
+          OwnerPathMatches(state, full_owner_path)) {
         void* field = *reinterpret_cast<void**>(
             static_cast<uint8_t*>(state) + 0x30);
         for (size_t count = 0; field && count < 4096; ++count) {
           if (!Readable(field, 0x6C)) return false;
-          if (BaseNameIndexEquals(field, function_name_index) &&
+          if ((BaseNameIndexEquals(field, function_name_index) ||
+               NameEqualsText(field, function_name)) &&
               FunctionIdentityMatches(field, function_name_index,
+                                      function_name,
                                       full_owner_path))
             return BuildExactFunctionHandle(field, output);
           field = *reinterpret_cast<void**>(
@@ -1557,6 +1679,19 @@ bool UnrealCallExactVoidInt(
          Execute(object, &call);
 }
 
+bool UnrealCallExactVoidString(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* string_parameter, const wchar_t* string_value) {
+  ReflectedCall call;
+  return PrepareExactCall(object, function, &call) &&
+         FunctionParameterCount(call.function) == 1 &&
+         call.size == sizeof(UnrealArrayView) &&
+         call.return_offset == 0xFFFFu &&
+         SetStringParameter(&call, string_parameter, string_value) &&
+         FieldOffset(FindCallField(call, string_parameter)) == 0 &&
+         Execute(object, &call);
+}
+
 bool UnrealCallExactVoidStruct(
     void* object, const UnrealFunctionHandle& function,
     const wchar_t* struct_parameter,
@@ -1567,6 +1702,195 @@ bool UnrealCallExactVoidStruct(
          call.return_offset == 0xFFFFu &&
          SetStructParameter(&call, struct_parameter, struct_value) &&
          Execute(object, &call);
+}
+
+bool UnrealCallExactStructResultPersistent(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* struct_parameter,
+    const UnrealStructValueView& struct_value, void* parameter_storage,
+    size_t parameter_storage_size, UnrealStructValueView* output) {
+  if (!g_ready || !g_invoke || !parameter_storage ||
+      !parameter_storage_size || !output)
+    return false;
+  *output = {};
+  ReflectedCall call;
+  if (!PrepareExactCall(object, function, &call) || !struct_parameter ||
+      !struct_value.data || !struct_value.size ||
+      !UnrealObjectValid(struct_value.struct_definition) ||
+      call.size > parameter_storage_size || !call.size)
+    return false;
+  void* input_field = FindCallField(call, struct_parameter);
+  void* return_field = FindCallField(call, L"ReturnValue");
+  if (!input_field || !return_field ||
+      !UnrealObjectIsA(input_field, L"StructProperty") ||
+      !ValidInputParameter(input_field) ||
+      !UnrealObjectIsA(return_field, L"StructProperty") ||
+      !Readable(static_cast<uint8_t*>(input_field) + 0x40, sizeof(void*)) ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x38,
+                sizeof(uint32_t)) ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x40, sizeof(void*)))
+    return false;
+  void* input_definition = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(input_field) + 0x40);
+  void* return_definition = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(return_field) + 0x40);
+  const uint32_t return_flags = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(return_field) + 0x38);
+  const uint32_t input_offset = FieldOffset(input_field);
+  const uint32_t return_offset = FieldOffset(return_field);
+  const uint32_t return_size = FieldElementSize(return_field);
+  if (FunctionParameterCount(call.function) != 2 ||
+      input_definition != struct_value.struct_definition ||
+      FieldElementSize(input_field) != struct_value.size ||
+      ReflectedStructSize(input_definition) != struct_value.size ||
+      (return_flags & kPropertyReturnParm) == 0 ||
+      !UnrealObjectValid(return_definition) || !return_size ||
+      return_size > 0x10000 ||
+      ReflectedStructSize(return_definition) != return_size ||
+      input_offset == UINT32_MAX || return_offset == UINT32_MAX ||
+      input_offset + struct_value.size > call.size ||
+      return_offset + return_size > call.size ||
+      call.return_offset != return_offset ||
+      !Readable(struct_value.data, struct_value.size))
+    return false;
+  std::memset(parameter_storage, 0, call.size);
+  std::memcpy(static_cast<uint8_t*>(parameter_storage) + input_offset,
+              struct_value.data, struct_value.size);
+  WfcInvokeReflected(g_invoke, call.function, object, parameter_storage);
+  output->data = static_cast<uint8_t*>(parameter_storage) + return_offset;
+  output->size = return_size;
+  output->struct_definition = return_definition;
+  return true;
+}
+
+bool UnrealCallExactStringStructResultPersistent(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* string_parameter, const wchar_t* string_value,
+    void* parameter_storage, size_t parameter_storage_size,
+    UnrealStructValueView* output) {
+  if (!g_ready || !g_invoke || !string_parameter || !string_value ||
+      !parameter_storage || !parameter_storage_size || !output)
+    return false;
+  *output = {};
+  ReflectedCall call;
+  if (!PrepareExactCall(object, function, &call) || !call.size ||
+      call.size > parameter_storage_size)
+    return false;
+  void* input_field = FindCallField(call, string_parameter);
+  void* return_field = FindCallField(call, L"ReturnValue");
+  if (!input_field || !return_field ||
+      !UnrealObjectIsA(input_field, L"StrProperty") ||
+      !ValidInputParameter(input_field) ||
+      FieldElementSize(input_field) != sizeof(UnrealArrayView) ||
+      !UnrealObjectIsA(return_field, L"StructProperty") ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x38,
+                sizeof(uint32_t)) ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x40, sizeof(void*)))
+    return false;
+  const uint32_t return_flags = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(return_field) + 0x38);
+  void* return_definition = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(return_field) + 0x40);
+  const uint32_t input_offset = FieldOffset(input_field);
+  const uint32_t return_offset = FieldOffset(return_field);
+  const uint32_t return_size = FieldElementSize(return_field);
+  const size_t string_length = std::wcslen(string_value);
+  if (FunctionParameterCount(call.function) != 2 || string_length > 4095 ||
+      (return_flags & kPropertyReturnParm) == 0 ||
+      !UnrealObjectValid(return_definition) || !return_size ||
+      return_size > 0x10000 ||
+      ReflectedStructSize(return_definition) != return_size ||
+      input_offset == UINT32_MAX || return_offset == UINT32_MAX ||
+      input_offset + sizeof(UnrealArrayView) > call.size ||
+      return_offset + return_size > call.size ||
+      call.return_offset != return_offset)
+    return false;
+  std::memset(parameter_storage, 0, call.size);
+  const UnrealArrayView input = {
+      const_cast<wchar_t*>(string_value),
+      static_cast<int32_t>(string_length + 1),
+      static_cast<int32_t>(string_length + 1)};
+  std::memcpy(static_cast<uint8_t*>(parameter_storage) + input_offset,
+              &input, sizeof(input));
+  WfcInvokeReflected(g_invoke, call.function, object, parameter_storage);
+  output->data = static_cast<uint8_t*>(parameter_storage) + return_offset;
+  output->size = return_size;
+  output->struct_definition = return_definition;
+  return true;
+}
+
+bool UnrealCallExactStringObjectResult(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* string_parameter, const wchar_t* string_value,
+    void** output) {
+  if (!output) return false;
+  *output = nullptr;
+  ReflectedCall call;
+  if (!PrepareExactCall(object, function, &call) ||
+      FunctionParameterCount(call.function) != 2 ||
+      !SetStringParameter(&call, string_parameter, string_value))
+    return false;
+  void* input_field = FindCallField(call, string_parameter);
+  void* return_field = FindCallField(call, L"ReturnValue");
+  if (!input_field || !return_field ||
+      !UnrealObjectIsA(input_field, L"StrProperty") ||
+      !ValidInputParameter(input_field) ||
+      FieldArrayDim(input_field) != 1 ||
+      FieldElementSize(input_field) != sizeof(UnrealArrayView) ||
+      !UnrealObjectIsA(return_field, L"ObjectProperty") ||
+      FieldArrayDim(return_field) != 1 ||
+      FieldElementSize(return_field) != sizeof(void*) ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x38,
+                sizeof(uint32_t)))
+    return false;
+  const uint32_t return_flags = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(return_field) + 0x38);
+  const uint32_t input_offset = FieldOffset(input_field);
+  const uint32_t return_offset = FieldOffset(return_field);
+  if ((return_flags & kPropertyReturnParm) == 0 ||
+      input_offset == UINT32_MAX || return_offset == UINT32_MAX ||
+      input_offset + sizeof(UnrealArrayView) > call.size ||
+      return_offset + sizeof(void*) > call.size ||
+      call.return_offset != return_offset || !Execute(object, &call))
+    return false;
+  void* returned = nullptr;
+  std::memcpy(&returned, call.parameters.data() + return_offset,
+              sizeof(returned));
+  if (!returned || !UnrealObjectValid(returned)) return false;
+  *output = returned;
+  return true;
+}
+
+bool UnrealCallExactStringBoolResult(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* string_parameter, const wchar_t* string_value,
+    bool* output) {
+  if (!output) return false;
+  *output = false;
+  ReflectedCall call;
+  if (!PrepareExactCall(object, function, &call) || !string_parameter ||
+      !string_value || FunctionParameterCount(call.function) != 2)
+    return false;
+  void* input_field = FindCallField(call, string_parameter);
+  void* return_field = FindCallField(call, L"ReturnValue");
+  if (!input_field || !return_field ||
+      !UnrealObjectIsA(input_field, L"StrProperty") ||
+      !ValidInputParameter(input_field) || FieldArrayDim(input_field) != 1 ||
+      FieldElementSize(input_field) != sizeof(UnrealArrayView) ||
+      !UnrealObjectIsA(return_field, L"BoolProperty") ||
+      !Readable(static_cast<uint8_t*>(return_field) + 0x38,
+                sizeof(uint32_t)))
+    return false;
+  const uint32_t return_flags = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(return_field) + 0x38);
+  const uint32_t input_offset = FieldOffset(input_field);
+  const uint32_t return_offset = FieldOffset(return_field);
+  if ((return_flags & kPropertyReturnParm) == 0 || input_offset != 0 ||
+      return_offset == UINT32_MAX || call.return_offset != return_offset ||
+      !SetStringParameter(&call, string_parameter, string_value) ||
+      !Execute(object, &call))
+    return false;
+  return ReadBoolReturn(call, output);
 }
 
 bool UnrealCallExactVoidObjectBool(
@@ -1634,6 +1958,38 @@ bool UnrealResolveExactIntParameterOffset(
   return true;
 }
 
+bool UnrealResolveExactStringParameterOffset(
+    const UnrealFunctionHandle& function, const wchar_t* parameter_name,
+    uint32_t* output) {
+  if (!output) return false;
+  *output = 0;
+  const auto fail = [&]() {
+    Log(LogLevel::kError,
+        "[Reflection] exact string parameter layout failed function-object=%lu parameter=%ls",
+        static_cast<unsigned long>(function.function_object_index),
+        parameter_name ? parameter_name : L"(null)");
+    return false;
+  };
+  if (!UnrealBridgeReady() || !ExactFunctionHandleValid(function) ||
+      !parameter_name || !*parameter_name)
+    return fail();
+  ReflectedCall call;
+  call.function = function.function;
+  void* field = FindCallField(call, parameter_name);
+  if (!field || !UnrealObjectIsA(field, L"StrProperty") ||
+      !ValidInputParameter(field) || FieldArrayDim(field) != 1 ||
+      FieldElementSize(field) != sizeof(UnrealArrayView))
+    return fail();
+  const uint32_t offset = FieldOffset(field);
+  const uint16_t parameter_size = *reinterpret_cast<const uint16_t*>(
+      static_cast<const uint8_t*>(function.function) + 0x5E);
+  if (offset == UINT32_MAX ||
+      offset + sizeof(UnrealArrayView) > parameter_size)
+    return fail();
+  *output = offset;
+  return true;
+}
+
 bool UnrealResolveExactStructParameterLayout(
     const UnrealFunctionHandle& function, const wchar_t* parameter_name,
     uint32_t expected_size, uint32_t* output_offset,
@@ -1641,9 +1997,17 @@ bool UnrealResolveExactStructParameterLayout(
   if (!output_offset || !output_struct_definition) return false;
   *output_offset = 0;
   *output_struct_definition = nullptr;
+  const auto fail = [&]() {
+    Log(LogLevel::kError,
+        "[Reflection] exact struct parameter layout failed function-object=%lu parameter=%ls expected-size=%lu",
+        static_cast<unsigned long>(function.function_object_index),
+        parameter_name ? parameter_name : L"(null)",
+        static_cast<unsigned long>(expected_size));
+    return false;
+  };
   if (!UnrealBridgeReady() || !ExactFunctionHandleValid(function) ||
       !parameter_name || !*parameter_name || !expected_size)
-    return false;
+    return fail();
   ReflectedCall call;
   call.function = function.function;
   void* field = FindCallField(call, parameter_name);
@@ -1651,7 +2015,7 @@ bool UnrealResolveExactStructParameterLayout(
       !ValidInputParameter(field) || FieldArrayDim(field) != 1 ||
       FieldElementSize(field) != expected_size ||
       !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(void*)))
-    return false;
+    return fail();
   void* definition = *reinterpret_cast<void**>(
       static_cast<uint8_t*>(field) + 0x40);
   const uint32_t offset = FieldOffset(field);
@@ -1660,8 +2024,50 @@ bool UnrealResolveExactStructParameterLayout(
   if (!UnrealObjectValid(definition) ||
       ReflectedStructSize(definition) != expected_size ||
       offset == UINT32_MAX || offset + expected_size > parameter_size)
-    return false;
+    return fail();
   *output_offset = offset;
+  *output_struct_definition = definition;
+  return true;
+}
+
+bool UnrealResolveExactStructReturnLayout(
+    const UnrealFunctionHandle& function, uint32_t* output_size,
+    void** output_struct_definition) {
+  if (!output_size || !output_struct_definition) return false;
+  *output_size = 0;
+  *output_struct_definition = nullptr;
+  const auto fail = [&]() {
+    Log(LogLevel::kError,
+        "[Reflection] exact struct return layout failed function-object=%lu",
+        static_cast<unsigned long>(function.function_object_index));
+    return false;
+  };
+  if (!UnrealBridgeReady() || !ExactFunctionHandleValid(function))
+    return fail();
+  ReflectedCall call;
+  call.function = function.function;
+  void* field = FindCallField(call, L"ReturnValue");
+  if (!field || !UnrealObjectIsA(field, L"StructProperty") ||
+      !Readable(static_cast<uint8_t*>(field) + 0x38, sizeof(uint32_t)) ||
+      !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(void*)) ||
+      FieldArrayDim(field) != 1)
+    return fail();
+  const uint32_t flags = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(field) + 0x38);
+  void* definition = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(field) + 0x40);
+  const uint32_t size = FieldElementSize(field);
+  const uint32_t offset = FieldOffset(field);
+  const uint16_t parameter_size = *reinterpret_cast<const uint16_t*>(
+      static_cast<const uint8_t*>(function.function) + 0x5E);
+  const uint16_t return_offset = *reinterpret_cast<const uint16_t*>(
+      static_cast<const uint8_t*>(function.function) + 0x60);
+  if ((flags & kPropertyReturnParm) == 0 || !size || size > 0x10000 ||
+      !UnrealObjectValid(definition) ||
+      ReflectedStructSize(definition) != size || offset == UINT32_MAX ||
+      offset + size > parameter_size || return_offset != offset)
+    return fail();
+  *output_size = size;
   *output_struct_definition = definition;
   return true;
 }
@@ -1805,26 +2211,38 @@ bool UnrealInstallFunctionExecDetour(
     const UnrealFunctionHandle& function,
     UnrealFunctionExec replacement_executor,
     UnrealFunctionExecDetour* output) {
-  if (!output || output->installed || !UnrealBridgeReady() ||
-      !ExactFunctionHandleValid(function) ||
-      !ExecutableExecutor(replacement_executor) ||
-      g_function_exec_detour_count >= g_function_exec_detours.size())
+  const auto fail = [&](const char* reason) {
+    Log(LogLevel::kError,
+        "[Reflection] executor detour rejected reason=%s function-object=%lu active=%lu capacity=%lu",
+        reason, static_cast<unsigned long>(function.function_object_index),
+        static_cast<unsigned long>(g_function_exec_detour_count),
+        static_cast<unsigned long>(g_function_exec_detours.size()));
     return false;
+  };
+  if (!output) return fail("missing-output");
+  if (output->installed) return fail("output-already-installed");
+  if (!UnrealBridgeReady()) return fail("bridge-not-ready");
+  if (!ExactFunctionHandleValid(function)) return fail("invalid-function");
+  if (!ExecutableExecutor(replacement_executor))
+    return fail("replacement-not-executable");
+  if (g_function_exec_detour_count >= g_function_exec_detours.size())
+    return fail("registry-full");
   for (size_t index = 0; index < g_function_exec_detour_count; ++index) {
     if (g_function_exec_detours[index].function.function ==
         function.function)
-      return false;
+      return fail("function-already-detoured");
   }
 
   volatile LONG* slot = nullptr;
   UnrealFunctionExec original_executor = nullptr;
   if (!EnsureFunctionExecutorInitialized(function, &slot,
-                                         &original_executor) ||
-      original_executor == replacement_executor)
-    return false;
+                                         &original_executor))
+    return fail("original-executor-unavailable");
+  if (original_executor == replacement_executor)
+    return fail("replacement-already-active");
   if (!CompareExchangeFunctionExecutor(function, original_executor,
                                        replacement_executor))
-    return false;
+    return fail("executor-compare-exchange");
 
   ActiveFunctionExecDetour active;
   active.function = function;
@@ -2358,6 +2776,171 @@ bool UnrealReadStructIntField(const UnrealStructValueView& value,
   return true;
 }
 
+bool UnrealAssignStructIntField(const UnrealStructValueView& value,
+                                const wchar_t* field_name, int32_t input) {
+  if (!field_name || !value.data || !value.size ||
+      !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"IntProperty") ||
+      FieldArrayDim(field) != 1 ||
+      FieldElementSize(field) != sizeof(input))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(input) > value.size ||
+      !Readable(static_cast<const uint8_t*>(value.data) + offset,
+                sizeof(input)))
+    return false;
+  std::memcpy(const_cast<uint8_t*>(
+                  static_cast<const uint8_t*>(value.data)) + offset,
+              &input, sizeof(input));
+  return true;
+}
+
+bool UnrealAssignStructBoolField(const UnrealStructValueView& value,
+                                 const wchar_t* field_name, bool input) {
+  if (!field_name || !value.data || !value.size ||
+      !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"BoolProperty") ||
+      FieldArrayDim(field) != 1 ||
+      !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(uint32_t)))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  const uint32_t mask = *reinterpret_cast<const uint32_t*>(
+      static_cast<const uint8_t*>(field) + 0x40);
+  if (offset == UINT32_MAX || !mask ||
+      offset + sizeof(uint32_t) > value.size ||
+      !Readable(static_cast<const uint8_t*>(value.data) + offset,
+                sizeof(uint32_t)))
+    return false;
+  uint32_t bits = 0;
+  std::memcpy(&bits,
+              static_cast<const uint8_t*>(value.data) + offset,
+              sizeof(bits));
+  bits = input ? bits | mask : bits & ~mask;
+  std::memcpy(const_cast<uint8_t*>(
+                  static_cast<const uint8_t*>(value.data)) + offset,
+              &bits, sizeof(bits));
+  return true;
+}
+
+bool UnrealCopyStructByteField(const UnrealStructValueView& source,
+                               const UnrealStructValueView& destination,
+                               const wchar_t* field_name) {
+  if (!field_name || !source.data || !destination.data || !source.size ||
+      source.size != destination.size ||
+      source.struct_definition != destination.struct_definition ||
+      !UnrealObjectValid(source.struct_definition))
+    return false;
+  void* field = FindStructField(source.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"ByteProperty") ||
+      FieldArrayDim(field) != 1 ||
+      FieldElementSize(field) != sizeof(uint8_t))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(uint8_t) > source.size)
+    return false;
+  const auto* source_byte =
+      static_cast<const uint8_t*>(source.data) + offset;
+  auto* destination_byte =
+      const_cast<uint8_t*>(static_cast<const uint8_t*>(destination.data)) +
+      offset;
+  if (!Readable(source_byte, sizeof(uint8_t)) ||
+      !Readable(destination_byte, sizeof(uint8_t)))
+    return false;
+  *destination_byte = *source_byte;
+  return true;
+}
+
+bool UnrealShrinkStructArray(const UnrealStructValueView& value,
+                             const wchar_t* field_name,
+                             int32_t new_count) {
+  if (!field_name || new_count < 0 || !value.data || !value.size ||
+      !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"ArrayProperty")) return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(UnrealArrayView) > value.size)
+    return false;
+  auto* array = reinterpret_cast<UnrealArrayView*>(
+      const_cast<uint8_t*>(static_cast<const uint8_t*>(value.data)) + offset);
+  if (!Readable(array, sizeof(*array)) || array->count < 0 ||
+      array->capacity < array->count || array->capacity > 64 ||
+      new_count > array->count)
+    return false;
+  auto* count = reinterpret_cast<volatile LONG*>(&array->count);
+  const LONG observed = static_cast<LONG>(array->count);
+  return InterlockedCompareExchange(count, static_cast<LONG>(new_count),
+                                    observed) == observed;
+}
+
+bool UnrealReadStructByteArrayElement(const UnrealStructValueView& value,
+                                      const wchar_t* field_name,
+                                      int32_t index, uint8_t* output) {
+  if (!output || !field_name || index < 0 || !value.data || !value.size ||
+      !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"ArrayProperty") ||
+      !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(void*)))
+    return false;
+  void* inner = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(field) + 0x40);
+  if (!inner || !UnrealObjectIsA(inner, L"ByteProperty") ||
+      FieldElementSize(inner) != sizeof(uint8_t))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(UnrealArrayView) > value.size ||
+      !Readable(static_cast<const uint8_t*>(value.data) + offset,
+                sizeof(UnrealArrayView)))
+    return false;
+  UnrealArrayView array = {};
+  std::memcpy(&array, static_cast<const uint8_t*>(value.data) + offset,
+              sizeof(array));
+  if (array.count < 0 || array.capacity < array.count || array.count > 64 ||
+      array.capacity > 64 || index >= array.count || !array.data ||
+      !Readable(static_cast<const uint8_t*>(array.data) + index,
+                sizeof(uint8_t)))
+    return false;
+  *output = *(static_cast<const uint8_t*>(array.data) + index);
+  return true;
+}
+
+bool UnrealAssignStructStringArrayElementWide(
+    const UnrealStructValueView& value, const wchar_t* field_name,
+    int32_t index, const wchar_t* text) {
+  if (!g_fstring_assign || !field_name || !text || index < 0 || !value.data ||
+      !value.size || !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"ArrayProperty") ||
+      !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(void*)))
+    return false;
+  void* inner = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(field) + 0x40);
+  if (!inner || !UnrealObjectIsA(inner, L"StrProperty") ||
+      FieldElementSize(inner) != sizeof(UnrealArrayView))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(UnrealArrayView) > value.size ||
+      !Readable(static_cast<const uint8_t*>(value.data) + offset,
+                sizeof(UnrealArrayView)))
+    return false;
+  UnrealArrayView array = {};
+  std::memcpy(&array, static_cast<const uint8_t*>(value.data) + offset,
+              sizeof(array));
+  if (array.count < 0 || array.capacity < array.count || array.count > 64 ||
+      array.capacity > 64 || index >= array.count || !array.data)
+    return false;
+  auto* destination = reinterpret_cast<UnrealArrayView*>(
+      static_cast<uint8_t*>(array.data) +
+      static_cast<size_t>(index) * sizeof(UnrealArrayView));
+  return UnrealAssignWideStringValue(destination, text);
+}
+
 bool UnrealReadStructBoolProperty(void* object,
                                   const wchar_t* property_name,
                                   const wchar_t* field_name, bool* output) {
@@ -2400,6 +2983,31 @@ bool UnrealWriteObjectPropertyExpected(void* object,
   return InterlockedCompareExchangePointer(
              reinterpret_cast<void* volatile*>(slot), new_value,
              expected_value) == expected_value;
+}
+
+bool UnrealWriteBoolPropertyExpected(void* object,
+                                     const wchar_t* property_name,
+                                     bool expected_value, bool new_value) {
+  if (!UnrealObjectValid(object) || !property_name) return false;
+  void* field = FindField(object, property_name);
+  if (!field || !UnrealObjectIsA(field, L"BoolProperty") ||
+      !Readable(static_cast<uint8_t*>(field) + 0x40, sizeof(uint32_t)))
+    return false;
+  const uint32_t offset = FieldOffset(field);
+  const uint32_t mask = *reinterpret_cast<const uint32_t*>(
+      static_cast<uint8_t*>(field) + 0x40);
+  if (offset == UINT32_MAX || !mask ||
+      !Readable(static_cast<uint8_t*>(object) + offset, sizeof(LONG)))
+    return false;
+  auto* slot = reinterpret_cast<volatile LONG*>(
+      static_cast<uint8_t*>(object) + offset);
+  const LONG observed = InterlockedCompareExchange(slot, 0, 0);
+  if (((static_cast<uint32_t>(observed) & mask) != 0) != expected_value)
+    return false;
+  const LONG desired = static_cast<LONG>(
+      new_value ? static_cast<uint32_t>(observed) | mask
+                : static_cast<uint32_t>(observed) & ~mask);
+  return InterlockedCompareExchange(slot, desired, observed) == observed;
 }
 
 bool UnrealWriteIntProperty(void* object, const wchar_t* property_name,
@@ -2491,12 +3099,18 @@ bool UnrealSynchronouslyAssignCharacterPair(
 
   if (mutation_started) *mutation_started = false;
 
+  const bool has_second_pri = second_pri != nullptr;
+
   if (sizeof(void*) != 4 || !g_ready || !UnrealObjectValid(first_pri) ||
-      !UnrealObjectValid(second_pri) || first_pri == second_pri ||
+      (has_second_pri &&
+       (!UnrealObjectValid(second_pri) || first_pri == second_pri)) ||
       !expected_game_thread || GetCurrentThreadId() != expected_game_thread ||
-      !first_character.data || !second_character.data ||
-      first_character.struct_definition != second_character.struct_definition ||
-      first_character.size != second_character.size ||
+      !first_character.data ||
+      (has_second_pri &&
+       (!second_character.data ||
+        first_character.struct_definition !=
+            second_character.struct_definition ||
+        first_character.size != second_character.size)) ||
       !ExactFunctionHandleValid(select_character) ||
       !ExactFunctionHandleValid(client_start_character_load) ||
       !ExactFunctionHandleValid(confirm_selected_character) ||
@@ -2512,16 +3126,18 @@ bool UnrealSynchronouslyAssignCharacterPair(
   int32_t second_replication_flag = 0;
   if (!UnrealReadArrayProperty(first_pri, L"LoadCompletePlayers",
                                &first_load_observers) ||
-      !UnrealReadArrayProperty(second_pri, L"LoadCompletePlayers",
-                               &second_load_observers) ||
       !UnrealReadStructProperty(first_pri, L"ReplicatedCharacterData",
                                 &first_replication) ||
-      !UnrealReadStructProperty(second_pri, L"ReplicatedCharacterData",
-                                &second_replication) ||
       !UnrealReadStructIntField(first_replication, L"ForceReplicationFlag",
                                 &first_replication_flag) ||
-      !UnrealReadStructIntField(second_replication, L"ForceReplicationFlag",
-                                &second_replication_flag)) {
+      (has_second_pri &&
+       (!UnrealReadArrayProperty(second_pri, L"LoadCompletePlayers",
+                                 &second_load_observers) ||
+        !UnrealReadStructProperty(second_pri, L"ReplicatedCharacterData",
+                                  &second_replication) ||
+        !UnrealReadStructIntField(second_replication,
+                                  L"ForceReplicationFlag",
+                                  &second_replication_flag)))) {
     InterlockedExchange(&patch_active, 0);
     return false;
   }
@@ -2652,8 +3268,9 @@ bool UnrealSynchronouslyAssignCharacterPair(
       select_calls_succeeded =
           UnrealCallExactVoidStruct(first_pri, select_character, L"CD",
                                     first_character) &&
-          UnrealCallExactVoidStruct(second_pri, select_character, L"CD",
-                                    second_character);
+          (!has_second_pri ||
+           UnrealCallExactVoidStruct(second_pri, select_character, L"CD",
+                                     second_character));
     }
   }
 
@@ -2690,8 +3307,9 @@ bool UnrealSynchronouslyAssignCharacterPair(
     confirm_calls_succeeded =
         UnrealCallExactVoidStruct(first_pri, confirm_selected_character,
                                   L"SelectedCharacter", first_character) &&
-        UnrealCallExactVoidStruct(second_pri, confirm_selected_character,
-                                  L"SelectedCharacter", second_character);
+        (!has_second_pri ||
+         UnrealCallExactVoidStruct(second_pri, confirm_selected_character,
+                                   L"SelectedCharacter", second_character));
   }
 
   bool detours_restored = true;
@@ -2712,24 +3330,26 @@ bool UnrealSynchronouslyAssignCharacterPair(
       confirm_calls_succeeded &&
       UnrealReadArrayProperty(first_pri, L"LoadCompletePlayers",
                               &first_load_after) &&
-      UnrealReadArrayProperty(second_pri, L"LoadCompletePlayers",
-                              &second_load_after) &&
       first_load_after.data == first_load_observers.data &&
       first_load_after.count == first_load_observers.count &&
       first_load_after.capacity == first_load_observers.capacity &&
-      second_load_after.data == second_load_observers.data &&
-      second_load_after.count == second_load_observers.count &&
-      second_load_after.capacity == second_load_observers.capacity &&
       UnrealReadStructProperty(first_pri, L"ReplicatedCharacterData",
                                &first_replication_after) &&
-      UnrealReadStructProperty(second_pri, L"ReplicatedCharacterData",
-                               &second_replication_after) &&
       UnrealReadStructIntField(first_replication_after,
                                L"ForceReplicationFlag", &first_flag_after) &&
-      UnrealReadStructIntField(second_replication_after,
-                               L"ForceReplicationFlag", &second_flag_after) &&
       first_flag_after == first_replication_flag &&
-      second_flag_after == second_replication_flag;
+      (!has_second_pri ||
+       (UnrealReadArrayProperty(second_pri, L"LoadCompletePlayers",
+                                &second_load_after) &&
+        second_load_after.data == second_load_observers.data &&
+        second_load_after.count == second_load_observers.count &&
+        second_load_after.capacity == second_load_observers.capacity &&
+        UnrealReadStructProperty(second_pri, L"ReplicatedCharacterData",
+                                 &second_replication_after) &&
+        UnrealReadStructIntField(second_replication_after,
+                                 L"ForceReplicationFlag",
+                                 &second_flag_after) &&
+        second_flag_after == second_replication_flag));
 
   if (!restored)
     Log(LogLevel::kError,
@@ -2744,6 +3364,19 @@ bool UnrealSynchronouslyAssignCharacterPair(
   return valid && patch_installed && select_calls_succeeded &&
          confirm_calls_succeeded && restored && detours_restored &&
          invariants_preserved;
+}
+
+bool UnrealSynchronouslyAssignCharacter(
+    void* pri, const UnrealFunctionHandle& select_character,
+    const UnrealFunctionHandle& client_start_character_load,
+    const UnrealFunctionHandle& confirm_selected_character,
+    const UnrealFunctionHandle& refresh_provider,
+    const UnrealStructValueView& character,
+    uint32_t expected_game_thread, bool* mutation_started) {
+  return UnrealSynchronouslyAssignCharacterPair(
+      pri, nullptr, select_character, client_start_character_load,
+      confirm_selected_character, refresh_provider, character, character,
+      expected_game_thread, mutation_started);
 }
 
 bool UnrealAssignObjectStringPropertyFromStruct(
@@ -2825,6 +3458,133 @@ bool UnrealAssignStructArrayStringField(
              static_cast<size_t>(destination_value->count) * sizeof(wchar_t)));
 }
 
+bool UnrealReadFrameStringParameter(void* frame, uint32_t parameter_offset,
+                                    char* output, size_t capacity) {
+  if (!output || !capacity) return false;
+  output[0] = '\0';
+  if (!frame || !Readable(static_cast<uint8_t*>(frame) + 0x10,
+                          sizeof(void*)))
+    return false;
+  void* locals = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(frame) + 0x10);
+  if (!locals || !Readable(static_cast<uint8_t*>(locals) + parameter_offset,
+                           sizeof(UnrealArrayView)))
+    return false;
+  UnrealArrayView value = {};
+  std::memcpy(&value, static_cast<uint8_t*>(locals) + parameter_offset,
+              sizeof(value));
+  return CopyUnrealString(value, output, capacity);
+}
+
+bool UnrealAssignFrameStringParameter(void* frame, uint32_t parameter_offset,
+                                      const wchar_t* value) {
+  if (!frame || !value ||
+      !Readable(static_cast<uint8_t*>(frame) + 0x10, sizeof(void*)))
+    return false;
+  void* locals = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(frame) + 0x10);
+  return locals &&
+         UnrealAssignWideStringValue(
+             static_cast<uint8_t*>(locals) + parameter_offset, value);
+}
+
+bool UnrealReadFrameStructParameter(
+    void* frame, uint32_t parameter_offset, uint32_t parameter_size,
+    void* struct_definition, UnrealStructValueView* output) {
+  if (!output) return false;
+  *output = {};
+  if (!frame || !parameter_size || parameter_size > 0x10000 ||
+      !UnrealObjectValid(struct_definition) ||
+      ReflectedStructSize(struct_definition) != parameter_size ||
+      !Readable(static_cast<uint8_t*>(frame) + 0x10, sizeof(void*)))
+    return false;
+  void* locals = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(frame) + 0x10);
+  if (!locals ||
+      !Readable(static_cast<uint8_t*>(locals) + parameter_offset,
+                parameter_size))
+    return false;
+  output->data = static_cast<uint8_t*>(locals) + parameter_offset;
+  output->size = parameter_size;
+  output->struct_definition = struct_definition;
+  return true;
+}
+
+bool UnrealReadStringValue(const void* value, char* output,
+                           size_t capacity) {
+  if (!value || !Readable(value, sizeof(UnrealArrayView))) return false;
+  UnrealArrayView string_value = {};
+  std::memcpy(&string_value, value, sizeof(string_value));
+  return CopyUnrealString(string_value, output, capacity);
+}
+
+bool UnrealAssignWideStringValue(void* destination, const wchar_t* value) {
+  if (!g_fstring_assign || !destination || !value ||
+      !Readable(destination, sizeof(UnrealArrayView)))
+    return false;
+  const size_t length = std::wcslen(value);
+  if (length > 4095) return false;
+  const UnrealArrayView source = {
+      const_cast<wchar_t*>(value), static_cast<int32_t>(length + 1),
+      static_cast<int32_t>(length + 1)};
+  return WfcAssignFString(g_fstring_assign, destination, &source) ==
+         destination;
+}
+
+bool UnrealAssignStructWideStringField(const UnrealStructValueView& value,
+                                       const wchar_t* field_name,
+                                       const wchar_t* text) {
+  if (!g_fstring_assign || !value.data || !value.size || !field_name ||
+      !text || !UnrealObjectValid(value.struct_definition))
+    return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, L"StrProperty")) return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset + sizeof(UnrealArrayView) > value.size)
+    return false;
+  return UnrealAssignWideStringValue(
+      const_cast<uint8_t*>(static_cast<const uint8_t*>(value.data)) + offset,
+      text);
+}
+
+bool UnrealSetVariableUndefined(void* movie, const wchar_t* path) {
+  if (!movie || !path || !*path) return false;
+  ReflectedCall call;
+  if (!PrepareCall(movie, L"SetVariable", &call) ||
+      FunctionParameterCount(call.function) != 2 ||
+      call.return_offset != 0xFFFFu)
+    return false;
+  void* path_field = FindCallField(call, L"Path");
+  void* value_field = FindCallField(call, L"arg");
+  if (!path_field || !value_field ||
+      !UnrealObjectIsA(path_field, L"StrProperty") ||
+      !ValidInputParameter(path_field) || FieldArrayDim(path_field) != 1 ||
+      FieldElementSize(path_field) != sizeof(UnrealArrayView) ||
+      !UnrealObjectIsA(value_field, L"StructProperty") ||
+      !ValidInputParameter(value_field) || FieldArrayDim(value_field) != 1 ||
+      !Readable(static_cast<uint8_t*>(value_field) + 0x40, sizeof(void*)))
+    return false;
+  void* value_definition = *reinterpret_cast<void**>(
+      static_cast<uint8_t*>(value_field) + 0x40);
+  const uint32_t value_offset = FieldOffset(value_field);
+  const uint32_t value_size = FieldElementSize(value_field);
+  void* type_field = FindStructField(value_definition, L"Type");
+  if (!UnrealObjectValid(value_definition) || !value_size ||
+      value_size > 0x100 ||
+      ReflectedStructSize(value_definition) != value_size ||
+      value_offset == UINT32_MAX || value_offset + value_size > call.size ||
+      !type_field || !UnrealObjectIsA(type_field, L"ByteProperty") ||
+      FieldArrayDim(type_field) != 1 || FieldElementSize(type_field) != 1 ||
+      FieldOffset(type_field) != 0 ||
+      !SetStringParameter(&call, L"Path", path))
+    return false;
+  // ASValue's reflected ASType byte is first, and AS_Undefined is value zero.
+  // ReflectedCall storage begins zeroed, so the nested FString/object/function
+  // fields also have valid empty representations and require no destruction.
+  std::memset(call.parameters.data() + value_offset, 0, value_size);
+  return Execute(movie, &call);
+}
+
 bool UnrealCallVoid(void* object, const wchar_t* function_name) {
   ReflectedCall call;
   return PrepareCall(object, function_name, &call) &&
@@ -2875,6 +3635,15 @@ bool UnrealCallStringBool(void* object, const wchar_t* function_name,
          SetBoolParameter(&call, parameter_name, value) &&
          Execute(object, &call) && ReadReturn(call, &result) &&
          CopyUnrealString(result, output, capacity);
+}
+
+bool UnrealCallBoolString(void* object, const wchar_t* function_name,
+                          const wchar_t* parameter_name,
+                          const wchar_t* value, bool* output) {
+  ReflectedCall call;
+  return PrepareCall(object, function_name, &call) &&
+         SetStringParameter(&call, parameter_name, value) &&
+         Execute(object, &call) && ReadBoolReturn(call, output);
 }
 
 bool UnrealCallObjectArray(void* object, const wchar_t* function_name,
@@ -2932,6 +3701,42 @@ bool UnrealCallVoidFloat(void* object, const wchar_t* function_name,
          FunctionParameterCount(call.function) == 1 &&
          call.return_offset == 0xFFFFu &&
          SetFloatParameter(&call, parameter_name, value) && Execute(object, &call);
+}
+
+bool UnrealCallVoidString(void* object, const wchar_t* function_name,
+                          const wchar_t* parameter_name,
+                          const wchar_t* value) {
+  ReflectedCall call;
+  return PrepareCall(object, function_name, &call) &&
+         call.return_offset == 0xFFFFu &&
+         SetStringParameter(&call, parameter_name, value) &&
+         Execute(object, &call);
+}
+
+bool UnrealCallVoidStringString(
+    void* object, const wchar_t* function_name,
+    const wchar_t* first_parameter, const wchar_t* first_value,
+    const wchar_t* second_parameter, const wchar_t* second_value) {
+  ReflectedCall call;
+  return PrepareCall(object, function_name, &call) &&
+         FunctionParameterCount(call.function) == 2 &&
+         call.return_offset == 0xFFFFu &&
+         SetStringParameter(&call, first_parameter, first_value) &&
+         SetStringParameter(&call, second_parameter, second_value) &&
+         Execute(object, &call);
+}
+
+bool UnrealCallVoidStringBool(
+    void* object, const wchar_t* function_name,
+    const wchar_t* string_parameter, const wchar_t* string_value,
+    const wchar_t* bool_parameter, bool bool_value) {
+  ReflectedCall call;
+  return PrepareCall(object, function_name, &call) &&
+         FunctionParameterCount(call.function) == 2 &&
+         call.return_offset == 0xFFFFu &&
+         SetStringParameter(&call, string_parameter, string_value) &&
+         SetBoolParameter(&call, bool_parameter, bool_value) &&
+         Execute(object, &call);
 }
 
 bool UnrealCallVoidByteBool(void* object, const wchar_t* function_name,

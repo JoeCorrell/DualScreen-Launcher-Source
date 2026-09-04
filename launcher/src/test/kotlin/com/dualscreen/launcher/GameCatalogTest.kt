@@ -14,6 +14,7 @@ class GameCatalogTest {
             "transformers-wfc",
             "deus-ex-hrdc",
             "dead-island-de",
+            "isaac-repentance",
             "valheim",
             "stardew-valley",
         ).inOrder()
@@ -44,6 +45,7 @@ class GameCatalogTest {
         assertThat(GameCatalog.byId("grim-dawn")?.requiredBuild).contains("1.3.0.7")
         assertThat(GameCatalog.byId("transformers-wfc")?.requiredBuild).contains("42650")
         assertThat(GameCatalog.byId("deus-ex-hrdc")?.requiredBuild).contains("2.0.66.0")
+        assertThat(GameCatalog.byId("isaac-repentance")?.requiredBuild).contains("1.9.7.17.J460")
         assertThat(GameCatalog.byId("stardew-valley")?.requiredBuild).contains("1.6.15.24356")
     }
 
@@ -57,6 +59,8 @@ class GameCatalogTest {
             .isEqualTo("Documents/My Games/Fallout4/Saves")
         assertThat(GameCatalog.byId("grim-dawn")?.saveDirectory)
             .isEqualTo("Documents/My Games/Grim Dawn/save")
+        assertThat(GameCatalog.byId("isaac-repentance")?.saveDirectory)
+            .isEqualTo("Documents/My Games/Binding of Isaac Repentance+")
         assertThat(GameCatalog.byId("valheim")?.saveDirectory)
             .isEqualTo("AppData/LocalLow/IronGate/Valheim")
         assertThat(GameCatalog.byId("stardew-valley")?.saveDirectory)
@@ -136,6 +140,22 @@ class GameCatalogTest {
             "f3ebc7c7cda1199c3919fd2d1619722b3e045b2148aece7cf0bb9c8e4d47d466",
             "9bbcb7d5be1d059f863173802e68d9ce1a48a0800963a2cfbcc359f696035b9c",
         )
+    }
+
+    @Test
+    fun isaacUsesTheOfficialLuaApiAndNativeInProcessPanel() {
+        val isaac = checkNotNull(GameCatalog.byId("isaac-repentance"))
+        assertThat(isaac.executableCandidates).containsExactly("isaac-ng.exe")
+        assertThat(isaac.panelMode).isEqualTo(LowerPanelMode.NATIVE_WINDOW)
+        assertThat(isaac.requiredFiles).containsAtLeast(
+            "resources/packed/repentance.a",
+            "resources/scripts/socket/core.dll",
+        )
+        assertThat(isaac.fileRules.single().bytes).isEqualTo(9_362_944L)
+        assertThat(isaac.fileRules.single().sha256)
+            .isEqualTo("e5faf6f513c6de9cc9ff1c335ef9c541e2b33fc623aa3b8ffbd2e6a6c0027bb0")
+        assertThat(isaac.nativeDllOverrides).isEmpty()
+        assertThat(isaac.exclusiveXInput).isTrue()
     }
 
     @Test
