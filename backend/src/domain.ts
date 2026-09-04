@@ -84,9 +84,8 @@ export function normalizeAccessCode(value: unknown): string | null {
   const compact = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const normalized = compact.startsWith("DSL") ? compact.slice(3) : compact;
   // Generated one-time codes are 32 characters. Owner-created reusable codes
-  // may be shorter, but retain a meaningful minimum so malformed input is
-  // rejected before any database lookup.
-  return normalized.length >= 12 && normalized.length <= 64 ? normalized : null;
+  // may be shorter; malformed input is rejected before any database lookup.
+  return normalized.length >= 6 && normalized.length <= 64 ? normalized : null;
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";

@@ -836,7 +836,7 @@ async function createReusableCode(request: Request, env: Env): Promise<Response>
   const body = await readJson(request);
   const normalized = normalizeAccessCode(body.code);
   if (!normalized) {
-    return error("invalid_code", "Reusable codes must contain 12 to 64 letters or numbers.", 400);
+    return error("invalid_code", "Reusable codes must contain 6 to 64 letters or numbers.", 400);
   }
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 200) || null : null;
   let expiresAt: number | null = null;

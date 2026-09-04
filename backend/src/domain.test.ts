@@ -72,6 +72,7 @@ describe("one-time code canonical form", () => {
 
   it("accepts an owner-created reusable code without changing generated codes", () => {
     expect(normalizeAccessCode("OwnerPass2026")).toBe("OWNERPASS2026");
+    expect(normalizeAccessCode("Access")).toBe("ACCESS");
     expect(encodeAccessCode(new Uint8Array(20).fill(0xab))).toHaveLength(32);
   });
 });
