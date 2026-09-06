@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import struct
 from pathlib import Path, PurePosixPath
 
@@ -16,12 +17,12 @@ def read_c_string(data: bytes, offset: int) -> str:
 
 def safe_destination(root: Path, name: str) -> Path:
     parts = PurePosixPath(name).parts
-    if not parts or any(part in {"", ".", ".."} for part in parts):
+    if PurePosixPath(name).is_absolute() or not parts or any(part in {"", ".", ".."} for part in parts):
         raise RuntimeError(f"Unsafe SARC filename: {name!r}")
     return root.joinpath(*parts)
 
 
-def extract(source: Path, output: Path) -> int:
+def extract(source: Path, output: Path, patterns: list[str] | None = None) -> int:
     data = source.read_bytes()
     if data[:4] != b"SARC" or len(data) < 0x20:
         raise RuntimeError(f"Not a SARC archive: {source}")
@@ -48,6 +49,7 @@ def extract(source: Path, output: Path) -> int:
     names = sfnt + sfnt_header_size
 
     output.mkdir(parents=True, exist_ok=True)
+    extracted = 0
     for index in range(entry_count):
         entry = entries + index * 0x10
         _, name_attributes, start, end = struct.unpack_from(
@@ -58,6 +60,8 @@ def extract(source: Path, output: Path) -> int:
             name = read_c_string(data, names + name_offset)
         else:
             name = f"{index:04d}.bin"
+        if patterns and not any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns):
+            continue
         absolute_start = data_offset + start
         absolute_end = data_offset + end
         if absolute_start > absolute_end or absolute_end > len(data):
@@ -65,16 +69,18 @@ def extract(source: Path, output: Path) -> int:
         destination = safe_destination(output, name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(data[absolute_start:absolute_end])
+        extracted += 1
         print(f"Extracted {name} ({absolute_end - absolute_start:,} bytes)")
-    return entry_count
+    return extracted
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--match", action="append", default=[])
     args = parser.parse_args()
-    count = extract(args.input, args.output)
+    count = extract(args.input, args.output, args.match)
     print(f"Extracted {count} SARC files")
     return 0
 

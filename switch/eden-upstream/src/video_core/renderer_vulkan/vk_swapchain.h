@@ -27,7 +27,8 @@ public:
         const Device& device,
         Scheduler& scheduler,
         u32 width,
-        u32 height);
+        u32 height,
+        bool transparent = false);
     ~Swapchain();
 
     /// Creates (or recreates) the swapchain with a given size.
@@ -122,6 +123,7 @@ private:
 
     const Device& device;
     Scheduler& scheduler;
+    const bool transparent;
 
     vk::SwapchainKHR swapchain;
 

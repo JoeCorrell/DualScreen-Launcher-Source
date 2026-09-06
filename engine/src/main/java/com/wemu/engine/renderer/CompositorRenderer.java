@@ -57,6 +57,7 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
     private java.util.concurrent.ExecutorService initExecutor = null;
     private volatile boolean initComplete = false;
     private volatile boolean inPipMode = false;
+    private long nextWfcFocusCheckAtMs;
     private String driverLibraryName = null;
     private String nativeLibDir = null;
     private Drawable rootCursorDrawable;
@@ -406,6 +407,16 @@ public abstract class CompositorRenderer implements WindowManager.OnWindowModifi
         if (className.isEmpty()) return;
         updatePrimaryWindowLocked(rootX, rootY, source.width, source.height,
                 className, true, true);
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now >= nextWfcFocusCheckAtMs) {
+            nextWfcFocusCheckAtMs = now + 2000;
+            xServerView.post(() -> {
+                if (!inPipMode && xServerView.isAttachedToWindow()
+                        && xServerView.hasWindowFocus()) {
+                    com.wemu.engine.xserver.DesktopHelper.recoverWfcInputFocus(xServer, window);
+                }
+            });
+        }
     }
 
     /**

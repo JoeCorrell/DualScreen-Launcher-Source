@@ -65,6 +65,9 @@ class CheckpointGate {
   void Reset() noexcept;
 
   CheckpointGateState state() const noexcept { return state_; }
+  bool RequiresInterception(bool role_mapping_active) const noexcept {
+    return role_mapping_active || state_ != CheckpointGateState::kIdle;
+  }
   bool failed_closed() const noexcept {
     return state_ == CheckpointGateState::kFailedClosed;
   }

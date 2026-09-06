@@ -8,14 +8,14 @@ class EmulationSession;
 namespace SshdCompanion {
 
 #pragma pack(push, 1)
-struct MapImageHeaderV1 {
+struct MapTextureMetadata {
     std::uint32_t magic;
     std::uint16_t version;
     std::uint16_t header_size;
     std::uint32_t sequence;
     std::uint16_t width;
     std::uint16_t height;
-    std::uint32_t row_stride;
+    float display_aspect;
     std::uint32_t pixel_format;
     std::uint8_t source_format;
     std::int8_t floor;
@@ -24,7 +24,7 @@ struct MapImageHeaderV1 {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(MapImageHeaderV1) == 36);
+static_assert(sizeof(MapTextureMetadata) == 36);
 
 // Writes one versioned, immutable Skyward Sword HD state frame into output.
 int FillSnapshot(EmulationSession& session, void* output, std::size_t output_size);
@@ -32,10 +32,14 @@ int FillSnapshot(EmulationSession& session, void* output, std::size_t output_siz
 // Applies a validated selection to the live 1.0.1 save/player state.
 bool PerformAction(EmulationSession& session, int action, int argument);
 
-// Requests/copies one native dStage map capture. Returns 0 while the guest
-// game-thread bridge is pending, a positive byte count on success, or a
-// negative error/required-capacity value. Pixels follow MapImageHeaderV1 as
-// tightly packed RGBA8888 rows.
+// Read-only bottle predicates: -1 invalid, 0 stowed, 1 drawing, 2 held,
+// 3 consuming. Uses the native player animation/item state, never save edits.
+int GetBottleState(EmulationSession& session, int slot, int item);
+
+// Publishes the native GPU map resource and returns a version-3 metadata header.
+// No pixel payload or CPU/GPU readback is performed. Negative values describe
+// unavailable game state or an invalid output buffer.
 int CopyMapImage(EmulationSession& session, void* output, std::size_t output_size);
+void SetMapView(EmulationSession& session, float zoom, float pan_x, float pan_y);
 
 }

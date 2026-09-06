@@ -2,7 +2,10 @@ param(
     [Parameter(Mandatory = $true)][string]$ModelBfres,
     [Parameter(Mandatory = $true)][string]$AnimationBfres,
     [Parameter(Mandatory = $true)][string]$SwitchToolboxPath,
-    [Parameter(Mandatory = $true)][string]$OutputPath
+    [Parameter(Mandatory = $true)][string]$OutputPath,
+    [string]$ModelName = 'Link',
+    [string[]]$ClipName = @(),
+    [ValidateRange(1, 120)][int]$SourceFps = 30
 )
 
 $ErrorActionPreference = 'Stop'
@@ -126,6 +129,8 @@ namespace Eden.BotwCompanion
     $references = @(
         [AppDomain]::CurrentDomain.GetAssemblies() |
             Where-Object { -not $_.IsDynamic -and -not [string]::IsNullOrWhiteSpace($_.Location) } |
+            Group-Object { $_.GetName().Name } |
+            ForEach-Object { $_.Group | Select-Object -First 1 } |
             ForEach-Object { $_.Location } |
             Select-Object -Unique
     )
@@ -133,14 +138,20 @@ namespace Eden.BotwCompanion
 
     $modelResource = Open-Resource $ModelBfres
     $animationResource = Open-Resource $AnimationBfres
-    $model = @($modelResource.Models | Where-Object { $_.Name -ceq 'Link' }) | Select-Object -First 1
-    if ($null -eq $model) { throw 'Link model was not found.' }
+    $model = @($modelResource.Models | Where-Object { $_.Name -ceq $ModelName }) | Select-Object -First 1
+    if ($null -eq $model) { throw "Model $ModelName was not found." }
     $wrapped = [Eden.BotwCompanion.PreviewAnimationExporter]::WrapModel($model)
 
     $specs = @(
         [pscustomobject]@{ Key = 'Hold'; Name = 'Lift_Lift_Pouch_Few'; Step = 1; Hold = $true },
+        [pscustomobject]@{ Key = 'HoldMany'; Name = 'Lift_Lift_Pouch_Many'; Step = 1; Hold = $true },
         [pscustomobject]@{ Key = 'Eat'; Name = 'Eat_Normal'; Step = 2; Hold = $false }
     )
+    if ($ClipName.Count -gt 0) {
+        $specs = @($ClipName | ForEach-Object {
+            [pscustomobject]@{ Key = $_; Name = $_; Step = 2; Hold = $false }
+        })
+    }
     $clips = [ordered]@{}
     foreach ($spec in $specs) {
         $animation = @($animationResource.SkeletalAnims |
@@ -161,13 +172,13 @@ namespace Eden.BotwCompanion
                 $bones[$name] = @($sample.Matrices[$name])
             }
             [ordered]@{
-                timeMs = [int][Math]::Round($frame * 1000.0 / 30.0)
+                timeMs = [int][Math]::Round($frame * 1000.0 / $SourceFps)
                 bones = $bones
             }
         }
         $clips[$spec.Key] = [ordered]@{
             source = $spec.Name
-            durationMs = [int][Math]::Round($animation.FrameCount * 1000.0 / 30.0)
+            durationMs = [int][Math]::Round($animation.FrameCount * 1000.0 / $SourceFps)
             holdLastFrame = [bool]$spec.Hold
             frames = @($frames)
         }

@@ -117,6 +117,102 @@ Device CreateDevice(const vk::Instance& instance, const vk::InstanceDispatch& dl
     return Device(*instance, physical_device, surface, dld);
 }
 
+class RendererVulkan::CompanionPresentation {
+    class Window final : public Core::Frontend::EmuWindow {
+    public:
+        Window(const VideoCore::CompanionSurface& surface, Core::Frontend::WindowSystemType type) {
+            window_info.type = type;
+            window_info.render_surface = surface.native_window.get();
+            NotifyFramebufferLayoutChanged({surface.width, surface.height,
+                                             {0, 0, surface.width, surface.height}, false});
+        }
+        bool IsShown() const override { return true; }
+        std::unique_ptr<Core::Frontend::GraphicsContext> CreateSharedContext() const override {
+            return {};
+        }
+    };
+public:
+    CompanionPresentation(const VideoCore::CompanionSurface& source,
+                          Core::Frontend::WindowSystemType type,
+                          const vk::Instance& instance, const Device& device_,
+                          Tegra::MaxwellDeviceMemoryManager& memory,
+                          MemoryAllocator& allocator, Scheduler& scheduler_)
+        : native_surface{source}, window{source, type}, device{device_}, scheduler{scheduler_},
+          surface{CreateSurface(instance, window.GetWindowInfo())},
+          swapchain{*surface, device, scheduler, source.width, source.height, true},
+          presentation{instance, window, device, allocator, scheduler, swapchain, surface, true},
+          blit{memory, device, allocator, presentation, scheduler, PresentFiltersForAppletCapture, true} {}
+
+    ~CompanionPresentation() {
+        scheduler.Finish();
+        presentation.WaitPresent();
+        void(device.GetLogical().WaitIdle());
+    }
+
+    bool Matches(const VideoCore::CompanionSurface& next) const {
+        return native_surface.native_window == next.native_window &&
+               native_surface.width == next.width && native_surface.height == next.height;
+    }
+
+    bool Draw(RasterizerVulkan& rasterizer, const Tegra::FramebufferConfig& framebuffer) {
+        Frame* frame = presentation.TryGetRenderFrame();
+        if (!frame) return false;
+        scheduler.RequestOutsideRenderPassOperationContext();
+        blit.DrawToFrame(device, rasterizer, frame, {&framebuffer, 1},
+                         window.GetFramebufferLayout(), swapchain.GetImageCount(),
+                         swapchain.GetImageViewFormat());
+        scheduler.Flush(*frame->render_ready);
+        presentation.Present(frame);
+        return true;
+    }
+
+private:
+    VideoCore::CompanionSurface native_surface;
+    Window window;
+    const Device& device;
+    Scheduler& scheduler;
+    vk::SurfaceKHR surface;
+    Swapchain swapchain;
+    PresentManager presentation;
+    BlitScreen blit;
+};
+
+void RendererVulkan::RenderCompanion() {
+    const auto state = GetCompanionFrameState();
+    if (companion_presentation && !companion_presentation->Matches(state.surface)) {
+        companion_presentation.reset();
+        SetCompanionPresentedAddress(0);
+    }
+    if (!state.surface.native_window || !state.surface.width || !state.surface.height) return;
+    bool in_progress{};
+    auto framebuffer = rasterizer.ResolveCompanionFramebuffer(
+        state.texture.program_id, state.texture.gpu_address, state.texture.width, state.texture.height,
+        state.texture.flip_vertical, in_progress);
+    if (!framebuffer) {
+        if (!in_progress || CompanionPresentedAddress() != state.texture.gpu_address) {
+            SetCompanionPresentedAddress(0);
+        }
+        return;
+    }
+    if (state.texture.flip_vertical) {
+        framebuffer->transform_flags = Service::android::BufferTransformFlags::FlipV;
+    }
+    if (!companion_presentation) {
+        companion_presentation = std::make_unique<CompanionPresentation>(
+            state.surface, render_window.GetWindowInfo().type, instance, device,
+            device_memory, memory_allocator, scheduler);
+        LOG_INFO(Render_Vulkan, "[COMPANION-GPU] created presentation surface {}x{}",
+                 state.surface.width, state.surface.height);
+    }
+    if (companion_presentation->Draw(rasterizer, *framebuffer)) {
+        if (CompanionPresentedAddress() != state.texture.gpu_address) {
+            LOG_INFO(Render_Vulkan, "[COMPANION-GPU] presenting resident map {:#x} {}x{}",
+                     state.texture.gpu_address, state.texture.width, state.texture.height);
+        }
+        SetCompanionPresentedAddress(state.texture.gpu_address);
+    }
+}
+
 RendererVulkan::RendererVulkan(Core::Frontend::EmuWindow& emu_window,
                                Tegra::MaxwellDeviceMemoryManager& device_memory_,
                                Tegra::GPU& gpu_,
@@ -190,6 +286,7 @@ try
 }
 
 RendererVulkan::~RendererVulkan() {
+    companion_presentation.reset();
     scheduler.RegisterOnSubmit([] {});
     void(device.GetLogical().WaitIdle());
 }
@@ -198,6 +295,12 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     SCOPE_EXIT {
         render_window.OnFrameDisplayed();
     };
+
+    if (const auto probe = TakeCompanionTextureProbe()) {
+        rasterizer.ProbeCompanionTexture(probe->program_id, probe->gpu_address,
+                                         probe->width, probe->height);
+    }
+    RenderCompanion();
 
     RenderAppletCaptureLayer(framebuffers);
 

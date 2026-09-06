@@ -37,6 +37,8 @@ static std::mutex controller_mutex;
 static bool initialized = false;
 static const char *hook_dir = nullptr;
 static bool vibration_enabled = true;
+// Opt-in compatibility for games that gate XInput behind a DirectInput VID/PID check.
+static bool xbox360_identity = false;
 volatile sig_atomic_t stop_flag = 0;
 
 static int (*my_open)(const char *, int, ...) = nullptr;
@@ -118,7 +120,9 @@ static void library_init() {
 		hook_dir = getenv("FAKE_EVDEV_DIR") ? getenv("FAKE_EVDEV_DIR") : "/data/data/com.termux/files/home/fake-input";
 
 	vibration_enabled = getenv("FAKE_EVDEV_VIBRATION") && atoi(getenv("FAKE_EVDEV_VIBRATION"));
+	xbox360_identity = getenv("FAKE_EVDEV_XBOX360") && !strcmp(getenv("FAKE_EVDEV_XBOX360"), "1");
 	Logger::init();
+	if (xbox360_identity) Logger::log("Controller compatibility: Xbox 360 identity 045e:028e enabled\n");
 }
   
 __attribute__((visibility("hidden"))) 
@@ -380,8 +384,8 @@ EXPORT int ioctl(int fd, int op, ...) {
         struct input_id id;
         memset(&id, 0, sizeof(id));
         id.bustype = 0x03;
-        id.vendor = 0x1234 + event_number;
-        id.product = 0x5678 + event_number;
+        id.vendor = xbox360_identity ? 0x045e : 0x1234 + event_number;
+        id.product = xbox360_identity ? 0x028e : 0x5678 + event_number;
         id.version = 0x0110;
         return copy_ioctl_result(argp, op, &id, sizeof(id));
     }
@@ -390,7 +394,7 @@ EXPORT int ioctl(int fd, int op, ...) {
 		const size_t requested = _IOC_SIZE(op);
 		if (!argp || requested == 0) { errno = EFAULT; return -1; }
 		snprintf(static_cast<char *>(argp), requested,
-		         "Generic HID Gamepad %d", event_number);
+		         xbox360_identity ? "Controller (XBOX 360 For Windows)" : "Generic HID Gamepad %d", event_number);
     	return 0;
     }
     else if (type == 0x45 && number == 0x9) {
@@ -536,7 +540,7 @@ EXPORT int ioctl(int fd, int op, ...) {
 		const size_t requested = _IOC_SIZE(op);
 		if (!argp || requested == 0) { errno = EFAULT; return -1; }
 		snprintf(static_cast<char *>(argp), requested,
-		         "Generic HID Gamepad %d", event_number);
+		         xbox360_identity ? "Controller (XBOX 360 For Windows)" : "Generic HID Gamepad %d", event_number);
     	return 0;
     }
     else {

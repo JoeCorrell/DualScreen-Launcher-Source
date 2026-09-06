@@ -22,6 +22,7 @@ enum class ItemActionResult : int {
     ContextUnavailable = 12,
     GuestThreadBridgeUnavailable = 13,
     ActionBusy = 14,
+    NativeHandlerNotReady = 15,
 };
 
 int FillSnapshot(EmulationSession& session, void* output, std::size_t output_size);

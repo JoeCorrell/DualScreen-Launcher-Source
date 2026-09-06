@@ -52,7 +52,8 @@ class BlitScreen {
 public:
     explicit BlitScreen(Tegra::MaxwellDeviceMemoryManager& device_memory, const Device& device,
                         MemoryAllocator& memory_allocator, PresentManager& present_manager,
-                        Scheduler& scheduler, const PresentFilters& filters);
+                        Scheduler& scheduler, const PresentFilters& filters,
+                        bool transparent = false);
     ~BlitScreen();
 
     void DrawToFrame(const Device& device, RasterizerVulkan& rasterizer, Frame* frame,
@@ -77,6 +78,7 @@ private:
     PresentManager& present_manager;
     Scheduler& scheduler;
     const PresentFilters& filters;
+    const bool transparent;
     std::size_t image_count{};
     std::size_t image_index{};
     VkFormat swapchain_view_format{};

@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
   bool sent =
       Send("DSI1\tS\t1\t120\t1\t0\tIsaac\t12\t5\t3\t6\t8\t4\t0\t1\t0\t0\t0\t0\t3.50\t4.20\t6.50\t1.10\t1.20\t2.00") &&
       Send("DSI1\tM\t2\t120\tBasement%20I\t1\t0\t0\t42\t12345\t8\t28,28,5,1,1,1,0;29,29,5,1,2,1,0;30,30,5,1,4,1,0;41,41,5,1,1,1,0;42,42,5,1,1,1,0;43,43,5,0,7,1,0;55,55,5,1,5,1,0;56,56,5,0,10,1,0") &&
-      Send("DSI1\tI\t3\t120\t3\t1,1,The%20Sad%20Onion,Tears%20up,3;118,1,Brimstone,Blood%20laser%20barrage,4;105,1,D6,Reroll%20your%20destiny,4\t2\t2\t105,0,3,1;118,1,2,0\t2\t2\t10,0,1;53,1,0\t2\t2\tC,1,0,0,The%20Fool,00_TheFool;P,5,12,1,Pretty%20Fly,") &&
+      Send("DSI1\tI\t3\t120\t18\t1,1,The%20Sad%20Onion,Tears%20up,3;2,1,The%20Inner%20Eye,Triple%20shot,2;3,1,Spoon%20Bender,Homing%20shots,3;4,1,Crickets%20Head,Damage%20up,4;5,1,My%20Reflection,Boomerang%20tears,2;6,1,Number%20One,Tears%20up,2;7,1,Blood%20of%20the%20Martyr,Damage%20up,3;8,1,Brother%20Bobby,Attack%20buddy,1;9,1,Skatole,Friendly%20flies,0;10,1,Halo%20of%20Flies,Orbital%20flies,2;11,1,One%20Up,Extra%20life,4;12,1,Magic%20Mushroom,All%20stats%20up,4;13,1,The%20Virus,Poison%20touch,2;14,1,Roid%20Rage,Speed%20and%20range%20up,2;15,1,Less%20Than%20Three,Health%20up,2;16,1,Raw%20Liver,Health%20up,3;17,1,Skeleton%20Key,Keys%20up,3;18,1,A%20Dollar,Money%20up,3\t2\t2\t105,0,3,1;118,1,2,0\t2\t2\t10,0,1;53,1,0\t2\t2\tC,1,0,0,The%20Fool,00_TheFool;P,5,12,1,Pretty%20Fly,") &&
       Send("DSI1\tR\t4\t120\tABCD%20EFGH\tBasement%20I\t1\t0\t0\t3600\t0.25\t0.50\t0.15\t1\t2\t0,8");
   Sleep(800);
   HWND window = FindWindowW(L"IsaacSecondScreenPanel",
@@ -106,6 +106,11 @@ int main(int argc, char** argv) {
          Send("up 0.15 0.50", 7788) && sent;
   Sleep(400);
   captured = Capture(window, (prefix + "-run-info.bmp").c_str()) && captured;
+  sent = Send("down 0.85 0.50", 7788) &&
+         Send("move 0.50 0.50", 7788) &&
+         Send("up 0.15 0.50", 7788) && sent;
+  Sleep(400);
+  captured = Capture(window, (prefix + "-items.bmp").c_str()) && captured;
   sent = Send("down 0.85 0.50", 7788) &&
          Send("move 0.50 0.50", 7788) &&
          Send("up 0.15 0.50", 7788) && sent;

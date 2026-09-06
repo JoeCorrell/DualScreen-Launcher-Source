@@ -26,6 +26,7 @@ internal object PayloadAssetStore {
 
     fun open(context: Context, relativePath: String): InputStream {
         val normalized = normalize(relativePath)
+        OnDemandGamePayloads.open(context, normalized)?.let { return it }
         val root = root(context).canonicalFile
         val downloaded = File(root, normalized).canonicalFile
         check(downloaded.path.startsWith(root.path + File.separator)) {

@@ -7,6 +7,18 @@ import java.io.File
 import java.security.MessageDigest
 
 class AssetIntegrityTest {
+    @Test
+    fun odysseyActionFeedbackDoesNotCreateAWindowFromThePresentationContext() {
+        val source = File("../switch/eden-upstream/src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/SmoCompanionView.kt").readText()
+        // Regression: Toast tried to add a TYPE_TOAST window to a TYPE_PRESENTATION context.
+        assertThat(source).doesNotContain("import android.widget.Toast")
+        assertThat(source).doesNotContain("Toast.makeText(")
+        assertThat(source).doesNotContain("ODYSSEY AIR MAIL")
+        assertThat(source).contains("actionMessage = message")
+        assertThat(source).contains("actionMessage?.let")
+        assertThat(source).contains("ui.removeCallbacks(clearActionMessage)")
+    }
+
     private val assets = File("src/main/assets").canonicalFile
     private val engineAssets = File("../engine/src/main/assets").canonicalFile
     private val main = File("src/main").canonicalFile
@@ -133,7 +145,7 @@ class AssetIntegrityTest {
 
     @Test
     fun everyRemoteModPayloadIsPinnedAndTargetsAPathInsideTheGame() {
-        GameCatalog.games.forEach { game ->
+        GameCatalog.games.filterNot { OnDemandGamePayloads.manages(it.id) }.forEach { game ->
             val root = File(assets, "mods/${game.id}").canonicalFile
             val manifestFile = File(root, "manifest.json")
             val bytes = manifestFile.readBytes()
@@ -201,7 +213,7 @@ class AssetIntegrityTest {
         val mod = File(assets, "mods/isaac-repentance")
         val payload = File(mod, "payload").canonicalFile
         val manifest = JSONObject(File(mod, "manifest.json").readText()).getJSONArray("files")
-        assertThat(manifest.length()).isEqualTo(1_207)
+        assertThat(manifest.length()).isEqualTo(1_209)
         val declared = linkedSetOf<String>()
         val targets = linkedSetOf<String>()
         for (entryIndex in 0 until manifest.length()) {
@@ -226,6 +238,8 @@ class AssetIntegrityTest {
         assertThat(targets).containsAtLeast(
             "winmm.dll",
             "resources/scripts/isaac_second_screen_assets/game/gfx/ui/minimap_icons.png",
+            "resources/scripts/isaac_second_screen_assets/custom/item_description_panel.png",
+            "resources/scripts/isaac_second_screen_assets/custom/item_slot_dark.png",
             "mods/dualscreenisaac/main.lua",
         )
         val mainLua = File(payload, "mod/main.lua").readText()

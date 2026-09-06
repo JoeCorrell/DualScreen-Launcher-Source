@@ -63,6 +63,8 @@ public:
     void InitializePlatformSpecific();
 
 private:
+    class CompanionPresentation;
+    void RenderCompanion();
     void InterpolateFrames(Frame* prev_frame, Frame* curr_frame);
     Frame* previous_frame = nullptr;  // Store the previous frame for interpolation
     VkCommandBuffer BeginSingleTimeCommands();
@@ -104,6 +106,7 @@ private:
     std::optional<TurboMode> turbo_mode;
 
     Frame applet_frame;
+    std::unique_ptr<CompanionPresentation> companion_presentation;
 };
 
 } // namespace Vulkan

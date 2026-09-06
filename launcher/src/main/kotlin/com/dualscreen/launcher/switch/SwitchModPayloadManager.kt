@@ -37,6 +37,13 @@ internal class SwitchModPayloadManager(private val context: Context) {
         val files = json.getJSONArray("files")
         require(files.length() <= MAX_FILES) { "${game.title} mod payload contains too many files." }
         when (json.optString("delivery", "data")) {
+            "external-module" -> {
+                require(files.length() == 0) { "External packages cannot mix ordinary add-on files" }
+                val source = safeRelative(json.getString("package"))
+                val stream = runCatching { PayloadAssetStore.open(context, source) }.getOrNull() ?: return false
+                stream.use { org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.install(context, game.titleId, it, retainNewer = true) }
+                return true
+            }
             "data" -> Unit
             "launcher-apk" -> {
                 val minimumLauncherVersion = json.getString("minimumLauncherVersion")

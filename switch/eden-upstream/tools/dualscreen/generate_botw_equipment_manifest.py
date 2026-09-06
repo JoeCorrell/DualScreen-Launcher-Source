@@ -74,7 +74,7 @@ def actor_entry(path: Path) -> tuple[str, dict[str, object], tuple[str, str]]:
         raise ValueError("empty model folder or unit name")
 
     entry: dict[str, object] = {"file": f"{unit}.glb"}
-    if not actor.startswith("Armor_"):
+    if not actor.startswith(("Armor_", "Item_", "Animal_Insect_")):
         general = read_aamp(pack, "GeneralParamList")
         holders = []
         for name, parameters in general.objects.items():
@@ -98,6 +98,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--actor-pack-root", type=Path, required=True)
     parser.add_argument("--include-armor", action="store_true")
+    parser.add_argument("--materials-only", action="store_true",
+                        help="Export ingredient model mappings; attachment comes from live CarryBox, not equipment offsets")
+    parser.add_argument("--actor-info", type=Path,
+                        help="ActorInfo.product.sbyml supplies resident ingredient models absent from standalone actor packs")
     parser.add_argument(
         "--item-text-table",
         type=Path,
@@ -115,9 +119,13 @@ def main() -> int:
     models: dict[str, dict[str, object]] = {}
     errors: dict[str, str] = {}
     prefixes = SUPPORTED_PREFIXES + (("Armor_",) if args.include_armor else ())
+    if args.materials_only:
+        prefixes = ("Item_", "Animal_Insect_")
     for path in sorted(pack_directory.glob("*.sbactorpack")):
         actor = path.name.removesuffix(".sbactorpack")
         if not actor.startswith(prefixes):
+            continue
+        if args.materials_only and actor.startswith(("Item_Cook_", "Item_Roast_", "Item_Chilled_")):
             continue
         if pouch_actors is not None and actor not in pouch_actors:
             continue
@@ -138,6 +146,29 @@ def main() -> int:
             model["actors"].append(actor)
         except Exception as exception:
             errors[actor] = str(exception)
+
+    if args.materials_only and args.actor_info:
+        data = args.actor_info.read_bytes()
+        if data[:4] == b'Yaz0':
+            data = oead.yaz0.decompress(data)
+        for info in oead.byml.from_binary(data)['Actors']:
+            actor = str(info['name'])
+            if (actor in actors or not actor.startswith(prefixes) or
+                    actor.startswith(('Item_Cook_', 'Item_Roast', 'Item_Chilled')) or
+                    (pouch_actors is not None and actor not in pouch_actors)):
+                continue
+            folder = str(info['bfres']) if 'bfres' in info else ''
+            unit = str(info['mainModel']) if 'mainModel' in info else ''
+            if not folder or not unit:
+                continue
+            model = models.setdefault(unit, {'folder': folder,
+                'modelPath': f'/Model/{folder}.sbfres',
+                'texturePath': f'/Model/{folder}.Tex.sbfres', 'actors': []})
+            if model['folder'] != folder:
+                raise ValueError(f'Conflicting resident model folder: {unit}')
+            model['actors'].append(actor)
+            actors[actor] = {'file': f'{unit}.glb'}
+            errors.pop(actor, None)
 
     for model in models.values():
         model["actors"].sort()

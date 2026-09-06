@@ -62,7 +62,13 @@ final class NativePanelIdentity {
                 || isGrimDawn(className, title)
                 || isTransformersWfc(className, title)
                 || isIsaac(className, title)
+                || isAssassinsCreedII(className, title)
                 || isStardewValley(className, title);
+    }
+
+    static boolean isAssassinsCreedII(String className, String title) {
+        return normalizedClass(className).equals("ac2secondscreenpanel")
+                || normalizedTitle(title).equals("assassin's creed ii dual-screen animus");
     }
 
     private static String normalizedClass(String value) {

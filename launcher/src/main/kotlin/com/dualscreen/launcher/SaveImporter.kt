@@ -95,6 +95,7 @@ class SaveImporter(private val context: Context) {
         archive: Uri,
     ): ImportedSave {
         check(game.id == installed.gameId) { "The selected save does not match this game" }
+        check(game.saveDirectory.isNotBlank()) { "Save import is not available for this development build" }
         publish(game, SaveImportStage.VALIDATING, 0.04f, "Resolving the tested container")
         val container = ContainerManager(context).getContainerById(installed.containerId)
             ?: error("The tested game container is missing")

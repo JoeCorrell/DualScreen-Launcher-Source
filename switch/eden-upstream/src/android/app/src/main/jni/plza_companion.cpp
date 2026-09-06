@@ -1,4 +1,6 @@
 #include "jni/plza_companion.h"
+#include "core/loader/plza_item_protocol.h"
+#include "jni/plza_inventory_reader.h"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +17,16 @@
 #include <optional>
 #include <vector>
 
+#ifdef PLZA_EXTERNAL_MODULE
+#include "host_shim.h"
+#else
 #include "common/common_types.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/memory.h"
 #include "jni/native.h"
+#endif
 
 namespace PlzaCompanion {
 namespace {
@@ -38,12 +44,6 @@ constexpr VAddr RuntimeRegistryGotOffset = 0x03EC26E8;
 constexpr VAddr RuntimeRegistryReadyOffset = 0xA600;
 constexpr VAddr SceneControllerOffset = 0xA078;
 constexpr VAddr UiSceneManagerReadyOffset = 0x0610EE00;
-constexpr VAddr BagPresenterOwnerGotOffset = 0x03EC6D48;
-constexpr VAddr BagPresenterSharedOffset = 0x130;
-constexpr VAddr BagPresenterControlOffset = 0x138;
-constexpr VAddr BagPresenterSelectedItemOffset = 0x140;
-constexpr VAddr BagPresenterSelectedAuxOffset = 0x142;
-constexpr VAddr BagNativeDispatchOffset = 0x00C150E4;
 constexpr VAddr FieldRuntimePointerOffset = 0x06136D70;
 constexpr VAddr FieldCameraControlOffset = 0x160;
 constexpr VAddr FieldCameraObjectOffset = 0x168;
@@ -276,6 +276,15 @@ struct LiveSnapshotCache {
     float logged_map_heading{};
     VAddr logged_camera_object{};
     bool camera_log_initialized{};
+    bool item_log_initialized{};
+    bool party_log_initialized{};
+    std::array<std::array<u32, 3>, ItemRecordCount> logged_items{};
+    VAddr logged_live_bag_owner{};
+    bool live_bag_log_initialized{};
+    bool live_bag_log_available{};
+    u64 logged_native_dispatch{};
+    std::array<u64, 4> logged_native_handlers{};
+    std::array<u64, 2> logged_ball_selection{};
 };
 
 LiveSnapshotCache Telemetry{};
@@ -310,10 +319,20 @@ struct LiveCoordinateCache {
 
 LiveCoordinateCache LiveCoordinates{};
 std::mutex BlocksMutex;
-std::mutex ItemActionMutex;
-std::atomic<u64> ItemActionSequence{1};
 std::atomic<u64> LoggedItemActionCompletion{0};
 std::atomic<u64> LoggedItemActionProcess{0};
+struct ItemBridgeCache {
+    u64 process{};
+    u32 tick{};
+    std::chrono::steady_clock::time_point last_tick{};
+    std::chrono::steady_clock::time_point queued_at{};
+    std::chrono::steady_clock::time_point next_party{};
+    std::chrono::steady_clock::time_point party_received{};
+    PlzaItem::PartyChannel party{};
+    std::array<u8, PlzaItem::ItemKindsCount> item_kinds{};
+};
+ItemBridgeCache ItemBridge{}; // protected by BlocksMutex
+u64 ItemRequestSequence{}; // protected by BlocksMutex
 
 template <typename T>
 std::optional<T> Read(Core::Memory::Memory& memory, VAddr address) {
@@ -386,63 +405,129 @@ void LogItemActionCompletion(Core::System& system) {
         system, mailbox, ItemActionResultOffset, __ATOMIC_RELAXED);
     if (state == ItemActionMailboxSucceeded) {
         LOG_INFO(Frontend,
-                 "[PLZA-ITEM-ACTION] native-complete request={} operation={} item={} "
-                 "party_target={} presenter_tab={} presenter_index={} state={} result={}",
-                 completed, operation, item, party_target, tab, index, state, result);
+                 "[PLZA-ITEM-ACTION] native-confirmed request={} operation={} item={} "
+                 "party_target={} pouch={} index={} state={} result={} "
+                 "verification={}",
+                 completed, operation, item, party_target, tab, index, state, result,
+                 operation == 1 ? "persistent-selection" : "native-effect-and-quantity");
     } else {
-        const char* reason = result == 1   ? "presenter-owner-unavailable-on-game-thread"
-                             : result == 2 ? "presenter-unavailable-on-game-thread"
-                             : result == 3 ? "presenter-context-unavailable-on-game-thread"
-                                           : "unknown-guest-rejection";
+        const char* reason = result == PlzaItem::StaleSession ? "scene-or-inventory-changed"
+                             : result == PlzaItem::Restricted ? "field-input-restricted"
+                             : result == PlzaItem::ItemMissing ? "item-no-longer-selectable"
+                             : result == PlzaItem::SelectionChanged ? "selection-not-confirmed"
+                             : result == PlzaItem::Expired ? "game-thread-not-updating"
+                             : result == PlzaItem::NoEffect ? "native-eligibility-no-effect"
+                             : result == PlzaItem::TargetChanged ? "native-party-target-changed"
+                             : result == PlzaItem::EffectUnconfirmed ? "consumed-effect-unconfirmed-do-not-retry"
+                                           : "native-context-unavailable";
         LOG_WARNING(Frontend,
                     "[PLZA-ITEM-ACTION] native-rejected request={} operation={} item={} "
                     "party_target={} presenter_tab={} presenter_index={} state={} result={} "
                     "reason={}",
                     completed, operation, item, party_target, tab, index, state, result, reason);
     }
+    if (operation == 2) {
+        PlzaItem::MedicineChannel medicine{};
+        if (system.ApplicationMemory().ReadBlockUnsafe(mailbox + PlzaItem::MedicineOffset,
+                                                       &medicine, sizeof(medicine)))
+            LOG_INFO(Frontend, "[PLZA-MEDICINE] request={} target={} stage={} consumed={} "
+                     "quantity={}->{} hp={}->{} status={}->{} condition={}->{}",
+                     completed, party_target, medicine.stage, medicine.consumed,
+                     medicine.quantity_before, medicine.quantity_after, medicine.hp_before,
+                     medicine.hp_after, medicine.status_before, medicine.status_after,
+                     medicine.condition_before, medicine.condition_after);
+        ItemBridge.next_party = {};
+    }
 }
 
-struct PresenterItemSelection {
-    u16 index{};
-    u8 tab{};
-};
 
-std::optional<PresenterItemSelection> FindPresenterItemSelection(Core::Memory::Memory& memory,
-                                                                 VAddr context, u32 preferred_tab,
-                                                                 u32 item_id) {
-    constexpr VAddr TabVectorOffset = 0x1B0;
-    constexpr VAddr TabStride = 0x20;
-    constexpr VAddr EntryStride = 0x0C;
-    constexpr u32 TabCount = 9;
-    constexpr u64 MaximumEntries = 4096;
-    std::array<u32, TabCount> tabs{};
-    tabs[0] = preferred_tab < TabCount ? preferred_tab : 0;
-    u32 count = 1;
-    for (u32 tab = 0; tab < TabCount; ++tab) {
-        if (tab != tabs[0]) {
-            tabs[count++] = tab;
+void PopulateItemActionStatus(Core::System& system, SnapshotFrame& frame, u64 process) {
+    using M = PlzaItem::Mailbox;
+    if (ItemBridge.process != process) { ItemBridge = {}; ItemBridge.process = process; }
+    const VAddr mailbox = system.GetApplicationProcessCompanionMailbox();
+    if (!IsItemActionMailboxAvailable(system, mailbox) ||
+        LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, magic), __ATOMIC_ACQUIRE) != PlzaItem::Magic ||
+        LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, version), __ATOMIC_ACQUIRE) != PlzaItem::Version) return;
+    const auto now = std::chrono::steady_clock::now();
+    const u32 tick = LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, tick), __ATOMIC_ACQUIRE);
+    if (tick != ItemBridge.tick) { ItemBridge.tick = tick; ItemBridge.last_tick = now; }
+    // Cancel only a request not yet acquired by the guest. Never retry an action
+    // with an uncertain result, or allow it to fire later when gameplay resumes.
+    auto state = LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, state), __ATOMIC_ACQUIRE);
+    if (state == PlzaItem::Queued && now - ItemBridge.queued_at > std::chrono::seconds(3)) {
+        auto* p = system.ApplicationMemory().GetPointer<u32>(mailbox + offsetof(M, state));
+        u32 expected = PlzaItem::Queued;
+        if (__atomic_compare_exchange_n(p, &expected, PlzaItem::Rejected, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, result), PlzaItem::Expired, __ATOMIC_RELAXED);
+            const u64 request = LoadItemActionMailbox<u64>(system, mailbox, offsetof(M, request), __ATOMIC_RELAXED);
+            StoreItemActionMailbox<u64>(system, mailbox, offsetof(M, completed), request, __ATOMIC_RELEASE);
         }
     }
-    for (u32 position = 0; position < count; ++position) {
-        const u32 tab = tabs[position];
-        const VAddr vector = context + TabVectorOffset + tab * TabStride;
-        const VAddr begin = Read<u64>(memory, vector).value_or(0);
-        const VAddr end = Read<u64>(memory, vector + sizeof(u64)).value_or(0);
-        if (!begin || end < begin || (end - begin) % EntryStride != 0) {
-            continue;
-        }
-        const u64 entry_count = (end - begin) / EntryStride;
-        if (entry_count > MaximumEntries ||
-            !memory.IsValidVirtualAddressRange(begin, entry_count * EntryStride)) {
-            continue;
-        }
-        for (u64 index = 0; index < entry_count; ++index) {
-            if (Read<u32>(memory, begin + index * EntryStride).value_or(0) == item_id) {
-                return PresenterItemSelection{static_cast<u16>(index), static_cast<u8>(tab)};
+    const u64 completed = LoadItemActionMailbox<u64>(system, mailbox, offsetof(M, completed), __ATOMIC_ACQUIRE);
+    state = LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, state), __ATOMIC_ACQUIRE);
+    const u64 request = LoadItemActionMailbox<u64>(system, mailbox, offsetof(M, request), __ATOMIC_ACQUIRE);
+    const std::array<u32, 10> status{
+        state, LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, operation), __ATOMIC_RELAXED),
+        LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, item), __ATOMIC_RELAXED),
+        LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, result), __ATOMIC_RELAXED),
+        static_cast<u32>(completed), static_cast<u32>(completed >> 32),
+        now - ItemBridge.last_tick < std::chrono::seconds(1) ?
+            LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, selected_ball), __ATOMIC_ACQUIRE) : 0,
+        static_cast<u32>(request), static_cast<u32>(request >> 32), PlzaItem::Magic};
+    static_assert(offsetof(SnapshotFrame, reserved) == 3600);
+    std::memcpy(frame.reserved, status.data(), sizeof(status));
+    const VAddr party_mailbox = mailbox + PlzaItem::PartyOffset;
+    const u32 party_completed = LoadItemActionMailbox<u32>(system, party_mailbox, 4, __ATOMIC_ACQUIRE);
+    const u32 party_request = LoadItemActionMailbox<u32>(system, party_mailbox, 0, __ATOMIC_ACQUIRE);
+    if (party_completed == party_request) {
+        if (party_completed != ItemBridge.party.completed) {
+            // Single outstanding read request: guest won't write again until we
+            // publish the next one, after this copy has finished.
+            const auto previous_party = ItemBridge.party;
+            if (!system.ApplicationMemory().ReadBlockUnsafe(party_mailbox, &ItemBridge.party, sizeof(ItemBridge.party)))
+                ItemBridge.party = {};
+            if (!system.ApplicationMemory().ReadBlockUnsafe(mailbox + PlzaItem::ItemKindsOffset,
+                    ItemBridge.item_kinds.data(), ItemBridge.item_kinds.size())) ItemBridge.item_kinds = {};
+            ItemBridge.party_received = now;
+            if (ItemBridge.party.valid) {
+                for (u32 i = 0; i < ItemBridge.party.count && i < 6; ++i) {
+                    const auto& member = ItemBridge.party.members[i];
+                    if (previous_party.members[i].hp != member.hp || previous_party.members[i].status != member.status ||
+                        previous_party.members[i].identity != member.identity)
+                        LOG_INFO(Frontend, "[PLZA-PARTY-LIVE] slot={} species={} hp={}/{} status={} snapshotHp={}",
+                                 i, member.species, member.hp, member.max_hp, member.status, frame.party[i].current_hp);
+                }
             }
         }
+        if (now >= ItemBridge.next_party) {
+            StoreItemActionMailbox<u32>(system, party_mailbox, 0, party_request + 1, __ATOMIC_RELEASE);
+            ItemBridge.next_party = now + std::chrono::milliseconds(750);
+        }
     }
-    return std::nullopt;
+    const auto& live_party = ItemBridge.party;
+    std::fill_n(frame.reserved + 40, SnapshotItemCapacity / 2, u8{});
+    const auto [base, size] = system.GetApplicationProcessMainModule();
+    const bool current_party = live_party.valid && live_party.count <= 6 && base && size &&
+        now - ItemBridge.party_received < std::chrono::milliseconds(1500) &&
+        Read<u64>(system.ApplicationMemory(), base + 0x610B810).value_or(0) == live_party.root;
+    if (current_party) {
+        // 512 four-bit native action kinds fit in the snapshot's existing reserve.
+        // Keep the bag's real flags intact; ordering is the same immutable frame.
+        for (u32 i = 0; i < frame.item_count && i < SnapshotItemCapacity; ++i) {
+            const auto& item = i < InlineItemCapacity ? frame.items[i] : frame.extra_items[i - InlineItemCapacity];
+            const u8 kind = item.item_id < ItemBridge.item_kinds.size() ? ItemBridge.item_kinds[item.item_id] : 0;
+            frame.reserved[40 + i / 2] |= (kind & 15) << ((i & 1) * 4);
+        }
+        frame.party_count = live_party.count;
+        for (u32 i = 0; i < live_party.count; ++i) {
+            const auto& member = live_party.members[i];
+            auto& entry = frame.party[i];
+            if (entry.species != member.species || entry.form != member.form) entry = {};
+            entry.species = member.species; entry.form = member.form; entry.level = member.level;
+            entry.current_hp = member.hp; entry.maximum_hp = member.max_hp; entry.status = member.status;
+        }
+        frame.availability |= Availability::Party;
+    }
 }
 
 bool ReadBytes(Core::Memory::Memory& memory, VAddr address, void* output, std::size_t size) {
@@ -968,23 +1053,48 @@ std::optional<u32> FindSideQuestId(u64 key) {
     return found->second;
 }
 
-bool PopulateItems(Core::Memory::Memory& memory, SnapshotFrame& frame) {
-    if (!Blocks.items) {
-        return false;
+bool ReadCurrentBag(Core::Memory::Memory& memory, VAddr main_base,
+                    PlzaInventory::Records& records, VAddr& owner) {
+    auto reader = [&](u64 address, void* output, std::size_t size) {
+        return ReadBytes(memory, address, output, size);
+    };
+    return PlzaInventory::ReadLiveBag(reader, main_base, records, owner);
+}
+
+bool PopulateItems(Core::Memory::Memory& memory, VAddr main_base, SnapshotFrame& frame) {
+    // On-device vanilla Potion: native records 44->43 while the encrypted save
+    // mirror stayed at 44. Display and action validation must use the active bag.
+    PlzaInventory::Records records{};
+    VAddr owner{};
+    const bool available = ReadCurrentBag(memory, main_base, records, owner);
+    if (!Telemetry.live_bag_log_initialized || available != Telemetry.live_bag_log_available ||
+        owner != Telemetry.logged_live_bag_owner) {
+        LOG_INFO(Frontend, "[PLZA-LIVE-BAG] available={} owner={:#x} source=typed-component",
+                 available, owner);
+        Telemetry.item_log_initialized = false;
     }
-    auto& block = Telemetry.scratch_block;
-    if (!ReadObjectBlock(memory, Blocks.items, ItemBlockKey, ItemBlockSize, block)) {
-        Blocks.items = 0;
-        return false;
-    }
-    for (u32 item_id = 1;
-         item_id < ItemRecordCount && frame.item_count < SnapshotItemCapacity; ++item_id) {
-        const u8* record = block.data() + item_id * ItemRecordSize;
-        const u32 pouch = Load<u32>(record);
-        const s32 quantity = Load<s32>(record + 4);
+    Telemetry.live_bag_log_initialized = true;
+    Telemetry.live_bag_log_available = available;
+    Telemetry.logged_live_bag_owner = owner;
+    if (!available) return false; // Do not fall back to a stale save quantity.
+    for (u32 item_id = 1; item_id < ItemRecordCount; ++item_id) {
+        const auto& record = records[item_id];
+        const u32 pouch = record.pouch;
+        const s32 quantity = record.quantity;
+        const u32 flags = record.flags;
+        const std::array<u32, 3> current{pouch, static_cast<u32>(quantity), flags};
+        const auto previous = Telemetry.logged_items[item_id];
+        if (Telemetry.item_log_initialized && previous != current) {
+            LOG_INFO(Frontend,
+                     "[PLZA-ITEM-STATE] source=live-bag item={} quantity={}->{} pouch={}->{} flags={:#x}->{:#x}",
+                     item_id, static_cast<s32>(previous[1]), quantity, previous[0], pouch,
+                     previous[2], flags);
+        }
+        Telemetry.logged_items[item_id] = current;
         if (pouch == std::numeric_limits<u32>::max() || pouch > 7 || quantity <= 0) {
             continue;
         }
+        if (frame.item_count == SnapshotItemCapacity) continue;
         ItemEntry& entry = frame.item_count < InlineItemCapacity
                                ? frame.items[frame.item_count]
                                : frame.extra_items[frame.item_count - InlineItemCapacity];
@@ -992,9 +1102,85 @@ bool PopulateItems(Core::Memory::Memory& memory, SnapshotFrame& frame) {
         entry.item_id = item_id;
         entry.quantity = static_cast<u16>(std::min<s32>(quantity, 65535));
         entry.pocket = MapPouch(pouch);
-        entry.flags = static_cast<u8>(Load<u32>(record + 8));
+        entry.flags = static_cast<u8>(flags);
+    }
+    if (!Telemetry.item_log_initialized) {
+        LOG_INFO(Frontend, "[PLZA-ITEM-STATE] baseline captured items={}", frame.item_count);
+        Telemetry.item_log_initialized = true;
     }
     return true;
+}
+
+// Read-only native-call diagnostics. The real presenter is captured at its call
+// site; GOT[3EC6D48]+130 is a STRING and must never be sampled as a presenter.
+void LogNativeItemState(Core::System& system, Core::Memory::Memory& memory, VAddr main_base) {
+    const VAddr mailbox = system.GetApplicationProcessCompanionMailbox();
+    if (IsItemActionMailboxAvailable(system, mailbox)) {
+        const u64 sequence = LoadItemActionMailbox<u64>(system, mailbox, 0x88, __ATOMIC_ACQUIRE);
+        if (sequence != Telemetry.logged_native_dispatch) {
+            auto* lock = reinterpret_cast<u32*>(memory.GetPointerSilent(mailbox + 0x80));
+            u32 expected = 0;
+            if (__atomic_compare_exchange_n(lock, &expected, 1, false, __ATOMIC_ACQUIRE,
+                                            __ATOMIC_RELAXED)) {
+                std::array<u64, 11> event{};
+                for (std::size_t i = 0; i < event.size(); ++i) {
+                    event[i] = LoadItemActionMailbox<u64>(system, mailbox, 0x88 + i * 8,
+                                                         __ATOMIC_RELAXED);
+                }
+                StoreItemActionMailbox<u32>(system, mailbox, 0x80, 0, __ATOMIC_RELEASE);
+                LOG_INFO(Frontend,
+                         "[PLZA-NATIVE-DISPATCH] sequence={} coalesced={} source={} caller={:#x} "
+                         "presenter={:#x} request={} item={} list_index={} contexts="
+                         "[{:#x},{:#x},{:#x},{:#x}] task_before={:#x} scheduler={:#x}",
+                         event[0], event[0] > Telemetry.logged_native_dispatch
+                                       ? event[0] - Telemetry.logged_native_dispatch - 1 : 0,
+                         event[3] ? "companion-pending" : "vanilla", event[2], event[1], event[3],
+                         event[4] & 0xFFFF, (event[4] >> 16) & 0xFFFF,
+                         event[5], event[6], event[7], event[8], event[9], event[10]);
+                Telemetry.logged_native_dispatch = event[0];
+            }
+        }
+        constexpr std::array<u32, 4> offsets{0x100, 0x180, 0x200, 0x280};
+        constexpr std::array<const char*, 4> names{
+            "bag-mutation", "medicine-effect", "medicine-target", "select-ball"};
+        for (std::size_t index = 0; index < offsets.size(); ++index) {
+            const auto offset = offsets[index];
+            const u64 sequence = LoadItemActionMailbox<u64>(system, mailbox, offset + 8,
+                                                             __ATOMIC_ACQUIRE);
+            if (sequence == Telemetry.logged_native_handlers[index]) continue;
+            auto* lock = reinterpret_cast<u32*>(memory.GetPointerSilent(mailbox + offset));
+            u32 expected = 0;
+            if (!__atomic_compare_exchange_n(lock, &expected, 1, false, __ATOMIC_ACQUIRE,
+                                             __ATOMIC_RELAXED)) continue;
+            std::array<u64, 10> event{};
+            for (std::size_t i = 0; i < event.size(); ++i)
+                event[i] = LoadItemActionMailbox<u64>(system, mailbox, offset + 8 + i * 8,
+                                                     __ATOMIC_RELAXED);
+            StoreItemActionMailbox<u32>(system, mailbox, offset, 0, __ATOMIC_RELEASE);
+            // SelectBall is a continuously updated field task, not a one-shot
+            // equip event. x2 is not an argument to 2BB90C; only context/item
+            // changes are useful here. Never reapply a captured selection.
+            if (index == 3) {
+                const std::array<u64, 2> selection{event[1], event[2]};
+                if (selection == Telemetry.logged_ball_selection) {
+                    Telemetry.logged_native_handlers[index] = event[0];
+                    continue;
+                }
+                Telemetry.logged_ball_selection = selection;
+                event[3] = 0;
+            }
+            if (index == 0) Telemetry.next_bag = {}; // Native mutation: refresh next UI sample.
+            LOG_INFO(Frontend,
+                     "[PLZA-NATIVE-HANDLER] handler={} sequence={} coalesced={} "
+                     "args=[{:#x},{:#x},{:#x}] caller=main+{:#x} request={} "
+                     "objects=[{:#x},{:#x}] vtables=[{:#x},{:#x}] effect_verified=false",
+                     names[index], event[0], event[0] > Telemetry.logged_native_handlers[index]
+                         ? event[0] - Telemetry.logged_native_handlers[index] - 1 : 0,
+                     event[1], event[2], event[3], event[4] >= main_base ? event[4] - main_base : 0,
+                     event[5], event[6], event[7], event[8], event[9]);
+            Telemetry.logged_native_handlers[index] = event[0];
+        }
+    }
 }
 
 bool PopulateLiveCoordinates(Core::Memory::Memory& memory, VAddr main_base,
@@ -1458,6 +1644,21 @@ void PopulateSnapshotData(Core::System& system, Core::Memory::Memory& memory, VA
         candidate.party_count = 0;
         std::memset(candidate.party, 0, sizeof(candidate.party));
         if (PopulateParty(memory, candidate)) {
+            for (u32 i = 0; i < candidate.party_count; ++i) {
+                const auto& before = Telemetry.frame.party[i];
+                const auto& after = candidate.party[i];
+                if (!Telemetry.party_log_initialized || before.species != after.species ||
+                    before.current_hp != after.current_hp || before.maximum_hp != after.maximum_hp ||
+                    before.status != after.status || before.held_item != after.held_item) {
+                    LOG_INFO(Frontend,
+                             "[PLZA-PARTY-ITEM-STATE] baseline={} slot={} species={}->{} "
+                             "held_item={}->{} hp={}->{} max_hp={}->{} status={}->{}",
+                             !Telemetry.party_log_initialized, i, before.species, after.species,
+                             before.held_item, after.held_item, before.current_hp, after.current_hp,
+                             before.maximum_hp, after.maximum_hp, before.status, after.status);
+                }
+            }
+            Telemetry.party_log_initialized = true;
             candidate.availability |= Availability::Party;
             Telemetry.frame = candidate;
         }
@@ -1468,10 +1669,11 @@ void PopulateSnapshotData(Core::System& system, Core::Memory::Memory& memory, VA
         candidate.item_count = 0;
         std::memset(candidate.items, 0, sizeof(candidate.items));
         std::memset(candidate.extra_items, 0, sizeof(candidate.extra_items));
-        if (PopulateItems(memory, candidate)) {
+        candidate.availability &= ~Availability::Bag;
+        if (PopulateItems(memory, main_base, candidate)) {
             candidate.availability |= Availability::Bag;
-            Telemetry.frame = candidate;
         }
+        Telemetry.frame = candidate;
         Telemetry.next_bag = now + std::chrono::milliseconds(750);
     }
     if (now >= Telemetry.next_quests) {
@@ -1508,6 +1710,7 @@ void PopulateSnapshotData(Core::System& system, Core::Memory::Memory& memory, VA
     }
 
     const u32 magic = frame.magic;
+    LogNativeItemState(system, memory, main_base);
     const u16 version = frame.version;
     const u16 size = frame.size;
     const u32 sequence = frame.sequence;
@@ -1628,7 +1831,6 @@ int FillSnapshot(EmulationSession& session, void* output, std::size_t output_siz
         std::memcpy(output, &frame, sizeof(frame));
         return sizeof(frame);
     }
-    LogItemActionCompletion(system);
 
     auto& memory = system.ApplicationMemory();
     const u32 ui_ready = Read<u32>(memory, main_base + UiSceneManagerReadyOffset).value_or(0);
@@ -1643,6 +1845,7 @@ int FillSnapshot(EmulationSession& session, void* output, std::size_t output_siz
                                              .value_or(0)
                                        : 0;
     const std::scoped_lock blocks_lock{BlocksMutex};
+    LogItemActionCompletion(system);
     const auto* application_process = system.ApplicationProcess();
     const u64 process_id = application_process ? application_process->GetProcessId() : 0;
     if (LiveCoordinates.process_id != process_id) {
@@ -1665,6 +1868,7 @@ int FillSnapshot(EmulationSession& session, void* output, std::size_t output_siz
                        (registry_ready != 0 ? 4U : 0U) | (scene_controller != 0 ? 8U : 0U) |
                        (live_data_root ? 16U : 0U);
     frame.status = static_cast<u32>(runtime_status);
+    PopulateItemActionStatus(system, frame, process_id);
     LogRuntimeStatus(system, main_base, main_size, runtime_status, ui_ready, runtime_registry,
                      registry_ready, scene_controller);
     LogInitializationRequirements(system, ui_ready, runtime_registry, registry_ready,
@@ -1713,25 +1917,26 @@ ItemActionResult PerformItemAction(EmulationSession& session, int operation, int
     const auto [main_base, main_size] = system.GetApplicationProcessMainModule();
     auto& memory = system.ApplicationMemory();
     const std::scoped_lock blocks_lock{BlocksMutex};
-    if (!main_base || !main_size || !EnsureBlockAddresses(system, memory, main_base)) {
+    if (!main_base || !main_size) {
         LOG_WARNING(Frontend,
                     "[PLZA-ITEM-ACTION] rejected operation={} item={} target={} "
                     "reason=bag-not-ready",
                     operation, item_id, party_target);
         return ItemActionResult::BagNotReady;
     }
-    auto& block = Telemetry.scratch_block;
-    if (!ReadObjectBlock(memory, Blocks.items, ItemBlockKey, ItemBlockSize, block)) {
+    PlzaInventory::Records records{};
+    VAddr bag_owner{};
+    if (!ReadCurrentBag(memory, main_base, records, bag_owner)) {
         LOG_WARNING(Frontend,
                     "[PLZA-ITEM-ACTION] rejected operation={} item={} target={} "
                     "reason=bag-read-failed",
                     operation, item_id, party_target);
         return ItemActionResult::BagReadFailed;
     }
-    const u8* record = block.data() + static_cast<std::size_t>(item_id) * ItemRecordSize;
-    const u32 pouch = Load<u32>(record);
-    const s32 quantity = Load<s32>(record + 4);
-    const u32 flags = Load<u32>(record + 8);
+    const auto& record = records[static_cast<std::size_t>(item_id)];
+    const u32 pouch = record.pouch;
+    const s32 quantity = record.quantity;
+    const u32 flags = record.flags;
     if (pouch == std::numeric_limits<u32>::max() || pouch > 7 || quantity <= 0) {
         LOG_WARNING(Frontend,
                     "[PLZA-ITEM-ACTION] rejected operation={} item={} target={} quantity={} "
@@ -1752,8 +1957,9 @@ ItemActionResult PerformItemAction(EmulationSession& session, int operation, int
         return ItemActionResult::TargetRequired;
     }
     if (target_required &&
-        (static_cast<u32>(party_target) >= Telemetry.frame.party_count ||
-         Telemetry.frame.party[static_cast<std::size_t>(party_target)].species == 0)) {
+        (!ItemBridge.party.valid || static_cast<u32>(party_target) >= ItemBridge.party.count ||
+         !ItemBridge.party.members[static_cast<std::size_t>(party_target)].valid ||
+         std::chrono::steady_clock::now() - ItemBridge.party_received > std::chrono::milliseconds(1500))) {
         LOG_WARNING(Frontend,
                     "[PLZA-ITEM-ACTION] rejected operation={} item={} target={} party_count={} "
                     "reason=invalid-party-target",
@@ -1763,7 +1969,7 @@ ItemActionResult PerformItemAction(EmulationSession& session, int operation, int
 
     const bool item_class_matches =
         (requested_operation == ItemActionOperation::SelectFieldBall && pouch == 1) ||
-        (requested_operation == ItemActionOperation::UseOnParty && (pouch == 0 || pouch == 5)) ||
+        (requested_operation == ItemActionOperation::UseOnParty && (pouch == 0 || pouch == 2 || pouch == 5)) ||
         (requested_operation == ItemActionOperation::GiveToParty && (pouch == 2 || pouch == 5)) ||
         (requested_operation == ItemActionOperation::UseKeyItem && pouch == 4) ||
         (requested_operation == ItemActionOperation::TeachMove && pouch == 6) ||
@@ -1776,143 +1982,61 @@ ItemActionResult PerformItemAction(EmulationSession& session, int operation, int
         return ItemActionResult::UnsupportedItemClass;
     }
 
-    const u32 ui_ready = Read<u32>(memory, main_base + UiSceneManagerReadyOffset).value_or(0);
-    const VAddr runtime_registry =
-        Read<u64>(memory, main_base + RuntimeRegistryGotOffset).value_or(0);
-    const VAddr scene_controller = runtime_registry
-                                       ? Read<u64>(memory, runtime_registry + SceneControllerOffset)
-                                             .value_or(0)
-                                       : 0;
-    const VAddr presenter_owner =
-        Read<u64>(memory, main_base + BagPresenterOwnerGotOffset).value_or(0);
-    const VAddr presenter = presenter_owner
-                                ? Read<u64>(memory, presenter_owner + BagPresenterSharedOffset)
-                                      .value_or(0)
-                                : 0;
-    const VAddr presenter_control =
-        presenter_owner
-            ? Read<u64>(memory, presenter_owner + BagPresenterControlOffset).value_or(0)
-            : 0;
-    const u16 selected_item =
-        presenter ? Read<u16>(memory, presenter + BagPresenterSelectedItemOffset).value_or(0) : 0;
-    const u16 selected_aux =
-        presenter ? Read<u16>(memory, presenter + BagPresenterSelectedAuxOffset).value_or(0) : 0;
-    const VAddr scheduler = presenter ? Read<u64>(memory, presenter + 0x68).value_or(0) : 0;
-    const VAddr context_108 = presenter ? Read<u64>(memory, presenter + 0x108).value_or(0) : 0;
-    const VAddr context_110 = presenter ? Read<u64>(memory, presenter + 0x110).value_or(0) : 0;
-    const VAddr context_118 = presenter ? Read<u64>(memory, presenter + 0x118).value_or(0) : 0;
-    const VAddr context_120 = presenter ? Read<u64>(memory, presenter + 0x120).value_or(0) : 0;
-    const char* target_mode = pouch == 0   ? "party-target"
-                              : pouch == 1 ? "field-equip"
-                              : pouch == 2 ? "party-or-context"
-                              : pouch == 3 ? "not-usable"
-                              : pouch == 4 ? "contextual"
-                              : pouch == 5 ? "party-target-or-give"
-                                           : "party-target";
-
+    if (requested_operation == ItemActionOperation::SelectFieldBall ||
+        requested_operation == ItemActionOperation::UseOnParty) {
+        using M = PlzaItem::Mailbox;
+        const VAddr mailbox = system.GetApplicationProcessCompanionMailbox();
+        const auto now = std::chrono::steady_clock::now();
+        if (!IsItemActionMailboxAvailable(system, mailbox) ||
+            LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, magic), __ATOMIC_ACQUIRE) != PlzaItem::Magic ||
+            LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, version), __ATOMIC_ACQUIRE) != PlzaItem::Version ||
+            now - ItemBridge.last_tick > std::chrono::seconds(1)) return ItemActionResult::GuestThreadBridgeUnavailable;
+        const u32 state = LoadItemActionMailbox<u32>(system, mailbox, offsetof(M, state), __ATOMIC_ACQUIRE);
+        const u64 request = LoadItemActionMailbox<u64>(system, mailbox, offsetof(M, request), __ATOMIC_ACQUIRE);
+        if (state == PlzaItem::Queued || state == PlzaItem::Running ||
+            request != LoadItemActionMailbox<u64>(system, mailbox, offsetof(M, completed), __ATOMIC_ACQUIRE))
+            return ItemActionResult::ActionBusy;
+        const VAddr root = Read<u64>(memory, main_base + 0x610B810).value_or(0);
+        const VAddr control = Read<u64>(memory, root + 0x38).value_or(0);
+        const u64 token = Read<u64>(memory, control).value_or(0);
+        if (!root || !control || !token ||
+            Read<u64>(memory, control + 0x10).value_or(0) != root + 0x28 ||
+            !Read<u16>(memory, control + 0x1a).value_or(0)) return ItemActionResult::ContextUnavailable;
+        if (requested_operation == ItemActionOperation::UseOnParty) {
+            if (ItemBridge.party.root != root || ItemBridge.party.root_token != token)
+                return ItemActionResult::ContextUnavailable;
+            const auto& member = ItemBridge.party.members[static_cast<std::size_t>(party_target)];
+            PlzaItem::MedicineChannel medicine{};
+            medicine.expected_pokemon = member.identity;
+            medicine.expected_token = member.token;
+            if (!memory.WriteBlock(mailbox + PlzaItem::MedicineOffset, &medicine, sizeof(medicine)))
+                return ItemActionResult::ContextUnavailable;
+        }
+        StoreItemActionMailbox<u64>(system, mailbox, offsetof(M, expected_root), root, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u64>(system, mailbox, offsetof(M, expected_token), token, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u64>(system, mailbox, offsetof(M, expected_bag), bag_owner, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, operation), operation, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, item), item_id, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<s32>(system, mailbox, offsetof(M, target), party_target, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, pouch), pouch, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, result), 0, __ATOMIC_RELAXED);
+        StoreItemActionMailbox<u64>(system, mailbox, offsetof(M, request), ++ItemRequestSequence, __ATOMIC_RELAXED);
+        ItemBridge.queued_at = now;
+        StoreItemActionMailbox<u32>(system, mailbox, offsetof(M, state), PlzaItem::Queued, __ATOMIC_RELEASE);
+        LOG_INFO(Frontend, "[PLZA-ITEM-ACTION] queued request={} operation={} item={} target={} quantity={}",
+                 ItemRequestSequence, operation, item_id, party_target, quantity);
+        return ItemActionResult::Queued;
+    }
+    // Native comparison proved GOT[3EC6D48]+130/+138 are string fields.
+    // Do not queue the old writer, even after opening the Satchel. The read-only
+    // diagnostic observers capture the actual native handlers without retaining
+    // menu pointers. This is explicitly NOT a completed item action.
     LOG_WARNING(Frontend,
-                "[PLZA-ITEM-ACTION] native-state operation={} item={} party_target={} quantity={} "
-                "pouch={} flags={:#x} target_mode={} caller=host-jni ui_ready={} scene={:#x} "
-                "presenter_owner={:#x} presenter={:#x} presenter_control={:#x} "
-                "selected_item={} selected_aux={} scheduler={:#x} contexts="
-                "[{:#x},{:#x},{:#x},{:#x}] native_dispatch=main+{:#x}",
-                operation, item_id, party_target, quantity, pouch, flags, target_mode, ui_ready,
-                scene_controller, presenter_owner, presenter, presenter_control, selected_item,
-                selected_aux, scheduler, context_108, context_110, context_118, context_120,
-                BagNativeDispatchOffset);
-
-    if (!presenter_owner || !presenter || !presenter_control) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "reason=presenter-unavailable owner={:#x} presenter={:#x} control={:#x}",
-                    operation, item_id, party_target, presenter_owner, presenter,
-                    presenter_control);
-        return ItemActionResult::PresenterUnavailable;
-    }
-    if (!scheduler || !context_118) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "reason=context-unavailable scheduler={:#x} contexts="
-                    "[{:#x},{:#x},{:#x},{:#x}]",
-                    operation, item_id, party_target, scheduler, context_108, context_110,
-                    context_118, context_120);
-        return ItemActionResult::ContextUnavailable;
-    }
-    const auto selection = FindPresenterItemSelection(memory, context_118, pouch, item_id);
-    if (!selection) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "pouch={} reason=item-missing-from-native-presenter-lists",
-                    operation, item_id, party_target, pouch);
-        return ItemActionResult::ContextUnavailable;
-    }
-
-    const VAddr mailbox = system.GetApplicationProcessCompanionMailbox();
-    if (!IsItemActionMailboxAvailable(system, mailbox)) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "reason=guest-game-thread-bridge-unavailable mailbox={:#x}",
-                    operation, item_id, party_target, mailbox);
-        return ItemActionResult::GuestThreadBridgeUnavailable;
-    }
-
-    const std::scoped_lock action_lock{ItemActionMutex};
-    const u32 previous_state = LoadItemActionMailbox<u32>(
-        system, mailbox, ItemActionStateOffset, __ATOMIC_ACQUIRE);
-    const u64 previous_request = LoadItemActionMailbox<u64>(
-        system, mailbox, ItemActionRequestOffset, __ATOMIC_ACQUIRE);
-    const u64 previous_completed = LoadItemActionMailbox<u64>(
-        system, mailbox, ItemActionCompletedOffset, __ATOMIC_ACQUIRE);
-    const u32 previous_result = LoadItemActionMailbox<u32>(
-        system, mailbox, ItemActionResultOffset, __ATOMIC_ACQUIRE);
-    if (previous_state == ItemActionMailboxQueued ||
-        previous_state == ItemActionMailboxRunning || previous_request != 0) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "reason=action-busy state={} request={} completed={} result={}",
-                    operation, item_id, party_target, previous_state, previous_request,
-                    previous_completed, previous_result);
-        return ItemActionResult::ActionBusy;
-    }
-    if (previous_state != ItemActionMailboxIdle &&
-        previous_state != ItemActionMailboxSucceeded &&
-        previous_state != ItemActionMailboxRejected) {
-        LOG_WARNING(Frontend,
-                    "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} "
-                    "reason=invalid-mailbox-state state={}",
-                    operation, item_id, party_target, previous_state);
-        return ItemActionResult::GuestThreadBridgeUnavailable;
-    }
-
-    u64 request = ItemActionSequence.fetch_add(1, std::memory_order_relaxed);
-    if (request == 0) {
-        request = ItemActionSequence.fetch_add(1, std::memory_order_relaxed);
-    }
-    StoreItemActionMailbox<u64>(system, mailbox, ItemActionCompletedOffset, 0,
-                                __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionOperationOffset,
-                                static_cast<u32>(operation), __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionItemOffset,
-                                static_cast<u32>(item_id), __ATOMIC_RELAXED);
-    StoreItemActionMailbox<s32>(system, mailbox, ItemActionPartyTargetOffset,
-                                static_cast<s32>(party_target), __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionPouchOffset,
-                                static_cast<u32>(selection->tab), __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionAuxOffset,
-                                static_cast<u32>(selection->index), __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionResultOffset, 0,
-                                __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u64>(system, mailbox, ItemActionRequestOffset, request,
-                                __ATOMIC_RELAXED);
-    StoreItemActionMailbox<u32>(system, mailbox, ItemActionStateOffset,
-                                ItemActionMailboxQueued, __ATOMIC_RELEASE);
-    LOG_INFO(Frontend,
-             "[PLZA-ITEM-ACTION] queued request={} operation={} item={} party_target={} "
-             "quantity={} save_pouch={} presenter_tab={} presenter_index={} mailbox={:#x} "
-             "previousState={} previousCompleted={} previousResult={}",
-             request, operation, item_id, party_target, quantity, pouch, selection->tab,
-             selection->index, mailbox, previous_state, previous_completed, previous_result);
-    return ItemActionResult::Queued;
+                "[PLZA-ITEM-ACTION] rejected operation={} item={} party_target={} quantity={} "
+                "pouch={} reason=native-handler-not-yet-validated live_bag_available={}",
+                operation, item_id, party_target, quantity, pouch,
+                Telemetry.live_bag_log_available);
+    return ItemActionResult::NativeHandlerNotReady;
 }
 
 bool PerformAction(EmulationSession& session, int action, int argument) {

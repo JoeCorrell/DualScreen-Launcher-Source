@@ -242,39 +242,31 @@ class EdenSwitchBackend(private val application: Application) {
         updateOperation(1f, "${expectedKind.name.lowercase().replaceFirstChar(Char::uppercase)} installed")
     }
 
-    suspend fun installMod(game: SwitchGameDefinition, treeUri: Uri): Result<Unit> = runOperation(
+    suspend fun discoverModFolders(game: SwitchGameDefinition, treeUri: Uri): Result<List<SwitchModFolder>> = runOperation(
+        game, SwitchContentKind.MOD, "Finding mods in selected folder",
+    ) {
+        persistReadPermission(treeUri)
+        SwitchModImporter(application).discover(treeUri, game.titleId)
+    }
+
+    suspend fun installMods(game: SwitchGameDefinition, treeUri: Uri, selected: List<SwitchModFolder>): Result<Unit> = runOperation(
         game = game,
         kind = SwitchContentKind.MOD,
         initialDetail = "Validating mod folder",
     ) {
-        val installed = registry.get(game.id) ?: error("Add the base game before installing mods.")
+        registry.get(game.id) ?: error("Add the base game before installing mods.")
         persistReadPermission(treeUri)
         ensureInitialized()
-        val source = DocumentFile.fromTreeUri(application, treeUri)
-            ?: error("The selected mod folder is unavailable.")
-        val validRoots = setOf("exefs", "romfs", "romfslite", "romfs_ext", "cheats")
-        val sourceChildren = source.listFiles()
-        require(sourceChildren.any { it.isDirectory && it.name?.lowercase() in validRoots }) {
-            "Choose a mod folder containing exefs, romfs, romfslite, romfs_ext, or cheats."
-        }
-        val modName = sanitizeFileName(source.name ?: "Imported Mod")
-        val target = File(Game(installed.detectedTitle, installed.baseUri, game.programId).addonDir, modName)
-        require(!target.exists()) { "A mod named $modName is already installed." }
-        require(target.mkdirs()) { "Could not create the mod directory." }
-        try {
-            sourceChildren.forEachIndexed { index, child ->
-                copyDocument(child, File(target, sanitizeFileName(child.name ?: "content")))
-                updateOperation(
-                    0.1f + ((index + 1f) / sourceChildren.size.coerceAtLeast(1)) * 0.8f,
-                    "Copying ${child.name ?: "mod files"}",
-                )
-            }
-        } catch (failure: Throwable) {
-            target.deleteRecursively()
-            throw failure
+        check(!NativeLibrary.isRunning()) { "Close the Switch game before installing mods." }
+        val loadPath = NativeConfig.getLoadDir()
+        require(loadPath.isNotBlank() && File(loadPath).isAbsolute) { "Eden's mod directory is unavailable." }
+        val loadRoot = File(loadPath).canonicalFile
+        require(loadRoot.parentFile != null) { "Eden's mod directory is unavailable." }
+        SwitchModImporter(application).install(treeUri, game.titleId, selected, loadRoot) { fraction, detail ->
+            updateOperation(fraction, detail)
         }
         refreshPatchesLocked(game)
-        updateOperation(1f, "Mod installed")
+        updateOperation(1f, "${selected.size} mod(s) installed")
     }
 
     suspend fun setPatchEnabled(
@@ -398,6 +390,7 @@ class EdenSwitchBackend(private val application: Application) {
             StringSetting.DRIVER_PATH.setString(settings.selectedGpuDriverPath)
             NativeConfig.saveGlobalConfig()
             updateOperation(1f, "Global settings saved")
+            refreshSystemState()
         }
 
     suspend fun selectGlobalGpuDriver(driverPath: String): Result<Unit> =
@@ -410,6 +403,7 @@ class EdenSwitchBackend(private val application: Application) {
             StringSetting.DRIVER_PATH.setString(driverPath)
             NativeConfig.saveGlobalConfig()
             updateOperation(1f, "Global GPU driver applied")
+            refreshSystemState()
         }
 
     suspend fun createLaunchIntent(game: SwitchGameDefinition): Result<Intent> = runCatching {
@@ -421,6 +415,9 @@ class EdenSwitchBackend(private val application: Application) {
             ensureInitialized()
             val installed = registry.get(game.id) ?: error("Add the base game before pressing Play.")
             modPayloads.synchronize(game, installed)
+            if (game.id == "pokemon-legends-za") {
+                org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.activate(application, game.titleId)
+            }
             val model = Game(
                 title = installed.detectedTitle.ifBlank { game.title },
                 path = installed.baseUri,
@@ -627,6 +624,7 @@ class EdenSwitchBackend(private val application: Application) {
     private fun refreshSystemState() {
         mutableSystemState.value = SwitchSystemState(
             initialized = YuzuApplication.isInitialized(),
+            selectedGpuDriverPath = StringSetting.DRIVER_PATH.getString(true),
             keysPresent = NativeLibrary.areKeysPresent(),
             firmwareVersion = NativeLibrary.firmwareVersion().takeIf(String::isNotBlank),
             gpuDrivers = listOf(SwitchGpuDriver.System) + GpuDriverHelper.getDrivers().map { (path, metadata) ->
@@ -643,33 +641,33 @@ class EdenSwitchBackend(private val application: Application) {
     private fun readAllSettings(perGame: Boolean): List<EdenSettingValue> = buildList {
         BooleanSetting.entries.forEach { setting ->
             addSetting(setting.key, setting.name, EdenSettingType.BOOLEAN, perGame) {
-                setting.getBoolean(false).toString()
+                setting.getBoolean(it).toString()
             }
         }
         ByteSetting.entries.forEach { setting ->
             addSetting(setting.key, setting.name, EdenSettingType.BYTE, perGame) {
-                setting.getByte(false).toString()
+                setting.getByte(it).toString()
             }
         }
         ShortSetting.entries.forEach { setting ->
             addSetting(setting.key, setting.name, EdenSettingType.SHORT, perGame) {
-                setting.getShort(false).toString()
+                setting.getShort(it).toString()
             }
         }
         IntSetting.entries.forEach { setting ->
             addSetting(setting.key, setting.name, EdenSettingType.INTEGER, perGame) {
-                setting.getInt(false).toString()
+                setting.getInt(it).toString()
             }
         }
         LongSetting.entries.forEach { setting ->
             addSetting(setting.key, setting.name, EdenSettingType.LONG, perGame) {
-                setting.getLong(false).toString()
+                setting.getLong(it).toString()
             }
         }
         StringSetting.entries.forEach { setting ->
             if (setting != StringSetting.DRIVER_PATH) {
                 addSetting(setting.key, setting.name, EdenSettingType.STRING, perGame) {
-                    setting.getString(false)
+                    setting.getString(it)
                 }
             }
         }
@@ -686,7 +684,7 @@ class EdenSwitchBackend(private val application: Application) {
         enumName: String,
         type: EdenSettingType,
         perGame: Boolean,
-        read: () -> String,
+        read: (Boolean) -> String,
     ) {
         if (key.isBlank()) return
         val switchable = runCatching { NativeConfig.getIsSwitchable(key) }.getOrDefault(false)
@@ -699,12 +697,13 @@ class EdenSwitchBackend(private val application: Application) {
                     label = enumName.toSettingLabel(),
                     category = settingCategory(enumName),
                     type = type,
-                    value = read(),
+                    value = read(false),
+                    globalValue = read(true),
                     defaultValue = NativeConfig.getDefaultToString(key),
                     useGlobal = perGame && NativeConfig.usingGlobal(key),
                     runtimeModifiable = NativeConfig.getIsRuntimeModifiable(key),
                     edenOrder = EDEN_SETTING_RANK[enumName] ?: Int.MAX_VALUE,
-                ),
+                ).withEdenPresentation(application),
             )
         }
     }

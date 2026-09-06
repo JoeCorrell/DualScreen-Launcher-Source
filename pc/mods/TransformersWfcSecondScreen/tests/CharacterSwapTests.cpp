@@ -67,6 +67,8 @@ class MockOperations : public CharacterSwapOperations {
  public:
   CharacterSwapPreflight preflight = CharacterSwapPreflight::kReady;
   CharacterSwapPreflight quiesced = CharacterSwapPreflight::kReady;
+  CharacterSwapPreflight rollback_ready = CharacterSwapPreflight::kReady;
+  int rollback_prepare_calls = 0;
   bool leave_rejected_capture_empty = false;
   int quiesced_calls = 0;
   CharacterSwapCapture capture = Capture();
@@ -123,6 +125,12 @@ class MockOperations : public CharacterSwapOperations {
                       CharacterSwapCapture*) noexcept override {
     revert_trace.push_back(mutation);
     return mutation != rollback_fail_mutation;
+  }
+
+  CharacterSwapPreflight PrepareRollbackGraph(
+      const CharacterSwapRequest&, const CharacterSwapCapture&) noexcept override {
+    ++rollback_prepare_calls;
+    return rollback_ready;
   }
 
   bool VerifyCommittedGraph(const CharacterSwapRequest&,
@@ -664,6 +672,82 @@ void TestRepeatedAbAAndAbcCycles() {
   assert(operations.success_calls == 202);
 }
 
+uint64_t TickUntilRollback(CharacterSwapTransaction* transaction, uint64_t now) {
+  for (unsigned n = 0; n < 16; ++n) {
+    if (transaction->Tick(++now).phase == CharacterSwapPhase::kRollback) return now;
+  }
+  assert(false && "expected a pending rollback quiescence barrier");
+  return now;
+}
+
+void TestRollbackWaitsForReacquiredAiGuard() {
+  // Both failure after release and a dirty failure inside release can leave
+  // native AI running. Neither may reverse ownership before it stops again.
+  for (bool dirty_release : {false, true}) {
+    MockOperations operations;
+    operations.rollback_ready = CharacterSwapPreflight::kWait;
+    if (dirty_release) operations.fail_mutation = CharacterSwapMutation::kReleaseTransitionGuards;
+    else operations.verify_fail_call = 4;
+    CharacterSwapTransaction transaction(&operations);
+    assert(transaction.Submit(Request(8000, 100), 100) == CharacterSwapSubmitResult::kAccepted);
+    auto now = TickUntilRollback(&transaction, 100);
+    assert(operations.revert_trace.size() == 1);
+    assert(operations.revert_trace[0] == CharacterSwapMutation::kReleaseTransitionGuards);
+    const auto remaining = transaction.status().applied_mutation_count;
+    assert(remaining != 0);
+    for (unsigned n = 0; n < 50; ++n) {
+      assert(transaction.Tick(++now).phase == CharacterSwapPhase::kRollback);
+      assert(transaction.status().applied_mutation_count == remaining);
+      assert(!transaction.status().rollback_complete);
+      assert(transaction.command_gate_closed() && transaction.in_progress());
+      assert(transaction.Submit(Request(8001 + n, now), now) == CharacterSwapSubmitResult::kBusy);
+      assert(operations.failed_closed_calls == 0 && operations.revert_trace.size() == 1);
+      assert(!transaction.RecoverFailedClosed());
+    }
+    operations.rollback_ready = CharacterSwapPreflight::kReady;
+    const auto result = transaction.Tick(++now);
+    assert(result.phase == CharacterSwapPhase::kFailedClosed);
+    assert(result.rollback_complete && result.applied_mutation_count == 0);
+    assert(operations.rollback_prepare_calls == 52);
+    AssertReverse(operations.apply_trace, operations.revert_trace);
+    assert(transaction.RecoverFailedClosed());
+  }
+  // Before release the original guard remains held: no new asynchronous
+  // reacquisition is required, and normal reverse-order cleanup is preserved.
+  MockOperations operations;
+  operations.verify_fail_call = 1;
+  operations.rollback_ready = CharacterSwapPreflight::kWait;
+  CharacterSwapTransaction transaction(&operations);
+  assert(transaction.Submit(Request(8100, 100), 100) == CharacterSwapSubmitResult::kAccepted);
+  TickUntilTerminal(&transaction, 100);
+  assert(transaction.status().rollback_complete && operations.rollback_prepare_calls == 0);
+}
+
+void TestUnsafeRollbackDoesNotDetachLiveGraph() {
+  for (unsigned failure = 0; failure < 3; ++failure) {
+    MockOperations operations;
+    operations.verify_fail_call = 4;
+    operations.rollback_ready = CharacterSwapPreflight::kWait;
+    CharacterSwapTransaction transaction(&operations);
+    assert(transaction.Submit(Request(8200, 100), 100) == CharacterSwapSubmitResult::kAccepted);
+    auto now = TickUntilRollback(&transaction, 100);
+    if (failure == 0) operations.rollback_ready = CharacterSwapPreflight::kReject;
+    if (failure == 1) now += 5001; // bounded rollback stop wait expired
+    if (failure == 2) now -= 1; // rollback clock regressed
+    const auto result = transaction.Tick(now);
+    assert(result.phase == CharacterSwapPhase::kFailedClosed);
+    assert(result.failure == CharacterSwapFailure::kRollbackFailed);
+    assert(!result.rollback_complete && result.rollback_failure_count == 1);
+    assert(result.applied_mutation_count != 0);
+    assert(operations.revert_trace.size() == 1); // only reacquired guards
+    assert(operations.failed_closed_calls == 1 && !operations.failed_closed_rollback_complete);
+    assert(operations.failed_closed_cause == CharacterSwapFailure::kSettleVerificationFailed);
+    assert(!transaction.RecoverFailedClosed() && transaction.command_gate_closed());
+    transaction.Tick(now + 10000);
+    assert(operations.revert_trace.size() == 1 && operations.failed_closed_calls == 1);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -684,5 +768,7 @@ int main() {
   TestWaitAndTimeoutRemainFailClosed();
   TestRequestValidationAndAge();
   TestRepeatedAbAAndAbcCycles();
+  TestRollbackWaitsForReacquiredAiGuard();
+  TestUnsafeRollbackDoesNotDetachLiveGraph();
   return 0;
 }

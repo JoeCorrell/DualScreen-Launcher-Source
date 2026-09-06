@@ -120,7 +120,8 @@ private fun SwitchBrowseCard(
     )
 
     BoxWithConstraints(modifier = modifier) {
-        val coverHeight = browseCoverHeight(maxHeight)
+        // Reserve a version line even while installation progress is visible.
+        val coverHeight = (maxHeight - 100.dp).coerceAtLeast(104.dp)
         PressScaleContainer(onClick = onClick, modifier = Modifier.fillMaxSize()) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = LauncherPanel),
@@ -220,6 +221,16 @@ private fun SwitchGameCardFooter(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                "REQUIRES ${game.requiredVersion}",
+                color = LauncherAccent,
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 8.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             if (operation?.running == true) {
                 Spacer(Modifier.weight(1f))
                 Row(
@@ -310,6 +321,15 @@ internal fun SwitchGameDetailsPage(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    Text(
+                        "REQUIRED VERSION  ${game.requiredVersionDescription}",
+                        color = LauncherAccent,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 9.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 if (installed != null) {
                     PrimaryAction(
@@ -365,7 +385,7 @@ internal fun SwitchGameDetailsPage(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        MetricBlock("TESTED", game.recommendedVersion, Modifier.weight(1f))
+                        MetricBlock("REQUIRED VERSION", game.requiredVersion, Modifier.weight(1f))
                         MetricBlock("RUNTIME", "EDEN DS", Modifier.weight(1f))
                     }
                 }
@@ -445,7 +465,7 @@ internal fun SwitchGameDetailsPage(
                                 Icon(Icons.Default.Refresh, contentDescription = "Refresh content")
                             }
                             PrimaryAction(
-                                label = "Add mod folder",
+                                label = "Add mods from folder",
                                 icon = Icons.Default.Extension,
                                 onClick = onAddMod,
                                 enabled = installed != null && !busy,

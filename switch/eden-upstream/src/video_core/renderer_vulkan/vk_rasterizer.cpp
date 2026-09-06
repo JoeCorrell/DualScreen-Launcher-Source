@@ -241,6 +241,55 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     FlushWork();
     gpu_memory->FlushCaching();
 
+    // The native GUI normally leaves destination alpha unwritten. Its RGB
+    // equation is straight-alpha source-over, but it repeats SRC_ALPHA for
+    // alpha too. On our transparent target that produces alpha squared and
+    // over-bright Android composition. Accumulate coverage with ONE instead.
+    // Scope this to the registered native UI target; restore guest registers
+    // and invalidate both static and dynamic blend state on either boundary.
+    auto& map_regs = maxwell3d->regs;
+    auto& alpha_source = map_regs.blend_per_target_enabled
+        ? map_regs.blend_per_target[0].alpha_source : map_regs.blend.alpha_source;
+    const auto saved_alpha_source = alpha_source;
+    const bool map_alpha = companion_alpha_address && program_id == companion_alpha_program &&
+        map_regs.rt[0].Address() == companion_alpha_address &&
+        (alpha_source == Maxwell::Blend::Factor::SourceAlpha_D3D ||
+         alpha_source == Maxwell::Blend::Factor::SourceAlpha_GL);
+    const auto dirty_blend = [&] {
+        maxwell3d->dirty.flags[Dirty::Blending] = true;
+        maxwell3d->dirty.flags[Dirty::BlendEquations] = true;
+    };
+    if (map_alpha) {
+        alpha_source = Maxwell::Blend::Factor::One_D3D;
+        dirty_blend();
+    }
+    SCOPE_EXIT {
+        if (map_alpha) {
+            alpha_source = saved_alpha_source;
+            dirty_blend();
+        }
+    };
+
+    const auto& diagnostic_regs = maxwell3d->regs;
+    if (companion_diagnostic_address && diagnostic_regs.rt[0].Address() == companion_diagnostic_address) {
+        ++companion_diagnostic_draws;
+        if (companion_diagnostic_presents < 3 && companion_diagnostic_draws < 16) {
+            const auto& b = diagnostic_regs.blend;
+            const auto& bt = diagnostic_regs.blend_per_target[0];
+            const bool per_target = diagnostic_regs.blend_per_target_enabled;
+            LOG_INFO(Render_Vulkan, "[MAP-DRAW] frame={} draw={} mask={:#x} format={:#x} srgb={} "
+                      "blend={} per_rt={} rgb={:#x}/{:#x}/{:#x} alpha={:#x}/{:#x}/{:#x}",
+                companion_diagnostic_presents, companion_diagnostic_draws, diagnostic_regs.color_mask[0].raw,
+                static_cast<u32>(diagnostic_regs.rt[0].format), diagnostic_regs.framebuffer_srgb,
+                b.enable[0], per_target,
+                static_cast<u32>(per_target ? bt.color_source : b.color_source),
+                static_cast<u32>(per_target ? bt.color_dest : b.color_dest),
+                static_cast<u32>(per_target ? bt.color_op : b.color_op),
+                static_cast<u32>(per_target ? bt.alpha_source : b.alpha_source),
+                static_cast<u32>(per_target ? bt.alpha_dest : b.alpha_dest),
+                static_cast<u32>(per_target ? bt.alpha_op : b.alpha_op));
+        }
+    }
     GraphicsPipeline* const pipeline{pipeline_cache.CurrentGraphicsPipeline()};
     if (!pipeline) {
         return;
@@ -498,6 +547,18 @@ void RasterizerVulkan::Clear(u32 layer_count) {
     }
 
     const u32 color_attachment = regs.clear_surface.RT;
+    if (companion_diagnostic_address && regs.rt[color_attachment].Address() == companion_diagnostic_address) {
+        ++companion_diagnostic_clears;
+        if (companion_diagnostic_presents < 3 || companion_diagnostic_presents % 120 == 0) {
+            LOG_INFO(Render_Vulkan, "[MAP-CLEAR] frame={} count={} rgba={}/{}/{}/{} channels={} "
+                      "rect={},{},{}x{} deferred={}", companion_diagnostic_presents,
+                companion_diagnostic_clears, regs.clear_color[0], regs.clear_color[1],
+                regs.clear_color[2], regs.clear_color[3], color_full_channels,
+                clear_rect.rect.offset.x, clear_rect.rect.offset.y,
+                clear_rect.rect.extent.width, clear_rect.rect.extent.height, can_defer_clear);
+        }
+    }
+
     if (use_color && framebuffer->HasAspectColorBit(color_attachment)) {
         const auto format = VideoCore::Surface::PixelFormatFromRenderTargetFormat(regs.rt[color_attachment].format);
         bool is_integer = IsPixelFormatInteger(format);
@@ -968,6 +1029,77 @@ std::optional<FramebufferTextureInfo> RasterizerVulkan::AccelerateDisplay(
     info.scaled_width = scaled ? resolution.ScaleUp(info.width) : info.width;
     info.scaled_height = scaled ? resolution.ScaleUp(info.height) : info.height;
     return info;
+}
+
+void RasterizerVulkan::ProbeCompanionTexture(u64 expected_program_id, GPUVAddr address,
+                                           u32 width, u32 height) {
+    if (!gpu_memory || program_id != expected_program_id) {
+        LOG_INFO(Render_Vulkan, "[COMPANION-GPU] probe skipped: no matching graphics channel");
+        return;
+    }
+    const auto device_address = gpu_memory->GpuToCpuAddress(address);
+    if (!device_address) {
+        LOG_INFO(Render_Vulkan, "[COMPANION-GPU] GPU address {:#x} is not mapped", address);
+        return;
+    }
+    // The verified SSHD NVN map target is RGBA8 (NVN format 0x25). This
+    // diagnostic resolves its existing view and never downloads image memory.
+    Tegra::FramebufferConfig config{};
+    config.pixel_format = Service::android::PixelFormat::Rgba8888;
+    config.blending = Tegra::BlendMode::Premultiplied;
+    const auto image = AccelerateDisplay(config, *device_address, width);
+    LOG_INFO(Render_Vulkan,
+             "[COMPANION-GPU] gpu={:#x} device={:#x} expected={}x{} resident={} "
+             "image={}x{} scaled={}x{}",
+             address, *device_address, width, height, image.has_value(),
+             image ? image->width : 0, image ? image->height : 0,
+             image ? image->scaled_width : 0, image ? image->scaled_height : 0);
+}
+
+std::optional<Tegra::FramebufferConfig> RasterizerVulkan::ResolveCompanionFramebuffer(
+    u64 expected_program_id, GPUVAddr address, u32 width, u32 height,
+    bool native_ui, bool& in_progress) {
+    in_progress = false;
+    companion_alpha_address = native_ui ? address : 0;
+    companion_alpha_program = expected_program_id;
+    if (!gpu_memory || program_id != expected_program_id || !address || !width || !height) {
+        return std::nullopt;
+    }
+    if (companion_diagnostic_address != address) {
+        companion_diagnostic_address = address;
+        companion_diagnostic_presents = 0;
+        companion_diagnostic_draws = companion_diagnostic_clears = 0;
+    }
+    if (++companion_diagnostic_presents % 120 == 0) {
+        LOG_INFO(Render_Vulkan, "[MAP-FRAME] frame={} gpu={:#x} draws={} clears={} bound_rt={:#x}",
+            companion_diagnostic_presents, address, companion_diagnostic_draws, companion_diagnostic_clears,
+            maxwell3d->regs.rt[0].Address());
+    }
+    companion_diagnostic_draws = companion_diagnostic_clears = 0;
+    // Main-screen presentation can interrupt execution of a guest map pass.
+    // The native adapter restores the primary target after its final UI draw.
+    // Until that bind has executed, leave the last completed surface displayed;
+    // never sample a texture between its clear and its final draw. All accepted
+    // draws and the subsequent blit remain ordered on the shared GPU scheduler.
+    if (maxwell3d->regs.rt[0].Address() == address) {
+        in_progress = true;
+        return std::nullopt;
+    }
+    const auto device_address = gpu_memory->GpuToCpuAddress(address);
+    if (!device_address) return std::nullopt;
+    Tegra::FramebufferConfig config{};
+    config.address = *device_address;
+    config.width = width;
+    config.height = height;
+    config.stride = width;
+    config.pixel_format = Service::android::PixelFormat::Rgba8888;
+    config.blending = Tegra::BlendMode::Premultiplied;
+    config.crop_rect = {0, 0, static_cast<int>(width), static_cast<int>(height)};
+    const auto resident = AccelerateDisplay(config, *device_address, width);
+    // No raw-memory fallback: only an existing image of the verified dimensions
+    // may enter the companion presentation pipeline.
+    if (!resident || resident->width != width || resident->height != height) return std::nullopt;
+    return config;
 }
 
 void RasterizerVulkan::LoadDiskResources(u64 title_id, std::stop_token stop_loading,

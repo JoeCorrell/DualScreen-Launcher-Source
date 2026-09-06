@@ -33,6 +33,7 @@ import com.dualscreen.launcher.LowerPanelMode
 import com.dualscreen.launcher.PresetContainerManager
 import com.dualscreen.launcher.SupportedGame
 import com.dualscreen.launcher.SkyrimGamepadConfiguration
+import com.dualscreen.launcher.Ac2GamepadConfiguration
 import com.dualscreen.launcher.WfcPrerequisiteConfiguration
 import com.dualscreen.launcher.WfcDisplayConfiguration
 import com.dualscreen.launcher.access.AccessState
@@ -379,6 +380,26 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     "seededIni=${fallout.seededFalloutIni} " +
                     "seededPrefs=${fallout.seededPreferences} controller=enabled " +
                     "display=${fallout.displayWidth}x${fallout.displayHeight}",
+            )
+        }
+
+        if (game.id == "assassins-creed-ii") {
+            val gamepad = withContext(Dispatchers.IO) {
+                runCatching { Ac2GamepadConfiguration.ensureEnabled(container.rootDir) }
+            }.getOrElse { failure ->
+                Log.e(TAG, "Could not enable AC II controller input", failure)
+                finishWithMessage("AC II controller setup failed: ${failure.message}")
+                return
+            }
+            // This engine discovers its Xenon pad via DirectInput enumeration.
+            // Skyrim's XInput-only registry policy hides that bootstrap device.
+            shortcut.putExtra("inputType", "12")
+            shortcut.putExtra("exclusiveXInput", "0")
+            shortcut.saveData()
+            launchStatus.record(
+                "INPUT",
+                "AC II controller profile: DirectInput discovery + XInput; Xbox 360 identity; " +
+                    "prefs=${gamepad.preferencesFile.absolutePath} changed=${gamepad.changed}",
             )
         }
 

@@ -45,7 +45,10 @@ param(
     [float]$PoseFrame = -1.0,
 
     [Parameter()]
-    [switch]$Force
+    [switch]$Force,
+    # Opt-in for native SMO metal materials that have no local BNTX images.
+    # Existing BOTW callers retain their strict texture requirement.
+    [switch]$AllowUntexturedMaterials
 )
 
 Set-StrictMode -Version Latest
@@ -840,7 +843,7 @@ function Test-Glb2 {
     if (@($document.skins).Count -eq 0) {
         throw 'Generated GLB does not contain a skin.'
     }
-    if (@($document.textures).Count -eq 0 -or @($document.images).Count -eq 0) {
+    if (-not $AllowUntexturedMaterials -and (@($document.textures).Count -eq 0 -or @($document.images).Count -eq 0)) {
         throw 'Generated GLB does not contain textures.'
     }
     if (@($document.buffers).Count -ne 1 -or
@@ -1113,6 +1116,9 @@ namespace Eden.BotwCompanion
         $compilerReferences = @(
             [AppDomain]::CurrentDomain.GetAssemblies() |
                 Where-Object { -not $_.IsDynamic -and -not [string]::IsNullOrWhiteSpace($_.Location) } |
+                # Some Toolbox distributions include legacy OpenTK 1.x for plugins.
+                # STBone/FSKA use the explicitly loaded Lib/OpenTK 3.x assembly.
+                Where-Object { $_.GetName().Name -ne 'OpenTK' -or $_.Location -eq (Join-Path $toolboxPath 'Lib\OpenTK.dll') } |
                 ForEach-Object { $_.Location } |
                 Select-Object -Unique
         )
@@ -1157,7 +1163,7 @@ namespace Eden.BotwCompanion
             throw "Texture input is neither BFRES nor BNTX after Yaz0 decompression: $texturePath"
         }
 
-        if ($bntxStreams.Count -eq 0) {
+        if ($bntxStreams.Count -eq 0 -and -not $AllowUntexturedMaterials) {
             throw "No BNTX texture container was found in: $texturePath"
         }
         foreach ($bntxStream in $bntxStreams) {
@@ -1249,10 +1255,24 @@ namespace Eden.BotwCompanion
         throw 'Assimp output is not glTF 2.0.'
     }
 
+    if ($AllowUntexturedMaterials) {
+        foreach ($property in @('images','textures')) {
+            if ($gltf.PSObject.Properties.Match($property).Count -eq 0) {
+                $gltf | Add-Member -NotePropertyName $property -NotePropertyValue @()
+            }
+        }
+    }
     $textureRepair = Repair-GltfTextures -Gltf $gltf -StageDirectory $stageDirectory `
         -ExportedCandidates $exportedCandidates
-    if ($textureRepair.ImageCount -eq 0 -or $textureRepair.TextureCount -eq 0) {
+    if (-not $AllowUntexturedMaterials -and ($textureRepair.ImageCount -eq 0 -or $textureRepair.TextureCount -eq 0)) {
         throw 'No referenced BNTX textures survived glTF material conversion.'
+    }
+    if ($AllowUntexturedMaterials) {
+        foreach ($property in @('images','textures')) {
+            if ($gltf.PSObject.Properties.Match($property).Count -eq 0) {
+                $gltf | Add-Member -NotePropertyName $property -NotePropertyValue @()
+            }
+        }
     }
 
     $poseResult = $null

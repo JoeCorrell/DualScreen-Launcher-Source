@@ -17,6 +17,42 @@ val botwBasePlayerAssetNames = listOf(
 )
 val botwPlayerAssetsDirectory = providers.gradleProperty("botwPlayerAssetsDir")
 val generatedBotwPlayerAssets = layout.buildDirectory.dir("generated/botwPlayerAssets")
+val smoPlayerAssetsDirectory = providers.gradleProperty("smoPlayerAssetsDir")
+val generatedSmoPlayerAssets = layout.buildDirectory.dir("generated/smoPlayerAssets")
+val filteredDualScreenAssets = layout.buildDirectory.dir("generated/filteredDualScreenAssets")
+val prepareFilteredDualScreenAssets by tasks.registering(Sync::class) {
+    from("../eden-upstream/src/android/app/src/dualscreen/assets") {
+        exclude("plza/**")
+    }
+    into(filteredDualScreenAssets)
+}
+val prepareSmoPlayerAssets by tasks.registering(Sync::class) {
+    smoPlayerAssetsDirectory.orNull?.let { directory ->
+        from(directory) { include("*.glb", "index.json"); into("smo/player") }
+    }
+    into(generatedSmoPlayerAssets)
+    doFirst {
+        smoPlayerAssetsDirectory.orNull?.let { directory ->
+            val root = file(directory)
+            val index = groovy.json.JsonSlurper().parse(root.resolve("index.json")) as Map<*, *>
+            check(index["version"] == 2) { "SMO preview pack is incomplete/legacy; regenerate the complete wardrobe" }
+            val catalog = index["catalog"] as Map<*, *>
+            val bodies = catalog["bodies"] as List<*>
+            val hats = catalog["heads"] as List<*>
+            check(bodies.size == 42 && hats.size == 41) { "SMO base wardrobe catalog is incomplete" }
+            val appearances = index["appearances"] as Map<*, *>
+            for (body in bodies) for (hat in hats) {
+                val recipe = (appearances[body] as Map<*, *>)[hat] as Map<*, *>
+                val parts = recipe["parts"] as List<*>
+                val models = listOf(recipe["model"]) + parts.map { (it as Map<*, *>)["model"] }
+                models.forEach { model ->
+                    check(model is String && model.matches(Regex("[A-Za-z0-9_]{1,80}")) &&
+                        root.resolve("$model.glb").isFile) { "Missing SMO preview model for $body/$hat: $model" }
+                }
+            }
+        }
+    }
+}
 val prepareBotwBasePlayerAssets by tasks.registering(Sync::class) {
     botwPlayerAssetsDirectory.orNull?.let { sourceDirectory ->
         from(sourceDirectory) {
@@ -61,11 +97,14 @@ android {
         assets.srcDir("../eden-upstream/src/android/app/src/main/assets")
         // Eden DS keeps the companion artwork/data in its dualscreen flavor. The embedded
         // runtime has no Android flavor of its own, so include that source set explicitly.
-        assets.srcDir("../eden-upstream/src/android/app/src/dualscreen/assets")
+        // AGP's asset merger ignores AndroidSourceDirectorySet exclude filters.
+        // Give it a physically filtered tree so Z-A exists only in its signed package.
+        assets.srcDir(filteredDualScreenAssets)
         // BOTW models are generated from the builder's own RomFS and must not live in source
         // control. Supplying -PbotwPlayerAssetsDir packages Link plus every armor model so clean
         // installs can render equipped armor; external caches can still override these assets.
         assets.srcDir(generatedBotwPlayerAssets)
+        assets.srcDir(generatedSmoPlayerAssets)
     }
 
 }
@@ -76,14 +115,11 @@ val verifyDualScreenAssets by tasks.registering {
     )
     inputs.dir(dualScreenAssets)
     dependsOn(prepareBotwBasePlayerAssets)
+    dependsOn(prepareSmoPlayerAssets)
     doLast {
         val required = listOf(
             "botw/player/index.json",
             "botw/ui/map/locations.json",
-            "plza/map_texture_00.png",
-            "plza/map_icons/player.png",
-            "plza/item_names.tsv",
-            "plza/pokedex.tsv",
             "sshd/player/index.json",
         )
         val missing = required.filterNot { dualScreenAssets.file(it).asFile.isFile }
@@ -142,6 +178,17 @@ val verifyBotwBasePlayerAssets by tasks.registering {
             ?: error("BOTW player model index is not a JSON object")
         val actors = indexRoot["actors"] as? Map<*, *>
             ?: error("BOTW player model index has no actors object")
+        val heldModels = actors.entries.asSequence()
+            .filter { (actor, _) -> actor.toString().startsWith("Item_") ||
+                actor.toString().startsWith("Animal_Insect_") }
+            .mapNotNull { (_, entry) -> (entry as? Map<*, *>)?.get("file") as? String }
+            .toSet()
+        check(heldModels.isNotEmpty() && heldModels.all(::hasPlayerAsset)) {
+            "BOTW held-preview models are missing. Generate the materials manifest from " +
+                "RomFS and install its GLBs with install_botw_equipment_assets.py " +
+                "--model-subdirectory held before packaging. Missing: " +
+                heldModels.filterNot(::hasPlayerAsset).joinToString()
+        }
         val requiredArmor = actors.entries.asSequence()
             .filter { (actor, _) -> actor.toString().startsWith("Armor_") }
             .mapNotNull { (_, entry) ->
@@ -197,6 +244,7 @@ val verifyBotwBasePlayerAssets by tasks.registering {
 }
 
 tasks.named("preBuild").configure {
+    dependsOn(prepareFilteredDualScreenAssets)
     dependsOn(verifyDualScreenAssets)
 }
 
@@ -205,6 +253,7 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 }
 
 dependencies {
+    api(project(":switch:companion-api"))
     implementation("com.google.android.filament:filament-android:1.75.0")
     implementation("com.google.android.filament:gltfio-android:1.75.0")
     implementation("androidx.core:core-ktx:1.15.0")

@@ -1,10 +1,10 @@
 {
-    "version":  "isaac-native-j460-2026.09.04.14",
+    "version":  "isaac-native-j460-2026.09.04.15",
     "files":  [
                   {
                       "source":  "native/winmm.dll",
                       "target":  "winmm.dll",
-                      "sha256":  "d4dd4e413e87dbd16338bc46f026b3fd6075d36ac6ea05cba6890e71d269166d"
+                      "sha256":  "bc75bdedac103f616fbe3191a29ab90d9b6276ff6bb949302b5c54e691d7c3bf"
                   },
                   {
                       "source":  "mod/main.lua",
@@ -65,6 +65,16 @@
                       "source":  "assets/custom/icons/stats_icon.png",
                       "target":  "resources/scripts/isaac_second_screen_assets/custom/icons/stats_icon.png",
                       "sha256":  "f951383e611f907c55f32f78d3fbce1a1de304666964bc508160a6352c79149f"
+                  },
+                  {
+                      "source":  "assets/custom/item_description_panel.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/custom/item_description_panel.png",
+                      "sha256":  "1327635f20de7d7baaf563a85591f88d50c450a0117fa664921c67d3da4a3ec8"
+                  },
+                  {
+                      "source":  "assets/custom/item_slot_dark.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/custom/item_slot_dark.png",
+                      "sha256":  "b589d45ee86051bf45803d2113053ead817cf136abfb2864d26a610e06f13936"
                   },
                   {
                       "source":  "assets/custom/panels/map_panel_blank.png",

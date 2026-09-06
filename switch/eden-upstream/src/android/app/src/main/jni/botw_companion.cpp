@@ -1863,6 +1863,9 @@ bool IsExpectedBuild(const Core::System& system) {
 
 } // namespace
 
+#include "botw_held_preview.inc"
+#include "botw_map_discovery.inc"
+
 std::string GetSnapshot(EmulationSession& session, bool lightweight) {
     // shutdownNow() cannot interrupt a JNI memory read. ShutdownEmulation owns this same lock
     // while it unmaps the application process, making the lock the actual lifetime barrier.

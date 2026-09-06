@@ -34,7 +34,7 @@ WindowAdaptPass::~WindowAdaptPass() = default;
 void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, Scheduler& scheduler, size_t image_index,
                            std::list<Layer>& layers,
                            std::span<const Tegra::FramebufferConfig> configs,
-                           const Layout::FramebufferLayout& layout, Frame* dst) {
+                           const Layout::FramebufferLayout& layout, Frame* dst, bool transparent) {
 
     const VkFramebuffer host_framebuffer{*dst->framebuffer};
     const VkRenderPass renderpass{*render_pass};
@@ -70,15 +70,15 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
     }
 
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
-        const f32 bg_red = Settings::values.bg_red.GetValue() / 255.0f;
-        const f32 bg_green = Settings::values.bg_green.GetValue() / 255.0f;
-        const f32 bg_blue = Settings::values.bg_blue.GetValue() / 255.0f;
+        const f32 bg_red = transparent ? 0.f : Settings::values.bg_red.GetValue() / 255.0f;
+        const f32 bg_green = transparent ? 0.f : Settings::values.bg_green.GetValue() / 255.0f;
+        const f32 bg_blue = transparent ? 0.f : Settings::values.bg_blue.GetValue() / 255.0f;
         const VkClearAttachment clear_attachment{
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
             .colorAttachment = 0,
             .clearValue =
                 {
-                    .color = {.float32 = {bg_red, bg_green, bg_blue, 1.0f}},
+                    .color = {.float32 = {bg_red, bg_green, bg_blue, transparent ? 0.f : 1.f}},
                 },
         };
         const VkClearRect clear_rect{

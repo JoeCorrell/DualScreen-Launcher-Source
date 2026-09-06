@@ -4,6 +4,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
+#include <array>
+#include <string>
 
 namespace wfcds {
 
@@ -25,6 +28,16 @@ struct UnrealStructValueView {
   const void* data = nullptr;
   uint32_t size = 0;
   void* struct_definition = nullptr;
+};
+
+struct UnrealScriptDelegate {
+  void* object = nullptr;
+  uint32_t function_name = 0;  // WFC's packed, four-byte FName.
+  // Shipping WFC retains a compiled-script binding as well as UObject/FName.
+  // Preserve both words during checkpoint deferral; dropping them loses the
+  // native completion callback. Verified by 10BC8AAC..10BC8ABE / 10BC8C7A.
+  void* compiled_context = nullptr;
+  void* compiled_function = nullptr;
 };
 
 // Stable identity captured for a process-wide script UFunction.  Handles are
@@ -53,9 +66,11 @@ struct UnrealFunctionHandle {
 #else
 #define WFCDS_UNREAL_EXEC_CALL
 #endif
-// UFunction+0x68 executor ABI in the supported 32-bit TWFC build: Context is
-// passed in ECX, the second register argument is unused EDX, followed by
-// FFrame* and result storage on the stack. Use WFCDS_UNREAL_EXEC_CALL when
+// UFunction+0x68 executor ABI: ECX is UObject* for ordinary native executors,
+// but UObject+0x10 for compiled-script executors (flag 0x20). Installed bridge
+// callbacks and original_executor are normalized to UObject* by tail thunks.
+// EDX is unused, followed by FFrame* and result storage on the stack. Use
+// WFCDS_UNREAL_EXEC_CALL when
 // declaring a replacement executor so the definition has this same ABI.
 using UnrealFunctionExec = void(WFCDS_UNREAL_EXEC_CALL *)(
     void* context, void* unused_edx, void* frame, void* result);
@@ -64,6 +79,10 @@ struct UnrealFunctionExecDetour {
   UnrealFunctionHandle function = {};
   UnrealFunctionExec original_executor = nullptr;
   UnrealFunctionExec replacement_executor = nullptr;
+  // Actual pointers in the engine slot. Compiled-script functions receive
+  // UObject+0x10; the public callbacks above always receive UObject*.
+  UnrealFunctionExec engine_original_executor = nullptr;
+  UnrealFunctionExec engine_replacement_executor = nullptr;
   bool installed = false;
 };
 
@@ -93,6 +112,18 @@ struct UnrealPreparedObjectStructStructCall {
 bool InitializeUnrealBridge(HMODULE executable);
 void ShutdownUnrealBridge();
 bool UnrealBridgeReady();
+
+struct UnrealCallParameterContract {
+  const wchar_t* name;
+  const wchar_t* property_class;
+  uint32_t size;  // zero accepts the reflected size (struct/delegate only).
+};
+// Validates the complete call signature without invoking the game. All required
+// inputs must be listed; only native optional parameters may be omitted.
+bool UnrealValidateCallContract(
+    void* object, const wchar_t* function_name,
+    const wchar_t* return_property_class,
+    std::initializer_list<UnrealCallParameterContract> inputs);
 // Starts a game-thread bridge pulse. This only clears short-lived memory-region
 // validation state; reflected class metadata remains cached for the process.
 void UnrealBeginGameThreadPulse();
@@ -104,21 +135,30 @@ void UnrealResetWorldCaches();
 int32_t UnrealObjectCount();
 void* UnrealObjectAt(int32_t index);
 bool UnrealObjectValid(void* object);
+// Validated packed UObject outer, not an Actor.Owner property. Read-only; no
+// class-table insertion or object scan. Null includes absent/invalid outers.
+void* UnrealObjectOuter(void* object);
 bool UnrealObjectIsA(void* object, const wchar_t* class_name);
 uint32_t UnrealObjectIndex(void* object);
 bool UnrealObjectName(void* object, char* output, size_t capacity);
+// Read-only packed FName comparison for method/delegate names. Rejects numbered
+// instances and accepts equivalent name-table entries without needing a UFunction.
+bool UnrealUnnumberedNameEquals(uint32_t packed_name,const wchar_t* expected);
 bool UnrealObjectClassName(void* object, char* output, size_t capacity);
 // Returns the live reflected UClass for a validated UObject. The caller must
 // treat it as an engine-owned reference and revalidate the source object at
 // each game-thread use.
 void* UnrealObjectClass(void* object);
+// Exact registered class path; no UFunction lookup or full actor scan.
+bool UnrealResolveClassByPath(const wchar_t* path,void** output);
 bool UnrealResolveClassInHierarchy(void* object, const wchar_t* class_name,
                                    void** output);
 
 // Resolves a script UFunction by its exact dotted owner path and function
 // name. If expected_object_index is non-zero, only that one-based GObjects
-// slot is considered. Passing zero performs one bounded GObjects scan and
-// captures the resolved runtime index in output.
+// slot is considered. Passing zero searches the bounded class/child metadata.
+// Compiled private methods may have no runtime UFunction at all; they require
+// separate native bindings, not broader object scans or guessed bytecode.
 bool UnrealResolveExactScriptFunction(uint32_t expected_object_index,
                                       const wchar_t* full_owner_path,
                                       const wchar_t* function_name,
@@ -142,6 +182,18 @@ bool UnrealCallExactVoidObject(
 bool UnrealCallExactVoidInt(
     void* object, const UnrealFunctionHandle& function,
     const wchar_t* int_parameter, int32_t int_value);
+bool UnrealCallExactVoidIntDelegate(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* int_parameter, int32_t int_value,
+    const wchar_t* delegate_parameter, const UnrealScriptDelegate& callback);
+bool UnrealResolveExactDelegateParameterOffset(
+    const UnrealFunctionHandle& function, const wchar_t* parameter_name,
+    uint32_t* output);
+bool UnrealValidateExactIntDelegateCall(
+    const UnrealFunctionHandle& function, const wchar_t* int_parameter,
+    const wchar_t* delegate_parameter);
+bool UnrealReadFrameDelegateParameter(void* frame, uint32_t offset,
+                                      UnrealScriptDelegate* output);
 bool UnrealCallExactVoidString(
     void* object, const UnrealFunctionHandle& function,
     const wchar_t* string_parameter, const wchar_t* string_value);
@@ -159,6 +211,10 @@ bool UnrealCallExactStructResultPersistent(
     const wchar_t* struct_parameter,
     const UnrealStructValueView& struct_value, void* parameter_storage,
     size_t parameter_storage_size, UnrealStructValueView* output);
+bool UnrealCallExactVoidStringInt(
+    void* object, const UnrealFunctionHandle& function,
+    const wchar_t* string_parameter, const wchar_t* string_value,
+    const wchar_t* int_parameter, int32_t int_value);
 bool UnrealCallExactStringStructResultPersistent(
     void* object, const UnrealFunctionHandle& function,
     const wchar_t* string_parameter, const wchar_t* string_value,
@@ -233,6 +289,9 @@ bool UnrealInstallScriptObjectOperandPatch(
     const UnrealFunctionHandle& function, uint32_t opcode_offset,
     uint8_t expected_opcode, void* expected_object, void* replacement_object,
     UnrealScriptObjectOperandPatch* output);
+bool UnrealValidateScriptObjectOperand(
+    const UnrealFunctionHandle& function, uint32_t opcode_offset,
+    uint8_t expected_opcode, void* expected_object);
 bool UnrealRestoreScriptObjectOperandPatch(
     UnrealScriptObjectOperandPatch* patch);
 bool UnrealRestoreAllScriptObjectOperandPatches();
@@ -244,11 +303,21 @@ bool UnrealCanCallVoidInt(void* object, const wchar_t* function_name,
 
 bool UnrealReadObjectProperty(void* object, const wchar_t* property_name,
                               void** output);
+// Reads all four shipping delegate words, including compiled context/function.
+// Does not invoke or validate the target (a cleared/stale delegate is data).
+bool UnrealReadDelegateProperty(void* object, const wchar_t* property_name,
+                                UnrealScriptDelegate* output, uint32_t* offset = nullptr);
 // Resolves and validates a reflected object-property offset for later raw
 // reads on a hot exact-build path. Resolution itself is not a hot-path API.
 bool UnrealResolveObjectPropertyOffset(void* object,
                                        const wchar_t* property_name,
                                        uint32_t* output);
+bool UnrealResolveBytePropertyOffset(void* object,
+                                     const wchar_t* property_name,
+                                     uint32_t* output);
+bool UnrealResolveFloatPropertyOffset(void* object,
+                                      const wchar_t* property_name,
+                                      uint32_t* output);
 bool UnrealResolveStructPropertyOffset(void* object,
                                        const wchar_t* property_name,
                                        uint32_t expected_size,
@@ -269,6 +338,10 @@ bool UnrealReadStringArrayElementProperty(void* object,
                                           size_t capacity);
 bool UnrealReadArrayProperty(void* object, const wchar_t* property_name,
                              UnrealArrayView* output);
+// Validates the array's actual DelegateProperty inner type and all 16 bytes
+// per live entry. The generic array reader only validates pointer-sized items.
+bool UnrealReadDelegateArrayProperty(void* object, const wchar_t* property_name,
+                                     UnrealArrayView* output, uint32_t* offset = nullptr);
 bool UnrealReadFloatArrayElement(const UnrealArrayView& array, int32_t index,
                                  float* output);
 bool UnrealReadObjectArrayElement(const UnrealArrayView& array, int32_t index,
@@ -294,6 +367,10 @@ bool UnrealReadStructArrayIntField(const UnrealStructArrayView& array,
                                    int32_t index,
                                    const wchar_t* field_name,
                                    int32_t* output);
+// Exact packed-FName comparison (including instance-number bits), not a
+// displayed/base-name string comparison. FNAME_Find does not add game names.
+bool UnrealStructArrayNameEquals(const UnrealStructArrayView& array,int32_t index,
+                                 const wchar_t* field_name,const wchar_t* expected,bool* output);
 bool UnrealReadStructFloatProperty(void* object,
                                    const wchar_t* property_name,
                                    const wchar_t* field_name, float* output);
@@ -302,11 +379,19 @@ bool UnrealReadStructProperty(void* object, const wchar_t* property_name,
 bool UnrealReadStructStringField(const UnrealStructValueView& value,
                                  const wchar_t* field_name, char* output,
                                  size_t capacity);
+bool UnrealReadStructObjectField(const UnrealStructValueView& value,
+                                 const wchar_t* field_name, void** output);
+bool UnrealReadStructTypedArray(const UnrealStructValueView& value,
+                                const wchar_t* field_name,
+                                const wchar_t* inner_class, uint32_t element_size,
+                                UnrealArrayView* output, uint32_t max_capacity = 64);
 bool UnrealReadStructStructField(const UnrealStructValueView& value,
                                  const wchar_t* field_name,
                                  UnrealStructValueView* output);
 bool UnrealReadStructIntField(const UnrealStructValueView& value,
                               const wchar_t* field_name, int32_t* output);
+bool UnrealReadStructFloatField(const UnrealStructValueView& value,
+                                const wchar_t* field_name,float* output);
 bool UnrealAssignStructIntField(const UnrealStructValueView& value,
                                 const wchar_t* field_name, int32_t input);
 bool UnrealAssignStructBoolField(const UnrealStructValueView& value,
@@ -328,6 +413,19 @@ bool UnrealReadStructByteArrayElement(const UnrealStructValueView& value,
 bool UnrealAssignStructStringArrayElementWide(
     const UnrealStructValueView& value, const wchar_t* field_name,
     int32_t index, const wchar_t* text);
+
+// Only for independently owned native struct results, never borrowed template
+// views. Stage all arrays before publishing any; preserve_tail matches WFC's
+// CommitCharacter weapon-slot edits (grenades and other inventory stay intact).
+struct UnrealStringArrayOverride {
+  const wchar_t* field_name = nullptr;
+  const wchar_t* const* elements = nullptr;
+  int32_t count = 0;
+  bool preserve_tail = false;
+};
+bool UnrealApplyOwnedStringArrayOverrides(
+    const UnrealStructValueView& value,
+    const UnrealStringArrayOverride* overrides, size_t count);
 bool UnrealReadStructBoolProperty(void* object,
                                   const wchar_t* property_name,
                                   const wchar_t* field_name, bool* output);
@@ -335,15 +433,49 @@ bool UnrealReadStructBoolProperty(void* object,
 // destination is changed only when its current object still equals
 // expected_value, preventing a stale transaction from overwriting a newer
 // native state transition.
+// Reference writes are game-thread-only and use the exact native GC barrier.
+// Readiness is established by Initialize + the first game-thread pulse.
+bool UnrealObjectReferenceWritesReady();
+// Short-lived, game-thread-only engine allocation journal. Begin requires an
+// empty live UObject array. Each cloned entry is rooted in that array BEFORE
+// the next engine call. Commit frees the previous empty backing allocation;
+// rollback removes only this transaction's exact entries and frees its block.
+// Never copy a pending journal or carry one across a game-thread pulse.
+struct UnrealObjectCloneArray {
+  void* owner=nullptr;
+  uint32_t owner_index=0;
+  void* definition=nullptr;
+  uint32_t definition_index=0;
+  std::wstring property;
+  std::wstring field;
+  UnrealArrayView* destination=nullptr;
+  UnrealArrayView original{};
+  UnrealArrayView staged{};
+  std::array<void*,64> objects{};
+  std::array<uint32_t,64> indices{};
+  DWORD thread=0;
+  bool pending=false;
+};
+bool UnrealObjectCloningReady();
+bool UnrealBeginObjectCloneArray(void* owner,const wchar_t* property,
+                                 const wchar_t* field,int32_t capacity,
+                                 UnrealObjectCloneArray* journal);
+bool UnrealAppendObjectClone(UnrealObjectCloneArray* journal,void* source,void** output);
+bool UnrealFinishObjectCloneArray(UnrealObjectCloneArray* journal,bool commit);
 bool UnrealWriteObjectPropertyExpected(void* object,
                                        const wchar_t* property_name,
                                        void* expected_value,
                                        void* new_value);
+// Game-thread-only packed Boolean CAS for the custom campaign menu. Requires
+// writable scalar metadata with one valid bit; unrelated flags are preserved.
 bool UnrealWriteBoolPropertyExpected(void* object,
                                      const wchar_t* property_name,
                                      bool expected_value, bool new_value);
 bool UnrealWriteIntProperty(void* object, const wchar_t* property_name,
                             int32_t value);
+// Game-thread scalar CAS; checks the typed layout and current write protection.
+bool UnrealWriteIntPropertyExpected(void* object, const wchar_t* property_name,
+                                    int32_t expected_value, int32_t new_value);
 bool UnrealWriteStructProperty(void* object, const wchar_t* property_name,
                                const UnrealStructValueView& value);
 // Exchanges two instances of the same reflected struct without duplicating or

@@ -30,7 +30,8 @@ struct CharacterRoleMappingRestorePoint {
 // no process-wide GObjects scan is performed. Call on the game thread.
 bool PrepareCharacterRoleAdapter(void* player_controller_instance,
                                  void* ai_controller_instance,
-                                 void* ai_pawn_instance);
+                                 void* ai_pawn_instance,
+                                 bool validate_only = false);
 // Clears the mapping first, then restores every installed executor detour in
 // reverse order. Call before ShutdownUnrealBridge. Returns false if an executor
 // no longer contained our hook.

@@ -47,6 +47,7 @@ import kotlin.math.sin
 import kotlin.math.tan
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.BuildConfig
+import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.Log
 
@@ -412,6 +413,137 @@ internal class BotwPlayerRenderView(
     private var readbackStartedAt = 0L
 
     private var ioExecutor: ExecutorService? = null
+    private var nativeHeldPreview: BotwHeldPreview? = null
+    private var heldPreviewGeneration = 0
+    private var heldPreviewPending = false
+    private var lastValidHeldPreviewAt = 0L
+    private val heldSlots = (0 until 5).map { "Held$it" }
+    private val heldPreviewPoll = Runnable { pollHeldPreview() }
+
+    private fun wakeHeldPreview() {
+        if (profile != PlayerRenderProfile.Botw || !shouldBeVisible || released || releasing) return
+        if (engine == null) {
+            val current = appearance ?: return
+            cachedAppearance = null
+            beginAppearanceRender(current)
+        }
+        mainHandler.removeCallbacks(heldPreviewPoll)
+        pollHeldPreview()
+    }
+
+    private fun pollHeldPreview() {
+        if (profile != PlayerRenderProfile.Botw || !shouldBeVisible || released || releasing ||
+            heldPreviewPending || engine == null) return
+        val executor = ioExecutor ?: return
+        val generation = heldPreviewGeneration
+        heldPreviewPending = true
+        executor.execute {
+            val sample = runCatching { BotwHeldPreview.parse(NativeLibrary.getBotwHeldPreview()) }
+                .getOrNull()
+            mainHandler.post {
+                if (generation != heldPreviewGeneration) return@post
+                heldPreviewPending = false
+                if (!shouldBeVisible || released || releasing) return@post
+                if (sample != null) {
+                    lastValidHeldPreviewAt = SystemClock.uptimeMillis()
+                    applyHeldPreview(sample)
+                } else if (nativeHeldPreview != null &&
+                    SystemClock.uptimeMillis() - lastValidHeldPreviewAt > 500L) {
+                    Log.warning("[BOTW Companion] Native held pose unavailable for 500ms; clearing stale preview")
+                    applyHeldPreview(BotwHeldPreview(0, emptyMap(), emptyList()))
+                }
+                // Only the visible held-character preview runs at animation cadence. The
+                // inventory/map/stats poll remains unchanged; no unbounded frame queue.
+                mainHandler.postDelayed(heldPreviewPoll,
+                    if (nativeHeldPreview?.items?.isNotEmpty() == true) 16L else 250L)
+            }
+        }
+    }
+
+    private fun applyHeldPreview(live: BotwHeldPreview) {
+        if (!bodyReady) return
+        val previous = nativeHeldPreview
+        val sample = live.stationaryAttachments(previous)
+        if (previous?.items?.map { it.id to it.actor }.orEmpty() !=
+            sample.items.map { it.id to it.actor }) {
+            Log.info("[BOTW Companion] Native held preview count=${sample.items.size} " +
+                "bones=${sample.bones.size} actors=${sample.items.joinToString { it.actor }}")
+        }
+        nativeHeldPreview = sample.takeIf { it.items.isNotEmpty() }
+        if (previous?.playerId != sample.playerId && previous != null) {
+            heldSlots.forEach { slot -> requestSlot(slot, null) }
+            if (!heldItemEating) cancelPreviewAction(clearHeldItem = false)
+        }
+        heldSlots.forEachIndexed { index, slot ->
+            val item = sample.items.getOrNull(index)
+            if (requestedActors[slot] != item?.actor ||
+                (item != null && slot !in loadedSlots && slot !in pendingSlots &&
+                    item.actor !in missingActors)) {
+                // Never retain the last ingredient while a different model is loading.
+                if (requestedActors[slot] != item?.actor) removeSlot(slot)
+                requestSlot(slot, item?.actor)
+            }
+        }
+        if (sample.items.isEmpty()) {
+            if (previous != null) {
+                if (!heldItemEating) cancelPreviewAction(clearHeldItem = false)
+                cachedAppearance = null
+                requestRenderFrame("native-hold-released")
+            }
+            return
+        }
+        // The portrait uses the native pouch pose, not the gameplay locomotion
+        // skeleton. Native Weapon_R/item worlds supply each collection's initial
+        // attachment; walking/running must not overwrite that portrait-local pose.
+        if (!heldItemEating && (previous?.items?.size != sample.items.size ||
+                displayedPreviewFrame == null && activePreviewClip == null)) {
+            startNativePouchPreview(sample.items.size)
+        }
+        val attachmentsChanged = previous == null || previous.items.size != sample.items.size ||
+            sample.items.indices.any { sample.items[it] !== previous.items[it] }
+        if (attachmentsChanged) {
+            heldSlots.forEachIndexed { index, slot ->
+                val loaded = loadedSlots[slot] ?: return@forEachIndexed
+                val item = sample.items.getOrNull(index) ?: return@forEachIndexed
+                if (loaded.actor == item.actor) applyHeldSlotTransform(slot, loaded.asset)
+            }
+            requestRenderFrame("native-held-attachments")
+        }
+    }
+
+    private fun startNativePouchPreview(count: Int) {
+        val few = previewAnimations["Hold"] ?: return
+        val many = previewAnimations["HoldMany"] ?: return
+        // PauseMenuPlayer_Lift.bas uses the Few/Many blend's native 0..5 range.
+        val weight = count.coerceIn(0, 5) / 5f
+        val frames = few.frames.mapIndexed { i, frame ->
+            val other = many.frames.getOrNull(i) ?: many.frames.last()
+            PreviewAnimationFrame(frame.timeMs, frame.bones.mapValues { (name, matrix) ->
+                BotwHeldTransforms.interpolate(matrix, other.bones[name] ?: matrix, weight)
+            })
+        }
+        Choreographer.getInstance().removeFrameCallback(previewAnimationFrameCallback)
+        previewAnimationGeneration++
+        activePreviewClip = few.copy(source = "Lift_Lift_Pouch_Few/Many", frames = frames)
+        activePreviewStartedAtNanos = 0L
+        activePreviewFrameIndex = -1
+        cachedAppearance = null
+        startPreviewAnimation()
+    }
+
+    private fun applyHeldSlotTransform(slot: String, asset: FilamentAsset): Boolean {
+        val index = heldSlots.indexOf(slot)
+        val item = nativeHeldPreview?.items?.getOrNull(index) ?: return false
+        val player = loadedSlots[SLOT_BASE]?.asset ?: return false
+        val entity = player.getFirstEntityByName(BotwHeldPreview.HAND)
+        val transforms = engine?.transformManager ?: return false
+        if (entity == 0 || !transforms.hasComponent(entity) ||
+            !transforms.hasComponent(asset.root)) return false
+        val root = transforms.getInstance(asset.root)
+        transforms.setParent(root, transforms.getInstance(entity))
+        transforms.setTransform(root, item.handLocal)
+        return true
+    }
     private var engine: Engine? = null
     private var renderer: Renderer? = null
     private var scene: Scene? = null
@@ -466,6 +598,7 @@ internal class BotwPlayerRenderView(
 
         val cached = frameBitmap
         if (engine == null && cachedAppearance == renderAppearance && cached != null &&
+            (profile != PlayerRenderProfile.Botw || lastReportedHeldItemCount <= 0) &&
             !cached.isRecycled &&
             cached.width == viewportWidth && cached.height == viewportHeight
         ) {
@@ -522,6 +655,12 @@ internal class BotwPlayerRenderView(
 
     fun playItemAction(actorName: String, itemIcon: Bitmap?, eating: Boolean) {
         check(Looper.myLooper() == Looper.getMainLooper())
+        if (profile == PlayerRenderProfile.Botw && !eating) {
+            // Holding is driven by the actual collection, not the last tapped icon/clip.
+            itemIcon?.takeUnless(Bitmap::isRecycled)?.recycle()
+            wakeHeldPreview()
+            return
+        }
         if (!shouldBeVisible) {
             itemIcon?.takeUnless(Bitmap::isRecycled)?.recycle()
             return
@@ -543,6 +682,8 @@ internal class BotwPlayerRenderView(
         val clip = activePreviewClip
         if (clip == null) {
             Log.error("[BOTW Companion] Missing ${if (eating) "Eat" else "Hold"} animation")
+            clearHeldItem()
+            wakeHeldPreview()
             return
         }
         Log.info(
@@ -563,7 +704,11 @@ internal class BotwPlayerRenderView(
         if (count != lastReportedHeldItemCount) {
             lastReportedHeldItemCount = count
             Log.info("[BOTW Companion] Game reports $count held pouch items")
+            if (profile == PlayerRenderProfile.Botw) {
+                if (count > 0 || engine != null) wakeHeldPreview()
+            }
         }
+        if (profile == PlayerRenderProfile.Botw) return
         if (count != 0 || heldItemEating || heldItemActor == null ||
             SystemClock.uptimeMillis() < holdStateGraceUntil
         ) {
@@ -660,11 +805,16 @@ internal class BotwPlayerRenderView(
                         transforms.getTransform(instance, FloatArray(16))
                     }
                     val nextMatrix = next.bones[boneName] ?: currentMatrix
-                    for (index in interpolatedPreviewMatrix.indices) {
-                        interpolatedPreviewMatrix[index] = currentMatrix[index] +
-                            (nextMatrix[index] - currentMatrix[index]) * progress
+                    if (profile == PlayerRenderProfile.Botw) {
+                        transforms.setTransform(instance,
+                            BotwHeldTransforms.interpolate(currentMatrix, nextMatrix, progress))
+                    } else {
+                        for (index in interpolatedPreviewMatrix.indices) {
+                            interpolatedPreviewMatrix[index] = currentMatrix[index] +
+                                (nextMatrix[index] - currentMatrix[index]) * progress
+                        }
+                        transforms.setTransform(instance, interpolatedPreviewMatrix)
                     }
-                    transforms.setTransform(instance, interpolatedPreviewMatrix)
                 }
             }
             loaded.asset.instance.animator.updateBoneMatrices()
@@ -762,6 +912,10 @@ internal class BotwPlayerRenderView(
         desiredActors[SLOT_SHIELD] = if (profile == PlayerRenderProfile.Sshd) null else next.shield
         desiredActors.forEach { (slot, actor) -> requestSlot(slot, actor) }
         updateReadiness()
+        if (profile == PlayerRenderProfile.Botw) {
+            mainHandler.removeCallbacks(heldPreviewPoll)
+            pollHeldPreview()
+        }
     }
 
     private fun ensureRenderer(): Boolean {
@@ -1038,7 +1192,7 @@ internal class BotwPlayerRenderView(
         frameBitmap?.let { bitmap ->
             if (!bitmap.isRecycled) canvas.drawBitmap(bitmap, 0f, 0f, bitmapPaint)
         }
-        heldItemBitmap?.let { bitmap ->
+        heldItemBitmap?.takeIf { heldItemEating }?.let { bitmap ->
             if (!bitmap.isRecycled) {
                 val size = min(width, height) * HELD_ITEM_PREVIEW_SCALE
                 val centerX = width * 0.50f
@@ -1284,6 +1438,14 @@ internal class BotwPlayerRenderView(
     }
 
     private fun removeSlot(slot: String) {
+        if (slot == SLOT_BASE) {
+            // A held asset is parented to this skeleton, so release it before its parent.
+            heldSlots.forEach { heldSlot ->
+                requestGenerations[heldSlot] = (requestGenerations[heldSlot] ?: 0) + 1
+                pendingSlots.remove(heldSlot)
+                removeSlot(heldSlot)
+            }
+        }
         val loaded = loadedSlots.remove(slot) ?: return
         previewBoneEntities.remove(slot)
         loaded.asset.entities.forEach(restBoneTransforms::remove)
@@ -1293,6 +1455,8 @@ internal class BotwPlayerRenderView(
 
     private fun updateReadiness() {
         val ready = shouldBeVisible && requiredBodySlots.all(loadedSlots::containsKey)
+        val wasReady = bodyReady
+        bodyReady = ready
         alpha = if (ready) 1f else 0f
         visibility = if (ready) VISIBLE else INVISIBLE
 
@@ -1304,13 +1468,12 @@ internal class BotwPlayerRenderView(
             requestRenderFrame("readiness")
             startPreviewAnimation()
         }
-        if (ready && !bodyReady) {
+        if (ready && !wasReady) {
             val actors = requiredBodySlots.joinToString { slot ->
                 "$slot=${loadedSlots[slot]?.actor ?: "missing"}"
             }
             Log.info("[BOTW Companion] Player model ready: $actors")
         }
-        bodyReady = ready
         if (!ready && shouldBeVisible && desiredActors.isNotEmpty() && pendingSlots.isEmpty()) {
 
 
@@ -1434,6 +1597,7 @@ internal class BotwPlayerRenderView(
     }
 
     private fun applySlotTransform(slot: String, actor: String, asset: FilamentAsset): Boolean {
+        if (slot in heldSlots) return applyHeldSlotTransform(slot, asset)
         if (profile == PlayerRenderProfile.Sshd && slot != SLOT_BASE) {
             val spec = indexedAssets[actor]?.attachment ?: return false
             val player = loadedSlots[SLOT_BASE]?.asset ?: return false
@@ -1844,6 +2008,10 @@ internal class BotwPlayerRenderView(
             if (keepBitmap) "retire-cached" else "release", force = true
         )
         releasing = true
+        heldPreviewGeneration++
+        heldPreviewPending = false
+        mainHandler.removeCallbacks(heldPreviewPoll)
+        nativeHeldPreview = null
         try {
             targetGeneration++
             Choreographer.getInstance().removeFrameCallback(this)

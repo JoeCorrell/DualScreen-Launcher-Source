@@ -95,8 +95,10 @@ extern "C" {
 #include "jni/botw_companion.h"
 #include "jni/botw_romfs_assets.h"
 #include "jni/mk8d_companion.h"
-#include "jni/plza_companion.h"
+#include "core/companion/external_module.h"
 #include "jni/sshd_companion.h"
+#include "jni/smo_companion.h"
+#include "core/loader/sshd_companion_payload.h"
 #include "jni/xcx_companion.h"
 #include "jni/native.h"
 #include "video_core/frame_gen/lossless_dll.h"
@@ -729,6 +731,21 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performBotwCompanionAction(
                : JNI_FALSE;
 }
 
+jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwHeldPreview(JNIEnv* env, jobject) {
+    const auto snapshot = BotwCompanion::GetHeldPreview(EmulationSession::GetInstance());
+    return env->NewStringUTF(snapshot.c_str());
+}
+
+jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwMapDiscovery(
+    JNIEnv* env, jobject, jstring known_regions) {
+    const char* text = known_regions ? env->GetStringUTFChars(known_regions, nullptr) : nullptr;
+    if (known_regions && !text) return nullptr;
+    const std::string revision = text ? text : "";
+    if (text) env->ReleaseStringUTFChars(known_regions, text);
+    const auto snapshot = BotwCompanion::GetMapDiscovery(EmulationSession::GetInstance(), revision);
+    return env->NewStringUTF(snapshot.c_str());
+}
+
 jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwRomfsTexture(
     JNIEnv* env, jobject instance, jstring path) {
     if (!path) {
@@ -818,8 +835,60 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillPlzaCompanionSnapshot(
     if (!address || capacity <= 0) {
         return -1;
     }
-    return PlzaCompanion::FillSnapshot(EmulationSession::GetInstance(), address,
+    auto access = EmulationSession::GetInstance().LockSystemAccess();
+    return ExternalCompanion::Snapshot(address,
                                        static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSmoCompanionSnapshotV1(
+    JNIEnv* env, jobject, jobject output) {
+    if (!output) return -1;
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity < 0) return -1;
+    return SmoCompanion::FillSnapshot(EmulationSession::GetInstance(), address,
+                                     static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSmoCompanionMoonsV1(
+    JNIEnv* env, jobject, jobject output) {
+    if (!output) return -1;
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity < 0) return -1;
+    return SmoCompanion::FillMoons(EmulationSession::GetInstance(), address,
+                                 static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSmoCompanionMarkersV1(
+    JNIEnv* env, jobject, jobject output) {
+    if (!output) return -1;
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity < 0) return -1;
+    return SmoCompanion::FillMarkers(EmulationSession::GetInstance(), address,
+                                    static_cast<std::size_t>(capacity));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSmoCompanionCollectionV1(
+    JNIEnv* env, jobject, jobject output, jint kind) {
+    if (!output) return -1;
+    void* address = env->GetDirectBufferAddress(output);
+    const jlong capacity = env->GetDirectBufferCapacity(output);
+    if (!address || capacity < 0) return -1;
+    return SmoCompanion::FillCollection(EmulationSession::GetInstance(), address,
+                                      static_cast<std::size_t>(capacity), kind);
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_queueSmoOutfit(
+    JNIEnv* env, jobject, jint kind, jstring name, jlong generation) {
+    if (!name || generation < 0) return -1;
+    return SmoCompanion::QueueOutfit(EmulationSession::GetInstance(), kind,
+        Common::Android::GetJString(env, name), static_cast<std::uint64_t>(generation));
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_pollSmoOutfit(JNIEnv*, jobject, jint ticket) {
+    return SmoCompanion::PollOutfit(EmulationSession::GetInstance(), ticket);
 }
 
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSshdCompanionSnapshot(
@@ -842,6 +911,28 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillSshdCompanionSnapshotV4(
                                                                            output);
 }
 
+void Java_org_yuzu_yuzu_1emu_NativeLibrary_setSshdMapSurface(
+    JNIEnv* env, jobject, jobject surface, jint width, jint height) {
+    auto& session = EmulationSession::GetInstance();
+    [[maybe_unused]] auto access = session.LockSystemAccess();
+    if (!session.IsRunning()) return;
+    auto& system = session.System();
+    if (system.GetApplicationProcessProgramID() != Loader::SshdCompanionPayload::TitleId) return;
+    std::shared_ptr<void> window;
+    if (surface && width > 0 && height > 0) {
+        window = std::shared_ptr<void>(ANativeWindow_fromSurface(env, surface), [](void* value) {
+            if (value) ANativeWindow_release(static_cast<ANativeWindow*>(value));
+        });
+    }
+    system.GPU().Renderer().SetCompanionSurface({std::move(window),
+        static_cast<u32>(std::max(width, 0)), static_cast<u32>(std::max(height, 0))});
+}
+
+void Java_org_yuzu_yuzu_1emu_NativeLibrary_setSshdMapView(
+    JNIEnv*, jobject, jfloat zoom, jfloat pan_x, jfloat pan_y) {
+    SshdCompanion::SetMapView(EmulationSession::GetInstance(), zoom, pan_x, pan_y);
+}
+
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImage(
     JNIEnv* env, jobject instance, jobject output) {
     if (!output) {
@@ -860,6 +951,11 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImageV1(
     JNIEnv* env, jobject instance, jobject output) {
     return Java_org_yuzu_yuzu_1emu_NativeLibrary_copySshdCompanionMapImage(
         env, instance, output);
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_getSshdBottleState(
+    JNIEnv* env, jobject instance, jint slot, jint item) {
+    return SshdCompanion::GetBottleState(EmulationSession::GetInstance(), slot, item);
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performSshdCompanionAction(
@@ -935,15 +1031,16 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performXcxCompanionAction(
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performPlzaCompanionAction(
     JNIEnv* env, jobject instance, jint action, jint argument) {
-    return PlzaCompanion::PerformAction(EmulationSession::GetInstance(), action, argument)
+    auto access = EmulationSession::GetInstance().LockSystemAccess();
+    return ExternalCompanion::Action(action, argument, -1) == 0
                ? JNI_TRUE
                : JNI_FALSE;
 }
 
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_performPlzaCompanionItemAction(
     JNIEnv* env, jobject instance, jint operation, jint item_id, jint party_target) {
-    return static_cast<jint>(PlzaCompanion::PerformItemAction(
-        EmulationSession::GetInstance(), operation, item_id, party_target));
+    auto access = EmulationSession::GetInstance().LockSystemAccess();
+    return ExternalCompanion::Action(operation, item_id, party_target);
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_activateMk8dItemSlot(

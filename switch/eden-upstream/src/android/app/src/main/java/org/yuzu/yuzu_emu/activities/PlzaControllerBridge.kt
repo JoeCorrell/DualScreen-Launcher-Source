@@ -3,11 +3,9 @@ package org.yuzu.yuzu_emu.activities
 import android.view.KeyEvent
 import android.view.MotionEvent
 import java.lang.ref.WeakReference
+import com.dualscreen.companion.api.CompanionControllerTarget
 
-internal interface PlzaControllerTarget {
-    fun onPlzaControllerKey(event: KeyEvent): Boolean
-    fun onPlzaControllerMotion(event: MotionEvent): Boolean
-}
+internal typealias PlzaControllerTarget = CompanionControllerTarget
 
 internal object PlzaControllerBridge {
     private var target = WeakReference<PlzaControllerTarget>(null)

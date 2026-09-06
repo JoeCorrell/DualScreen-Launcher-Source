@@ -42,6 +42,15 @@ data class SwitchOperationState(
 
 enum class EdenSettingType { BOOLEAN, BYTE, SHORT, INTEGER, LONG, STRING }
 
+data class EdenSettingChoice(val value: String, val label: String, val warning: String? = null)
+
+/** Choice values are Eden's stored values, never their array positions. */
+internal fun edenSettingChoices(labels: List<String>, values: List<String>): List<EdenSettingChoice> {
+    require(labels.size == values.size) { "Eden choice labels and values do not match." }
+    require(values.distinct().size == values.size) { "Eden choice values must be unique." }
+    return labels.zip(values) { label, value -> EdenSettingChoice(value, label) }
+}
+
 data class EdenSettingValue(
     val key: String,
     val label: String,
@@ -52,7 +61,20 @@ data class EdenSettingValue(
     val useGlobal: Boolean,
     val runtimeModifiable: Boolean,
     val edenOrder: Int = Int.MAX_VALUE,
+    val globalValue: String = value,
+    val description: String = "",
+    val choices: List<EdenSettingChoice> = emptyList(),
+    val minimum: Int? = null,
+    val maximum: Int? = null,
+    val slider: Boolean = false,
+    val units: String = "",
 )
+
+internal fun EdenSettingValue.displayValue(raw: String): String =
+    choices.firstOrNull { it.value == raw }?.label
+        ?: if (type == EdenSettingType.BOOLEAN) {
+            if (raw == "true" || raw == "1") "On" else "Off"
+        } else raw
 
 data class SwitchGpuDriver(
     val path: String,
@@ -99,6 +121,7 @@ data class SwitchSystemState(
     val keysPresent: Boolean = false,
     val firmwareVersion: String? = null,
     val gpuDrivers: List<SwitchGpuDriver> = emptyList(),
+    val selectedGpuDriverPath: String? = null,
 )
 
 internal class SwitchInstallRegistry(context: Context) {

@@ -81,6 +81,7 @@ internal fun SettingsPage(
     onAddSwitchKeys: () -> Unit,
     onAddSwitchFirmware: () -> Unit,
     onAddSwitchGpuDriver: () -> Unit,
+    onSwitchGpuDriver: (String) -> Unit,
     onOpenSwitchDriverDownloader: () -> Unit,
     onOpenEdenGlobalSettings: () -> Unit,
 ) {
@@ -296,7 +297,7 @@ internal fun SettingsPage(
                     Spacer(Modifier.height(2.dp))
                     Text("SWITCH GPU DRIVERS", style = settingLabelStyle())
                     Text(
-                        "Installed driver library. Choose the active driver in each game's Eden settings.",
+                        "Choose the default for the next Switch launch. Per-game driver overrides still apply.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 9.sp,
                     )
@@ -307,8 +308,9 @@ internal fun SettingsPage(
                                     append(driver.name)
                                     if (driver.version.isNotBlank()) append(" • ${driver.version}")
                                 },
-                                selected = driver.path.isBlank(),
-                                onClick = onOpenSwitchDriverDownloader,
+                                selected = driver.path == switchSystemState.selectedGpuDriverPath,
+                                onClick = { onSwitchGpuDriver(driver.path) },
+                                enabled = switchSystemState.initialized && !switchOperation.running,
                                 modifier = Modifier.width(224.dp).height(44.dp),
                             )
                         }
@@ -480,6 +482,7 @@ private fun CompactChoice(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val background by animateColorAsState(
         if (selected) LauncherAccent else Color(0xFF191B15),
@@ -498,6 +501,7 @@ private fun CompactChoice(
     )
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.height(38.dp),
         shape = RectangleShape,
         colors = ButtonDefaults.buttonColors(containerColor = background, contentColor = foreground),

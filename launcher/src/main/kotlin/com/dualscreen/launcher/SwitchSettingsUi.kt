@@ -3,6 +3,7 @@ package com.dualscreen.launcher
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -22,10 +24,17 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,10 +53,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.dualscreen.launcher.switch.EdenSettingType
 import com.dualscreen.launcher.switch.EdenSettingValue
+import com.dualscreen.launcher.switch.EdenSettingChoice
+import com.dualscreen.launcher.switch.displayValue
 import com.dualscreen.launcher.switch.SwitchGameDefinition
 import com.dualscreen.launcher.switch.SwitchGameSettings
 import com.dualscreen.launcher.switch.SwitchOperationState
 import com.dualscreen.launcher.switch.SwitchSystemState
+import kotlin.math.roundToInt
 
 @Composable
 internal fun SwitchGameSettingsPage(
@@ -316,6 +328,8 @@ private fun EdenSettingRow(
     global: Boolean,
     onChange: (EdenSettingValue) -> Unit,
 ) {
+    val displayedValue = if (!global && setting.useGlobal) setting.globalValue else setting.value
+    val editable = enabled && (global || !setting.useGlobal)
     LauncherCard(compact = true) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -333,7 +347,9 @@ private fun EdenSettingRow(
             }
             if (!global) {
                 TextButton(
-                    onClick = { onChange(setting.copy(useGlobal = !setting.useGlobal)) },
+                    onClick = {
+                        onChange(setting.copy(value = displayedValue, useGlobal = !setting.useGlobal))
+                    },
                     enabled = enabled,
                     shape = RectangleShape,
                 ) {
@@ -347,14 +363,34 @@ private fun EdenSettingRow(
             ) {
                 Icon(Icons.Default.Restore, contentDescription = "Restore default", modifier = Modifier.size(17.dp))
             }
-            when (setting.type) {
-                EdenSettingType.BOOLEAN -> EdenBooleanToggle(
-                    checked = setting.value.toBooleanStrictOrNull() ?: false,
-                    enabled = enabled && (global || !setting.useGlobal),
+            when {
+                setting.type == EdenSettingType.BOOLEAN -> Switch(
+                    checked = displayedValue == "true" || displayedValue == "1",
+                    enabled = editable,
                     onCheckedChange = { onChange(setting.copy(value = it.toString(), useGlobal = false)) },
                 )
+                setting.choices.isNotEmpty() -> EdenChoiceDropdown(
+                    setting = setting,
+                    value = displayedValue,
+                    enabled = editable,
+                    onSelected = { onChange(setting.copy(value = it, useGlobal = false)) },
+                )
+                setting.slider && setting.minimum != null && setting.maximum != null -> Column(
+                    Modifier.width(220.dp),
+                ) {
+                    Text("$displayedValue${setting.units}", fontSize = 11.sp)
+                    Slider(
+                        value = (displayedValue.toFloatOrNull() ?: setting.minimum.toFloat())
+                            .coerceIn(setting.minimum.toFloat(), setting.maximum.toFloat()),
+                        valueRange = setting.minimum.toFloat()..setting.maximum.toFloat(),
+                        enabled = editable,
+                        onValueChange = {
+                            onChange(setting.copy(value = it.roundToInt().toString(), useGlobal = false))
+                        },
+                    )
+                }
                 else -> OutlinedTextField(
-                    value = setting.value,
+                    value = displayedValue,
                     onValueChange = { input ->
                         val filtered = if (setting.type == EdenSettingType.STRING) {
                             input.take(4096)
@@ -363,7 +399,7 @@ private fun EdenSettingRow(
                         }
                         onChange(setting.copy(value = filtered, useGlobal = false))
                     },
-                    enabled = enabled && (global || !setting.useGlobal),
+                    enabled = editable,
                     singleLine = true,
                     modifier = Modifier.width(180.dp),
                     shape = RectangleShape,
@@ -371,8 +407,11 @@ private fun EdenSettingRow(
                 )
             }
         }
+        if (setting.description.isNotBlank()) {
+            Text(setting.description, color = LauncherTextMuted, fontSize = 10.sp)
+        }
         Text(
-            "Default: ${setting.defaultValue}" + if (setting.runtimeModifiable) "  •  live-change capable" else "",
+            "Default: ${setting.displayValue(setting.defaultValue)}" + if (setting.runtimeModifiable) "  •  live-change capable" else "",
             color = LauncherTextMuted,
             fontSize = 8.sp,
         )
@@ -380,28 +419,56 @@ private fun EdenSettingRow(
 }
 
 @Composable
-private fun EdenBooleanToggle(
-    checked: Boolean,
+private fun EdenChoiceDropdown(
+    setting: EdenSettingValue,
+    value: String,
     enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
+    onSelected: (String) -> Unit,
 ) {
-    TextButton(
-        onClick = { onCheckedChange(!checked) },
-        enabled = enabled,
-        modifier = Modifier
-            .width(82.dp)
-            .height(36.dp)
-            .background(if (checked) LauncherAccent.copy(alpha = 0.16f) else LauncherPanelRaised)
-            .border(1.dp, if (checked) LauncherAccent else LauncherOutline, RectangleShape),
-        shape = RectangleShape,
-        contentPadding = PaddingValues(0.dp),
-    ) {
-        Text(
-            if (checked) "ON" else "OFF",
-            color = if (checked) LauncherAccent else LauncherTextMuted,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-            fontSize = 9.sp,
+    var expanded by remember(setting.key) { mutableStateOf(false) }
+    var pending by remember(setting.key) { mutableStateOf<EdenSettingChoice?>(null) }
+    LaunchedEffect(enabled) {
+        if (!enabled) { expanded = false; pending = null }
+    }
+    Box {
+        OutlinedButton(
+            onClick = { expanded = true },
+            enabled = enabled,
+            modifier = Modifier.width(220.dp).heightIn(min = 48.dp),
+            shape = RectangleShape,
+        ) {
+            Text(setting.displayValue(value), modifier = Modifier.weight(1f), fontSize = 11.sp)
+            Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose ${setting.label}")
+        }
+        DropdownMenu(
+            expanded = expanded && enabled,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.width(280.dp).heightIn(max = 360.dp),
+        ) {
+            setting.choices.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Text(choice.label, fontWeight = if (choice.value == value) FontWeight.Bold else FontWeight.Normal)
+                    },
+                    onClick = {
+                        expanded = false
+                        if (choice.warning != null) pending = choice else onSelected(choice.value)
+                    },
+                )
+            }
+        }
+    }
+    pending?.let { choice ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text(setting.label) },
+            text = { Text(choice.warning.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { pending = null; onSelected(choice.value) }, enabled = enabled) {
+                    Text("Continue")
+                }
+            },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
         )
     }
 }

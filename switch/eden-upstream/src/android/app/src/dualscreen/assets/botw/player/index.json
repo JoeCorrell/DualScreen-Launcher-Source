@@ -4037,6 +4037,522 @@
     },
     "Armor_234_Upper": {
       "file": "Armor_230_Upper.glb"
+    },
+    "Animal_Insect_AA": {
+      "file": "held/Beetle_Gold.glb"
+    },
+    "Animal_Insect_AB": {
+      "file": "held/Butterfly.glb"
+    },
+    "Animal_Insect_C": {
+      "file": "held/Dragonfly.glb"
+    },
+    "Animal_Insect_E": {
+      "file": "held/Firefly.glb"
+    },
+    "Animal_Insect_G": {
+      "file": "held/Beetle.glb"
+    },
+    "Animal_Insect_I": {
+      "file": "held/Dragonfly.glb"
+    },
+    "Animal_Insect_N": {
+      "file": "held/Butterfly.glb"
+    },
+    "Animal_Insect_P": {
+      "file": "held/Beetle.glb"
+    },
+    "Animal_Insect_Q": {
+      "file": "held/Butterfly.glb"
+    },
+    "Animal_Insect_R": {
+      "file": "held/Butterfly.glb"
+    },
+    "Animal_Insect_T": {
+      "file": "held/Dragonfly.glb"
+    },
+    "Item_Boiled_01": {
+      "file": "held/Item_Boiled_01.glb"
+    },
+    "Item_ChilledFish_01": {
+      "file": "held/Item_ChilledFish_01.glb"
+    },
+    "Item_ChilledFish_02": {
+      "file": "held/Item_ChilledFish_02.glb"
+    },
+    "Item_ChilledFish_03": {
+      "file": "held/Item_ChilledFish_03.glb"
+    },
+    "Item_ChilledFish_04": {
+      "file": "held/Item_ChilledFish_04.glb"
+    },
+    "Item_ChilledFish_05": {
+      "file": "held/Item_ChilledFish_05.glb"
+    },
+    "Item_ChilledFish_06": {
+      "file": "held/Item_ChilledFish_06.glb"
+    },
+    "Item_ChilledFish_07": {
+      "file": "held/Item_ChilledFish_07.glb"
+    },
+    "Item_ChilledFish_08": {
+      "file": "held/Item_ChilledFish_08.glb"
+    },
+    "Item_ChilledFish_09": {
+      "file": "held/Item_ChilledFish_09.glb"
+    },
+    "Item_Enemy_00": {
+      "file": "held/Item_Enemy_00.glb"
+    },
+    "Item_Enemy_01": {
+      "file": "held/Item_Enemy_01.glb"
+    },
+    "Item_Enemy_02": {
+      "file": "held/Item_Enemy_02.glb"
+    },
+    "Item_Enemy_03": {
+      "file": "held/Item_Enemy_03.glb"
+    },
+    "Item_Enemy_04": {
+      "file": "held/Item_Enemy_04.glb"
+    },
+    "Item_Enemy_05": {
+      "file": "held/Item_Enemy_05.glb"
+    },
+    "Item_Enemy_06": {
+      "file": "held/Item_Enemy_06.glb"
+    },
+    "Item_Enemy_07": {
+      "file": "held/Item_Enemy_07.glb"
+    },
+    "Item_Enemy_08": {
+      "file": "held/Item_Enemy_08.glb"
+    },
+    "Item_Enemy_12": {
+      "file": "held/Item_Enemy_12.glb"
+    },
+    "Item_Enemy_13": {
+      "file": "held/Item_Enemy_13.glb"
+    },
+    "Item_Enemy_14": {
+      "file": "held/Item_Enemy_14.glb"
+    },
+    "Item_Enemy_15": {
+      "file": "held/Item_Enemy_15.glb"
+    },
+    "Item_Enemy_16": {
+      "file": "held/Item_Enemy_16.glb"
+    },
+    "Item_Enemy_17": {
+      "file": "held/Item_Enemy_17.glb"
+    },
+    "Item_Enemy_18": {
+      "file": "held/Item_Enemy_18.glb"
+    },
+    "Item_Enemy_19": {
+      "file": "held/Item_Enemy_19.glb"
+    },
+    "Item_Enemy_20": {
+      "file": "held/Item_Enemy_20.glb"
+    },
+    "Item_Enemy_21": {
+      "file": "held/Item_Enemy_21.glb"
+    },
+    "Item_Enemy_24": {
+      "file": "held/Item_Enemy_24.glb"
+    },
+    "Item_Enemy_25": {
+      "file": "held/Item_Enemy_25.glb"
+    },
+    "Item_Enemy_26": {
+      "file": "held/Item_Enemy_26.glb"
+    },
+    "Item_Enemy_27": {
+      "file": "held/Item_Enemy_27.glb"
+    },
+    "Item_Enemy_28": {
+      "file": "held/Item_Enemy_28.glb"
+    },
+    "Item_Enemy_29": {
+      "file": "held/Item_Enemy_29.glb"
+    },
+    "Item_Enemy_30": {
+      "file": "held/Item_Enemy_30.glb"
+    },
+    "Item_Enemy_31": {
+      "file": "held/Item_Enemy_31.glb"
+    },
+    "Item_Enemy_32": {
+      "file": "held/Item_Enemy_32.glb"
+    },
+    "Item_Enemy_33": {
+      "file": "held/Item_Enemy_33.glb"
+    },
+    "Item_Enemy_34": {
+      "file": "held/Item_Enemy_34.glb"
+    },
+    "Item_Enemy_38": {
+      "file": "held/Item_Enemy_38.glb"
+    },
+    "Item_Enemy_39": {
+      "file": "held/Item_Enemy_39.glb"
+    },
+    "Item_Enemy_40": {
+      "file": "held/Item_Enemy_40.glb"
+    },
+    "Item_Enemy_41": {
+      "file": "held/Item_Enemy_41.glb"
+    },
+    "Item_Enemy_42": {
+      "file": "held/Item_Enemy_42.glb"
+    },
+    "Item_Enemy_43": {
+      "file": "held/Item_Enemy_43.glb"
+    },
+    "Item_Enemy_44": {
+      "file": "held/Item_Enemy_44.glb"
+    },
+    "Item_Enemy_45": {
+      "file": "held/Item_Enemy_45.glb"
+    },
+    "Item_Enemy_46": {
+      "file": "held/Item_Enemy_46.glb"
+    },
+    "Item_Enemy_47": {
+      "file": "held/Item_Enemy_47.glb"
+    },
+    "Item_Enemy_48": {
+      "file": "held/Item_Enemy_48.glb"
+    },
+    "Item_Enemy_49": {
+      "file": "held/Item_Enemy_49.glb"
+    },
+    "Item_Enemy_50": {
+      "file": "held/Item_Enemy_50.glb"
+    },
+    "Item_Enemy_51": {
+      "file": "held/Item_Enemy_51.glb"
+    },
+    "Item_Enemy_52": {
+      "file": "held/Item_Enemy_52.glb"
+    },
+    "Item_Enemy_53": {
+      "file": "held/Item_Enemy_53.glb"
+    },
+    "Item_Enemy_54": {
+      "file": "held/Item_Enemy_54.glb"
+    },
+    "Item_Enemy_55": {
+      "file": "held/Item_Enemy_55.glb"
+    },
+    "Item_Enemy_56": {
+      "file": "held/Item_Enemy_56.glb"
+    },
+    "Item_Enemy_57": {
+      "file": "held/Item_Enemy_57.glb"
+    },
+    "Item_FishGet_A": {
+      "file": "held/Bass_Boneless.glb"
+    },
+    "Item_FishGet_B": {
+      "file": "held/Bass_Boneless_L.glb"
+    },
+    "Item_FishGet_C": {
+      "file": "held/Trout_Boneless.glb"
+    },
+    "Item_FishGet_D": {
+      "file": "held/Trout_Boneless.glb"
+    },
+    "Item_FishGet_E": {
+      "file": "held/Carp_Boneless.glb"
+    },
+    "Item_FishGet_F": {
+      "file": "held/SeaBream_Boneless.glb"
+    },
+    "Item_FishGet_G": {
+      "file": "held/SeaBream_Boneless.glb"
+    },
+    "Item_FishGet_H": {
+      "file": "held/Carp_Boneless.glb"
+    },
+    "Item_FishGet_I": {
+      "file": "held/Salmon_Boneless.glb"
+    },
+    "Item_FishGet_J": {
+      "file": "held/Trout_Boneless.glb"
+    },
+    "Item_FishGet_K": {
+      "file": "held/Shell_A.glb"
+    },
+    "Item_FishGet_L": {
+      "file": "held/Bass_Boneless.glb"
+    },
+    "Item_FishGet_L_00": {
+      "file": "held/Bass_Boneless.glb"
+    },
+    "Item_FishGet_M": {
+      "file": "held/Shell_B.glb"
+    },
+    "Item_FishGet_X": {
+      "file": "held/Trout_Glow_Boneless.glb"
+    },
+    "Item_FishGet_Z": {
+      "file": "held/Carp_Boneless.glb"
+    },
+    "Item_Fruit_A": {
+      "file": "held/Obj_Fruit_Apple_A_01.glb"
+    },
+    "Item_Fruit_B": {
+      "file": "held/Obj_FruitRaspberry_A_01.glb"
+    },
+    "Item_Fruit_C": {
+      "file": "held/Obj_FruitPitaya_A_01.glb"
+    },
+    "Item_Fruit_D": {
+      "file": "held/Obj_FruitDorian_A_01.glb"
+    },
+    "Item_Fruit_E": {
+      "file": "held/Obj_FruitLotusSeeds_A.glb"
+    },
+    "Item_Fruit_E_00": {
+      "file": "held/Obj_FruitLotusSeeds_A.glb"
+    },
+    "Item_Fruit_F": {
+      "file": "held/Obj_FruitMelon_A_01.glb"
+    },
+    "Item_Fruit_G": {
+      "file": "held/Obj_FruitCoconut_A_01.glb"
+    },
+    "Item_Fruit_H": {
+      "file": "held/Obj_FruitBanana_A_01.glb"
+    },
+    "Item_Fruit_I": {
+      "file": "held/Obj_FruitChiliPepper_A_01.glb"
+    },
+    "Item_Fruit_J": {
+      "file": "held/Obj_FruitPumpkin_A_01.glb"
+    },
+    "Item_Fruit_K": {
+      "file": "held/Obj_Acorn_A.glb"
+    },
+    "Item_Fruit_L": {
+      "file": "held/Obj_Nut_A.glb"
+    },
+    "Item_InsectGet_K": {
+      "file": "held/Crab_Boneless.glb"
+    },
+    "Item_InsectGet_O": {
+      "file": "held/Crab_Boneless.glb"
+    },
+    "Item_InsectGet_Z": {
+      "file": "held/Crab_Silver_Boneless.glb"
+    },
+    "Item_Material_02": {
+      "file": "held/Item_Material_02.glb"
+    },
+    "Item_Material_04": {
+      "file": "held/Item_Material_04.glb"
+    },
+    "Item_Material_05": {
+      "file": "held/Item_Material_05.glb"
+    },
+    "Item_Material_05_00": {
+      "file": "held/Item_Material_05.glb"
+    },
+    "Item_Material_06": {
+      "file": "held/Item_Material_06.glb"
+    },
+    "Item_Material_08": {
+      "file": "held/Item_Material_08.glb"
+    },
+    "Item_Meat_01": {
+      "file": "held/Item_Meat_01.glb"
+    },
+    "Item_Meat_02": {
+      "file": "held/Item_Meat_02.glb"
+    },
+    "Item_Meat_06": {
+      "file": "held/Item_Meat_06.glb"
+    },
+    "Item_Meat_07": {
+      "file": "held/Item_Meat_07.glb"
+    },
+    "Item_Meat_11": {
+      "file": "held/Item_Meat_11.glb"
+    },
+    "Item_Meat_12": {
+      "file": "held/Item_Meat_12.glb"
+    },
+    "Item_MushroomGet_D": {
+      "file": "held/Obj_Get_MashroomReverse_A_01.glb"
+    },
+    "Item_Mushroom_A": {
+      "file": "held/Obj_MashroomStamina_A_01.glb"
+    },
+    "Item_Mushroom_B": {
+      "file": "held/Obj_MashroomCool_A_01.glb"
+    },
+    "Item_Mushroom_C": {
+      "file": "held/Obj_MashroomHot_A_01.glb"
+    },
+    "Item_Mushroom_E": {
+      "file": "held/Obj_MashroomHeart_A_01.glb"
+    },
+    "Item_Mushroom_F": {
+      "file": "held/Obj_MashroomMax_A_01.glb"
+    },
+    "Item_Mushroom_F_00": {
+      "file": "held/Obj_MashroomMax_A_01.glb"
+    },
+    "Item_Mushroom_H": {
+      "file": "held/Obj_MashroomElectricity_A_01.glb"
+    },
+    "Item_Mushroom_J": {
+      "file": "held/Obj_MashroomIuminous_A_01.glb"
+    },
+    "Item_Mushroom_L": {
+      "file": "held/Obj_MashroomAttack_A_01.glb"
+    },
+    "Item_Mushroom_M": {
+      "file": "held/Obj_MashroomDefense_A_01.glb"
+    },
+    "Item_Mushroom_N": {
+      "file": "held/Obj_MashroomUltimate_A_01.glb"
+    },
+    "Item_Mushroom_N_00": {
+      "file": "held/Obj_MashroomUltimate_A_01.glb"
+    },
+    "Item_Mushroom_O": {
+      "file": "held/Obj_MashroomGuts_A_01.glb"
+    },
+    "Item_Ore_A": {
+      "file": "held/Item_Ore_A.glb"
+    },
+    "Item_Ore_A_00": {
+      "file": "held/Item_Ore_A.glb"
+    },
+    "Item_Ore_B": {
+      "file": "held/Item_Ore_B.glb"
+    },
+    "Item_Ore_C": {
+      "file": "held/Item_Ore_C.glb"
+    },
+    "Item_Ore_D": {
+      "file": "held/Item_Ore_D.glb"
+    },
+    "Item_Ore_E": {
+      "file": "held/Item_Ore_E.glb"
+    },
+    "Item_Ore_G": {
+      "file": "held/Item_Ore_G.glb"
+    },
+    "Item_Ore_H": {
+      "file": "held/Item_Ore_H.glb"
+    },
+    "Item_Ore_I": {
+      "file": "held/Item_Ore_I.glb"
+    },
+    "Item_Ore_J": {
+      "file": "held/Item_Ore_J.glb"
+    },
+    "Item_PlantGet_A": {
+      "file": "held/Obj_Get_Plant_Herb_A_01.glb"
+    },
+    "Item_PlantGet_B": {
+      "file": "held/Obj_Plant_Get_Radish_A_01.glb"
+    },
+    "Item_PlantGet_C": {
+      "file": "held/Obj_Plant_Get_Radish_A_02.glb"
+    },
+    "Item_PlantGet_E": {
+      "file": "held/Obj_Get_FlowerChemical_C_01.glb"
+    },
+    "Item_PlantGet_F": {
+      "file": "held/Obj_Get_FlowerChemical_A_01.glb"
+    },
+    "Item_PlantGet_G": {
+      "file": "held/Obj_Get_Aloe_A_01.glb"
+    },
+    "Item_PlantGet_H": {
+      "file": "held/Obj_Get_Artichoke_A_01.glb"
+    },
+    "Item_PlantGet_I": {
+      "file": "held/Obj_Get_FlowerBellflower_A_01.glb"
+    },
+    "Item_PlantGet_J": {
+      "file": "held/Obj_Get_FlowerPrincess_A_01.glb"
+    },
+    "Item_PlantGet_L": {
+      "file": "held/Obj_Get_FlowerChemical_B_01.glb"
+    },
+    "Item_PlantGet_M": {
+      "file": "held/Obj_Get_PlantCarrot_A_01.glb"
+    },
+    "Item_PlantGet_O": {
+      "file": "held/Obj_Get_FlowerVioletCliff_A_01.glb"
+    },
+    "Item_PlantGet_Q": {
+      "file": "held/Obj_Get_PlantCarrot_B_01.glb"
+    },
+    "Item_RoastFish_01": {
+      "file": "held/Item_RoastFish_01.glb"
+    },
+    "Item_RoastFish_02": {
+      "file": "held/Item_RoastFish_02.glb"
+    },
+    "Item_RoastFish_03": {
+      "file": "held/Item_RoastFish_03.glb"
+    },
+    "Item_RoastFish_04": {
+      "file": "held/Item_RoastFish_04.glb"
+    },
+    "Item_RoastFish_07": {
+      "file": "held/Item_RoastFish_07.glb"
+    },
+    "Item_RoastFish_09": {
+      "file": "held/Item_RoastFish_09.glb"
+    },
+    "Item_RoastFish_11": {
+      "file": "held/Item_RoastFish_11.glb"
+    },
+    "Item_RoastFish_13": {
+      "file": "held/Item_RoastFish_13.glb"
+    },
+    "Item_RoastFish_15": {
+      "file": "held/Item_RoastFish_15.glb"
+    },
+    "Animal_Insect_A": {
+      "file": "held/Frog.glb"
+    },
+    "Animal_Insect_B": {
+      "file": "held/Frog.glb"
+    },
+    "Animal_Insect_F": {
+      "file": "held/Fairy.glb"
+    },
+    "Animal_Insect_H": {
+      "file": "held/Grasshopper.glb"
+    },
+    "Animal_Insect_M": {
+      "file": "held/Lizard.glb"
+    },
+    "Animal_Insect_S": {
+      "file": "held/Lizard.glb"
+    },
+    "Animal_Insect_X": {
+      "file": "held/Lizard.glb"
+    },
+    "Item_Material_01": {
+      "file": "held/Item_Material_01.glb"
+    },
+    "Item_Material_03": {
+      "file": "held/Item_Material_03.glb"
+    },
+    "Item_Material_07": {
+      "file": "held/Item_Material_07.glb"
+    },
+    "Item_Ore_F": {
+      "file": "held/Item_Ore_F.glb"
     }
   }
 }

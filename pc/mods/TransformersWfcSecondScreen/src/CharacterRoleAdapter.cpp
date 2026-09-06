@@ -11,6 +11,9 @@
 #include <windows.h>
 
 #include "Log.h"
+#include "NativeWeaponShooter.h"
+#include "NativeAiMovement.h"
+#include "NativeAiAiming.h"
 #include "UnrealBridge.h"
 
 namespace wfcds {
@@ -138,6 +141,9 @@ uint32_t g_game_killed_pawn_offset = 0;
 uint32_t g_respawn_died_controller_offset = 0;
 uint32_t g_weapon_given_to_pawn_offset = 0;
 uint32_t g_checkpoint_index_offset = 0;
+uint32_t g_checkpoint_callback_offset = 0;
+UnrealScriptDelegate g_checkpoint_callback;
+uint32_t g_checkpoint_callback_object_index = 0;
 bool g_ready = false;
 
 struct RoleProxyState {
@@ -304,6 +310,15 @@ bool StopMappedVehicleInputs(const CharacterRoleMapping& mapping) {
   if (!current_form || !vehicle_form || current_form != vehicle_form)
     return true;
   return SetVehicleProxyInputs(vehicle_form, 0.0f, 0.0f, nullptr);
+}
+
+bool StopMappedMovement(const CharacterRoleMapping& mapping) {
+  void* current = RawObjectLink(mapping.ai_controlled_player_pawn, g_current_form_offset);
+  void* vehicle = RawObjectLink(mapping.ai_controlled_player_pawn, g_vehicle_form_offset);
+  if (!current) return false;
+  if (current == vehicle) return StopMappedVehicleInputs(mapping);
+  return NativeAiStopMovement(mapping.mapped_ai_controller,
+      mapping.ai_controlled_player_pawn) == NativeAiMovementResult::kApplied;
 }
 
 bool ObjectSlotStillOwns(void* object, uint32_t one_based_index) {
@@ -964,6 +979,15 @@ void WFCDS_UNREAL_EXEC_CALL PlayerPawnClientStopDownedHook(
 
 void WFCDS_UNREAL_EXEC_CALL SaveActiveCheckpointHook(
     void* context, void* unused_edx, void* frame, void* result) {
+  const bool mapping_active = CharacterRoleMappingActive();
+  // Ordinary campaign saves do not belong to the swap adapter. In particular,
+  // an unfamiliar frame layout must not disable saving when no swap/deferred
+  // save exists. Pending/replay/failed-closed gates still inspect every call.
+  if (!g_checkpoint_gate.RequiresInterception(mapping_active)) {
+    CallOriginal(HookId::kSaveActiveCheckpoint, context, unused_edx, frame,
+                 result);
+    return;
+  }
   int32_t checkpoint_index = 0;
   if (!FrameIntParameter(frame, g_checkpoint_index_offset,
                          &checkpoint_index)) {
@@ -973,7 +997,6 @@ void WFCDS_UNREAL_EXEC_CALL SaveActiveCheckpointHook(
     return;
   }
 
-  const bool mapping_active = CharacterRoleMappingActive();
   const bool manager_valid = UnrealObjectValid(context) &&
                              UnrealObjectIsA(context, L"CheckpointManager");
   const uint32_t manager_index =
@@ -1001,6 +1024,14 @@ void WFCDS_UNREAL_EXEC_CALL SaveActiveCheckpointHook(
             "[Checkpoint] deferred save replay completed on the verified native player graph");
       return;
     case CheckpointInterceptResult::kDeferred:
+      if (!UnrealReadFrameDelegateParameter(frame, g_checkpoint_callback_offset,
+                                             &g_checkpoint_callback)) {
+        g_checkpoint_gate.FailClosed();
+        Log(LogLevel::kError, "[Checkpoint] completion callback capture failed");
+        return;
+      }
+      g_checkpoint_callback_object_index =
+          UnrealObjectIndex(g_checkpoint_callback.object);
       Log(LogLevel::kInfo,
           "[Checkpoint] save deferred until the physical player pawn is restored index=%ld",
           static_cast<long>(checkpoint_index));
@@ -1063,7 +1094,8 @@ bool RestoreInstalledAdapters() {
 
 bool PrepareCharacterRoleAdapter(void* player_controller_instance,
                                  void* ai_controller_instance,
-                                 void* ai_pawn_instance) {
+                                 void* ai_pawn_instance,
+                                 bool validate_only) {
   if (g_ready) return true;
   for (const HookState& hook : g_hooks) {
     if (hook.detour.installed) return false;
@@ -1294,6 +1326,7 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
        0x6u},
   }};
 
+  bool metadata_valid = true;
   for (size_t index = 0; index < specs.size(); ++index) {
     const HookSpec& spec = specs[index];
     if ((spec.instance && UnrealResolveExactScriptFunctionForObject(
@@ -1307,8 +1340,7 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
     Log(LogLevel::kError,
         "[RoleAdapter] exact function resolution failed at hook %lu",
         static_cast<unsigned long>(index));
-    g_hooks.fill({});
-    return false;
+    metadata_valid = false;
   }
 
   for (size_t index = 0; index < cast_specs.size(); ++index) {
@@ -1324,6 +1356,9 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
     Log(LogLevel::kError,
         "[RoleAdapter] exact cast function resolution failed at patch %lu",
         static_cast<unsigned long>(index));
+    metadata_valid = false;
+  }
+  if (!metadata_valid) {
     g_hooks.fill({});
     g_cast_patches.fill({});
     return false;
@@ -1416,7 +1451,13 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
           &g_weapon_given_to_pawn_offset) ||
       !UnrealResolveExactIntParameterOffset(
           g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
-          L"CheckpointIndex", &g_checkpoint_index_offset)) {
+          L"CheckpointIndex", &g_checkpoint_index_offset) ||
+      !UnrealResolveExactDelegateParameterOffset(
+          g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
+          L"WriteDataCompleteCallback", &g_checkpoint_callback_offset) ||
+      !UnrealValidateExactIntDelegateCall(
+          g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
+          L"CheckpointIndex", L"WriteDataCompleteCallback")) {
     Log(LogLevel::kError,
         "[RoleAdapter] exact role-event parameter layout validation failed");
     g_hooks.fill({});
@@ -1424,6 +1465,24 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
     g_prepared_adjusted_aim = {};
     return false;
   }
+
+  // Preflight discovers every hook/call layout without patching an executor
+  // or publishing a role map. Do not wait until after AI/input quiescence to
+  // discover an unrelated missing role hook.
+  bool casts_valid = true;
+  for (size_t index = 0; index < cast_specs.size(); ++index) {
+    if (UnrealValidateScriptObjectOperand(g_cast_patches[index].function,
+          cast_specs[index].opcode_offset, kDynamicCastOpcode, player_pawn_class))
+      continue;
+    casts_valid = false;
+    Log(LogLevel::kError,
+        "[RoleAdapter] read-only cast validation failed patch=%lu owner=%ls function=%ls offset=%lu",
+        static_cast<unsigned long>(index), cast_specs[index].owner_path,
+        cast_specs[index].function_name,
+        static_cast<unsigned long>(cast_specs[index].opcode_offset));
+  }
+  if (!casts_valid) return false;
+  if (validate_only) return true;
 
   // Publish immutable hot-path offsets before installing any executor. The
   // mapping remains empty until the atomic transaction commit.
@@ -1686,14 +1745,21 @@ bool ReplayDeferredCheckpoint() {
   if (!UnrealObjectValid(manager) ||
       UnrealObjectIndex(manager) != request.manager_object_index ||
       !UnrealObjectIsA(manager, L"CheckpointManager") ||
-      !UnrealCallExactVoidInt(
+      (g_checkpoint_callback.object &&
+       (!UnrealObjectValid(g_checkpoint_callback.object) ||
+        UnrealObjectIndex(g_checkpoint_callback.object) !=
+            g_checkpoint_callback_object_index)) ||
+      !UnrealCallExactVoidIntDelegate(
           manager,
           g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
-          L"CheckpointIndex", request.checkpoint_index) ||
+          L"CheckpointIndex", request.checkpoint_index,
+          L"WriteDataCompleteCallback", g_checkpoint_callback) ||
       g_checkpoint_gate.pending() || g_checkpoint_gate.failed_closed()) {
     g_checkpoint_gate.AbortReplay();
     return false;
   }
+  g_checkpoint_callback = {};
+  g_checkpoint_callback_object_index = 0;
   return true;
 }
 
@@ -1735,17 +1801,16 @@ bool QuiesceCharacterRoleProxy() {
                                   g_ai_weapon_shooter_offset);
     if (shooter && UnrealObjectValid(shooter)) {
       bool firing = false;
-      if (!UnrealCallBool(shooter, L"IsFiring", &firing)) {
+      if (!NativeWeaponShooterIsFiring(shooter, &firing)) {
         ok = false;
-      } else if (firing && !UnrealCallVoid(shooter, L"StopFire")) {
+      } else if (firing && !NativeWeaponShooterStopFire(shooter)) {
         ok = false;
       }
     }
     if (g_role_proxy.movement_started) {
-      ok = UnrealCallVoid(published.value.mapped_ai_controller,
-                          L"CancelMove") && ok;
-      ok = UnrealCallVoid(published.value.mapped_ai_controller,
-                          L"StopMovement") && ok;
+      ok = (NativeAiCancelMove(published.value.mapped_ai_controller) ==
+            NativeAiMovementResult::kApplied) && ok;
+      ok = StopMappedMovement(published.value) && ok;
     }
     if (g_role_proxy.vehicle_inputs_active)
       ok = StopMappedVehicleInputs(published.value) && ok;
@@ -1810,12 +1875,12 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
       if (!shooter || !UnrealObjectValid(shooter) ||
           RawObjectLink(shooter, g_shooter_owner_offset) !=
               mapping.ai_controlled_player_pawn ||
-          !UnrealCallVoid(shooter, L"StopFire"))
+          !NativeWeaponShooterStopFire(shooter))
         return false;
     }
     if (!in_vehicle_form &&
-        (!UnrealCallVoid(mapping.mapped_ai_controller, L"CancelMove") ||
-         !UnrealCallVoid(mapping.mapped_ai_controller, L"StopMovement")))
+        (NativeAiCancelMove(mapping.mapped_ai_controller) != NativeAiMovementResult::kApplied ||
+         !StopMappedMovement(mapping)))
       return false;
     if (in_vehicle_form && g_role_proxy.vehicle_inputs_active &&
         !SetVehicleProxyInputs(vehicle_form, 0.0f, 0.0f, nullptr))
@@ -1862,12 +1927,12 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
       if (!shooter || !UnrealObjectValid(shooter) ||
           RawObjectLink(shooter, g_shooter_owner_offset) !=
               mapping.ai_controlled_player_pawn ||
-          !UnrealCallVoid(shooter, L"StopFire"))
+          !NativeWeaponShooterStopFire(shooter))
         return false;
     }
     if (g_role_proxy.movement_started &&
-        (!UnrealCallVoid(mapping.mapped_ai_controller, L"CancelMove") ||
-         !UnrealCallVoid(mapping.mapped_ai_controller, L"StopMovement")))
+        (NativeAiCancelMove(mapping.mapped_ai_controller) != NativeAiMovementResult::kApplied ||
+         !StopMappedMovement(mapping)))
       return false;
     UnrealStructValueView pawn_rotation;
     if (!UnrealReadStructProperty(mapping.ai_controlled_player_pawn,
@@ -1910,8 +1975,8 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
     g_role_proxy.movement_started = true;
   } else {
     if (g_role_proxy.movement_started &&
-        (!UnrealCallVoid(mapping.mapped_ai_controller, L"CancelMove") ||
-         !UnrealCallVoid(mapping.mapped_ai_controller, L"StopMovement")))
+        (NativeAiCancelMove(mapping.mapped_ai_controller) != NativeAiMovementResult::kApplied ||
+         !StopMappedMovement(mapping)))
       return false;
     g_role_proxy.movement_started = false;
   }
@@ -1946,9 +2011,9 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
     return false;
 
   bool is_firing = false;
-  if (!UnrealCallBool(shooter, L"IsFiring", &is_firing)) return false;
+  if (!NativeWeaponShooterIsFiring(shooter, &is_firing)) return false;
   if (!enemy || !UnrealObjectValid(enemy)) {
-    if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;
+    if (is_firing && !NativeWeaponShooterStopFire(shooter)) return false;
     g_role_proxy.shooter_active = false;
     // Preserve the verified active-weapon cache while temporarily out of
     // combat. Clearing it here forced Deactivate/Reset/Activate every time an
@@ -1957,10 +2022,6 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
     g_role_proxy.enemy = nullptr;
     return true;
   }
-  UnrealStructValueView enemy_location;
-  if (!UnrealReadStructProperty(enemy, L"Location", &enemy_location))
-    return false;
-
   void* pawn_weapon = RawObjectLink(mapping.ai_controlled_player_pawn,
                                     g_pawn_weapon_offset);
   void* inventory = RawObjectLink(mapping.ai_controlled_player_pawn,
@@ -1974,7 +2035,7 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
   // invented manager offset here made the role adapter impossible to prepare.
   void* weapon = pawn_weapon;
   if (!weapon) {
-    if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;
+    if (is_firing && !NativeWeaponShooterStopFire(shooter)) return false;
     g_role_proxy.shooter_active = false;
     g_role_proxy.weapon = nullptr;
     g_role_proxy.enemy = nullptr;
@@ -1983,47 +2044,47 @@ bool TickCharacterRoleProxy(uint64_t now_millis, bool* did_work) {
   if (!UnrealObjectValid(weapon) || !UnrealObjectIsA(weapon, L"TnWeapon"))
     return false;
   void* active_weapon = nullptr;
-  if (!UnrealCallObject(shooter, L"get_ActiveWeapon", &active_weapon))
+  if (!NativeWeaponShooterActiveWeapon(shooter, &active_weapon))
     return false;
+  bool shooter_changed = false;
   if (weapon != g_role_proxy.weapon || active_weapon != weapon) {
     // Possess already initializes the shooter and the transaction activates
     // its concrete weapon. Adopt that state without rebuilding callbacks.
     // Only perform the full native rebind when the equipped weapon genuinely
     // changed after a pickup or swap.
     if (active_weapon != weapon) {
-      if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;
-      if (!UnrealCallVoid(shooter, L"Deactivate") ||
-          !UnrealCallVoid(shooter, L"Reset"))
+      if (is_firing && !NativeWeaponShooterStopFire(shooter)) return false;
+      if (!NativeWeaponShooterDeactivate(shooter) ||
+          !NativeWeaponShooterReset(shooter))
         return false;
-      void* weapon_class = UnrealObjectClass(weapon);
-      if (!weapon_class ||
-          !UnrealCallVoidObject(shooter, L"Activate", L"WeaponClass",
-                                weapon_class) ||
-          !UnrealCallObject(shooter, L"get_ActiveWeapon", &active_weapon) ||
+      if (!NativeWeaponShooterActivateEquipped(shooter, weapon) ||
+          !NativeWeaponShooterActiveWeapon(shooter, &active_weapon) ||
           active_weapon != weapon)
         return false;
+      shooter_changed = true;
     }
     g_role_proxy.weapon = weapon;
     g_role_proxy.shooter_active = false;
   }
   if (enemy != g_role_proxy.enemy && g_role_proxy.shooter_active) {
-    if (!UnrealCallVoid(shooter, L"StopFire")) return false;
+    if (!NativeWeaponShooterStopFire(shooter)) return false;
+    shooter_changed = true;
     g_role_proxy.shooter_active = false;
   }
-  bool should_aim = false;
-  bool owner_is_aiming = false;
-  if (!UnrealCallBool(mapping.mapped_ai_controller, L"ShouldUpdateAiming",
-                      &should_aim) ||
-      !UnrealCallBool(aimer, L"get_OwnerIsAiming", &owner_is_aiming))
+  // StopFire/rebind can change the native state within this same slice. The
+  // earlier IsFiring value belongs to the previous weapon/target and must not
+  // suppress StartFire or trigger another StopFire against the new state.
+  if (shooter_changed && !NativeWeaponShooterIsFiring(shooter, &is_firing))
     return false;
-  if (should_aim && owner_is_aiming) {
-    if (!UnrealCallVoidStruct(aimer, L"AimAtLocation", L"Location",
-                              enemy_location))
-      return false;
-    if (!is_firing && !UnrealCallVoid(shooter, L"StartFire")) return false;
+  bool owner_is_aiming = false;
+  if (!NativeUpdateAiAiming(mapping.mapped_ai_controller,
+          mapping.ai_controlled_player_pawn,aimer,enemy,&owner_is_aiming))
+    return false;
+  if (owner_is_aiming) {
+    if (!is_firing && !NativeWeaponShooterStartFire(shooter)) return false;
     g_role_proxy.shooter_active = true;
   } else {
-    if (is_firing && !UnrealCallVoid(shooter, L"StopFire")) return false;
+    if (is_firing && !NativeWeaponShooterStopFire(shooter)) return false;
     g_role_proxy.shooter_active = false;
   }
   g_role_proxy.enemy = enemy;

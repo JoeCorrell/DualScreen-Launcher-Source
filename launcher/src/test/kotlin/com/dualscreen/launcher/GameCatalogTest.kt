@@ -5,9 +5,22 @@ import org.junit.Test
 
 class GameCatalogTest {
     @Test
+    fun assassinsCreedUsesTheVerifiedGameAndSeparateDevelopmentPayload() {
+        val game = checkNotNull(GameCatalog.byId("assassins-creed-ii"))
+        assertThat(game.executableCandidates).containsExactly("AssassinsCreedIIGame.exe")
+        assertThat(game.nativeDllOverrides).containsExactly("dinput8", "native,builtin")
+        assertThat(game.isBeta).isTrue()
+        assertThat(game.saveDirectory).isEmpty()
+        assertThat(OnDemandGamePayloads.manages(game.id)).isTrue()
+        assertThat(game.fileRules.single().sha256)
+            .isEqualTo("23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92")
+    }
+
+    @Test
     fun catalogIsClosedAndEveryGameHasInstallAndLaunchRules() {
         assertThat(GameCatalog.games.map { it.id }).containsExactly(
             "skyrim-se",
+            "assassins-creed-ii",
             "fallout3",
             "fallout4",
             "grim-dawn",
@@ -24,7 +37,7 @@ class GameCatalogTest {
             assertThat(game.executableCandidates).isNotEmpty()
             assertThat(game.requiredFiles).isNotEmpty()
             assertThat(game.requiredBuild).isNotEmpty()
-            assertThat(game.saveDirectory).isNotEmpty()
+            if (game.id != "assassins-creed-ii") assertThat(game.saveDirectory).isNotEmpty()
             assertThat(game.saveDirectory).doesNotContain("..")
             assertThat(game.saveDirectory.startsWith("/")).isFalse()
             assertThat(game.id).matches("[a-z0-9-]+")

@@ -67,6 +67,7 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
         private const val PLZA_TITLE_ID = 0x0100F43008C44000L
         private const val SSHD_TITLE_ID = 0x01002DA013484000L
         private const val XCX_TITLE_ID = 0x0100453019AA8000L
+        private const val SMO_TITLE_ID = 0x0100000000010000L
         private const val ROUTE_INTERVAL_MS = 500L
         private const val TRANSIENT_TITLE_MISS_SAMPLES = 6
         private const val WAITING_ROUTE_ID = 0L
@@ -134,14 +135,14 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
 
     private fun normalizeRoute(titleId: Long): Long = when (titleId) {
         BOTW_TITLE_ID, MK8D_TITLE_ID, ARKHAM_ASYLUM_TITLE_ID, PLZA_TITLE_ID,
-        SSHD_TITLE_ID, XCX_TITLE_ID -> titleId
+        SSHD_TITLE_ID, XCX_TITLE_ID, SMO_TITLE_ID -> titleId
         else -> WAITING_ROUTE_ID
     }
 
     private fun isGameRoute(titleId: Long): Boolean =
         titleId == BOTW_TITLE_ID || titleId == MK8D_TITLE_ID ||
             titleId == ARKHAM_ASYLUM_TITLE_ID || titleId == PLZA_TITLE_ID ||
-            titleId == SSHD_TITLE_ID || titleId == XCX_TITLE_ID
+            titleId == SSHD_TITLE_ID || titleId == XCX_TITLE_ID || titleId == SMO_TITLE_ID
 
     private fun route(titleId: Long) {
         if (titleId == routedTitleId) return
@@ -158,9 +159,10 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
             }
             MK8D_TITLE_ID -> Mk8dCompanionView(context)
             ARKHAM_ASYLUM_TITLE_ID -> ArkhamCompanionView(context)
-            PLZA_TITLE_ID -> PlzaCompanionView(context)
+            PLZA_TITLE_ID -> org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.createView(context, "0100F43008C44000")
             SSHD_TITLE_ID -> SshdDualScreenCompanionLayout(context)
             XCX_TITLE_ID -> XcxCompanionView(context)
+            SMO_TITLE_ID -> SmoDualScreenCompanionLayout(context)
             else -> WaitingForGameView(context)
         }
         addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -181,6 +183,36 @@ private class WaitingForGameView(context: android.content.Context) : View(contex
     }
 }
 
+
+private class SmoDualScreenCompanionLayout(context: android.content.Context) : FrameLayout(context) {
+    private val player = SmoPlayerRenderView(context)
+    private val companion = SmoCompanionView(context, player::setAppearance)
+    init {
+        addView(companion, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(player, LayoutParams(1, 1))
+    }
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        val bounds = playerBounds(measuredWidth, measuredHeight)
+        player.measure(MeasureSpec.makeMeasureSpec(bounds.width(), MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(bounds.height(), MeasureSpec.EXACTLY))
+    }
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        companion.layout(0, 0, right - left, bottom - top)
+        val bounds = playerBounds(right - left, bottom - top)
+        player.layout(bounds.left, bounds.top, bounds.right, bounds.bottom)
+    }
+    private fun playerBounds(w: Int, h: Int): Rect {
+        val scale = min(w / 1240f, h / 1080f)
+        val x = (w - 1240f * scale) * .5f
+        val y = (h - 1080f * scale) * .5f
+        val l = (x + SmoUiLayout.PLAYER_LEFT * scale).roundToInt()
+        val t = (y + SmoUiLayout.PLAYER_TOP * scale).roundToInt()
+        return Rect(l, t,
+            l + ((SmoUiLayout.PLAYER_RIGHT - SmoUiLayout.PLAYER_LEFT) * scale).roundToInt().coerceAtLeast(1),
+            t + ((SmoUiLayout.PLAYER_BOTTOM - SmoUiLayout.PLAYER_TOP) * scale).roundToInt().coerceAtLeast(1))
+    }
+}
 
 private class BotwDualScreenCompanionLayout(context: android.content.Context) : FrameLayout(context) {
     private companion object {
@@ -252,21 +284,36 @@ private class SshdDualScreenCompanionLayout(context: android.content.Context) : 
     }
 
     private val playerView = BotwPlayerRenderView(context, PlayerRenderProfile.Sshd)
+    private val mapView = SshdMapRenderView(context)
     private val companionView = SshdCompanionView(
         context,
         onPlayerVisibilityChanged = playerView::setVisible,
-        onPlayerModelChanged = playerView::setSshdOutfit
+        onPlayerModelChanged = playerView::setSshdOutfit,
+        onMapVisibilityChanged = mapView::setMapVisible,
+        onMapAspectChanged = { aspect ->
+            if (aspect.isFinite() && aspect > 0f && mapAspect != aspect) {
+                mapAspect = aspect
+                requestLayout()
+            }
+        }
     )
+    private var mapAspect = 1f
 
     init {
         setBackgroundColor(Color.BLACK)
         addView(companionView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        addView(mapView, LayoutParams(1, 1))
         addView(playerView, LayoutParams(1, 1))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
         val bounds = calculatePlayerBounds(measuredWidth, measuredHeight)
+        val mapBounds = calculateMapBounds(measuredWidth, measuredHeight)
+        mapView.measure(
+            MeasureSpec.makeMeasureSpec(mapBounds.width(), MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(mapBounds.height(), MeasureSpec.EXACTLY)
+        )
         playerView.measure(
             MeasureSpec.makeMeasureSpec(bounds.width(), MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(bounds.height(), MeasureSpec.EXACTLY)
@@ -277,8 +324,20 @@ private class SshdDualScreenCompanionLayout(context: android.content.Context) : 
         val layoutWidth = right - left
         val layoutHeight = bottom - top
         companionView.layout(0, 0, layoutWidth, layoutHeight)
+        val mapBounds = calculateMapBounds(layoutWidth, layoutHeight)
+        mapView.layout(mapBounds.left, mapBounds.top, mapBounds.right, mapBounds.bottom)
         val bounds = calculatePlayerBounds(layoutWidth, layoutHeight)
         playerView.layout(bounds.left, bounds.top, bounds.right, bounds.bottom)
+    }
+
+    private fun calculateMapBounds(width: Int, height: Int): Rect {
+        val scale = min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT)
+        val imageHeight = min(780f * scale, 1206f * scale / mapAspect)
+        val imageWidth = imageHeight * mapAspect
+        val centerX = width * .5f
+        val centerY = (height - DESIGN_HEIGHT * scale) * .5f + 580f * scale
+        return Rect((centerX - imageWidth / 2).roundToInt(), (centerY - imageHeight / 2).roundToInt(),
+                    (centerX + imageWidth / 2).roundToInt(), (centerY + imageHeight / 2).roundToInt())
     }
 
     private fun calculatePlayerBounds(width: Int, height: Int): Rect {

@@ -6,6 +6,8 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
 
 #include "common/common_funcs.h"
 #include "common/common_types.h"
@@ -19,6 +21,27 @@ class GraphicsContext;
 } // namespace Core::Frontend
 
 namespace VideoCore {
+
+// A metadata-only request. The renderer resolves the resident image on its GPU
+// thread; callers must never inspect the texture cache from the UI thread.
+struct CompanionTextureProbe {
+    u64 program_id{};
+    GPUVAddr gpu_address{};
+    u32 width{};
+    u32 height{};
+    bool flip_vertical{};
+};
+
+struct CompanionSurface {
+    std::shared_ptr<void> native_window;
+    u32 width{};
+    u32 height{};
+};
+
+struct CompanionFrameState {
+    CompanionSurface surface;
+    CompanionTextureProbe texture;
+};
 
 struct RendererSettings {
     // Screenshot
@@ -92,7 +115,40 @@ public:
     void RequestScreenshot(void* data, std::function<void(bool)> callback,
                            const Layout::FramebufferLayout& layout);
 
+    void RequestCompanionTextureProbe(CompanionTextureProbe probe) {
+        std::scoped_lock lock{companion_probe_mutex};
+        companion_probe = probe;
+    }
+
+    void SetCompanionTexture(CompanionTextureProbe texture) {
+        std::scoped_lock lock{companion_probe_mutex};
+        companion_frame.texture = texture;
+    }
+
+    void SetCompanionSurface(CompanionSurface surface) {
+        std::scoped_lock lock{companion_probe_mutex};
+        companion_frame.surface = std::move(surface);
+        companion_presented_address = 0;
+    }
+
+    GPUVAddr CompanionPresentedAddress() const {
+        return companion_presented_address.load(std::memory_order_acquire);
+    }
+
 protected:
+    CompanionFrameState GetCompanionFrameState() {
+        std::scoped_lock lock{companion_probe_mutex};
+        return companion_frame;
+    }
+
+    void SetCompanionPresentedAddress(GPUVAddr address) {
+        companion_presented_address.store(address, std::memory_order_release);
+    }
+    std::optional<CompanionTextureProbe> TakeCompanionTextureProbe() {
+        std::scoped_lock lock{companion_probe_mutex};
+        return std::exchange(companion_probe, std::nullopt);
+    }
+
     Core::Frontend::EmuWindow& render_window; ///< Reference to the render window handle.
     std::unique_ptr<Core::Frontend::GraphicsContext> context;
     f32 m_current_fps = 0.0f; ///< Current framerate, should be set by the renderer
@@ -101,6 +157,10 @@ protected:
     RendererSettings renderer_settings;
 
 private:
+    std::mutex companion_probe_mutex;
+    std::optional<CompanionTextureProbe> companion_probe;
+    CompanionFrameState companion_frame;
+    std::atomic<GPUVAddr> companion_presented_address{0};
     /// Updates the framebuffer layout of the contained render window handle.
     void UpdateCurrentFramebufferLayout();
 };

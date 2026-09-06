@@ -513,7 +513,8 @@ private data class PresetSpecification(
  */
 internal fun supportedGameLaunchEnvironment(gameId: String? = null): String {
     val winmm = if (gameId == "isaac-repentance") ";winmm=n,b" else ""
-    return "WINEDLLOVERRIDES=icu=n$winmm;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1"
+    val controller = if (gameId == "assassins-creed-ii") " FAKE_EVDEV_XBOX360=1" else ""
+    return "WINEDLLOVERRIDES=icu=n$winmm;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1$controller"
 }
 
 /** Installs only the exact component ids named by the captured preset. */

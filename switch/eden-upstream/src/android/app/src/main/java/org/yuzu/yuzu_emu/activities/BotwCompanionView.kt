@@ -4,6 +4,7 @@
 package org.yuzu.yuzu_emu.activities
 
 import android.content.Context
+import android.animation.ValueAnimator
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -18,14 +19,20 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Handler
+import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
 import android.util.LruCache
 import android.view.InputDevice
+import android.view.HapticFeedbackConstants
+import android.view.animation.DecelerateInterpolator
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.VelocityTracker
+import android.view.ViewConfiguration
+import android.widget.OverScroller
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -81,7 +88,8 @@ internal class BotwCompanionView(
     private data class MapPoint(
         val category: String, val name: String, val x: Float, val z: Float,
         val minZoom: Int, val maxZoom: Int,
-        val iconAsset: String? = null, val iconWidth: Float = 1f, val iconHeight: Float = 1f
+        val iconAsset: String? = null, val iconWidth: Float = 1f, val iconHeight: Float = 1f,
+        val discoveryFlag: String = ""
     )
     private data class ShrinePoint(
         val index: Int, val id: String, val name: String, val trial: String,
@@ -270,9 +278,85 @@ internal class BotwCompanionView(
     )
     private var page = Page.Inventory
     private var categoryIndex = 0
+    // Presentation only: never delays input, game requests, or snapshot publication.
+    private inner class UiTween(initial: Float) {
+        var value = initial
+            private set
+        private var destination = initial
+        private var animator: ValueAnimator? = null
+        fun animateTo(target: Float, durationMs: Long = 180L, from: Float = value) {
+            stop()
+            destination = target
+            value = target
+            if (durationMs <= 0L || !isAttachedToWindow || !ValueAnimator.areAnimatorsEnabled()) {
+                postInvalidateOnAnimation()
+                return
+            }
+            value = from
+            animator = ValueAnimator.ofFloat(from, target).apply {
+                duration = durationMs
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { value = it.animatedValue as Float; postInvalidateOnAnimation() }
+                start()
+            }
+        }
+        fun stop() { animator?.cancel(); animator = null }
+        fun finish() { stop(); value = destination }
+    }
+    private val pageReveal = UiTween(1f)
+    private val menuReveal = UiTween(1f)
+    private val selectionGlow = UiTween(0f)
+    private val navigationPosition = UiTween(page.ordinal.toFloat())
+    private val touchRipple = UiTween(1f)
+    private var animatedPage = page
+    private var animatedCategory = categoryIndex
+    private var animatedQuestFilter = 0
+    private var animatedSelection: Pair<Int, Long?>? = null
+    private var animatedContextId: Long? = null
+    private var rippleX = 0f
+    private var rippleY = 0f
+    private val feedbackPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    private fun updateUiMotion() {
+        if (animatedPage != page) {
+            navigationPosition.animateTo(page.ordinal.toFloat(), 220L)
+        }
+        if (animatedPage != page || animatedCategory != categoryIndex || animatedQuestFilter != questFilter) {
+            pageReveal.animateTo(1f, from = .86f)
+        }
+        animatedPage = page
+        animatedCategory = categoryIndex
+        animatedQuestFilter = questFilter
+        val selection = selectedItem to selectedQuestId
+        if (animatedSelection != selection) selectionGlow.animateTo(0f, 240L, 1f)
+        animatedSelection = selection
+        if (animatedContextId != contextItemId) {
+            if (contextItemId != null) menuReveal.animateTo(1f, 160L, 0f)
+            else menuReveal.stop()
+            animatedContextId = contextItemId
+        }
+    }
+
+    private fun stopUiMotion() {
+        listOf(pageReveal,menuReveal,selectionGlow,navigationPosition,touchRipple).forEach { it.finish() }
+    }
+
+    private fun confirmActionFeedback() {
+        if (!isAttachedToWindow || !isShown) return
+        // No IGNORE_* flags: honor system and per-view haptic preferences. Android
+        // routes this to an available device actuator; controller rumble is separate.
+        performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM
+            else HapticFeedbackConstants.KEYBOARD_TAP)
+        selectionGlow.animateTo(0f, 280L, 1f)
+    }
     private var categoryScrollX = 0f
     private var selectedItem = 0
-    private var rowOffset = 0
+    private var inventoryScrollY = 0f
+    private var rowOffset: Int
+        get() = (inventoryScrollY / (GRID_CELL_HEIGHT + GRID_GAP)).toInt()
+        set(value) { inventoryScrollY = value * (GRID_CELL_HEIGHT + GRID_GAP) }
+    private val inventoryRowRemainder: Float
+        get() = inventoryScrollY - rowOffset * (GRID_CELL_HEIGHT + GRID_GAP)
     private var controllerActive = false
     private var controllerFocus = ControllerFocus.Pages
     private var controllerRuneIndex = 0
@@ -346,7 +430,10 @@ internal class BotwCompanionView(
     )
     private var downX = 0f
     private var downY = 0f
-    private var downRowOffset = 0
+    private var downInventoryScrollY = 0f
+    private val inventoryScroller = OverScroller(context)
+    private val inventoryTouchConfig = ViewConfiguration.get(context)
+    private var inventoryVelocity: VelocityTracker? = null
     private var downCategoryScrollX = 0f
     private var downInventoryCell: Int? = null
     private var downInventoryItemId: Long? = null
@@ -430,19 +517,58 @@ internal class BotwCompanionView(
     private val bitmapCache = object : LruCache<String, Bitmap>(24 * 1024) {
         override fun sizeOf(key: String, value: Bitmap): Int = max(1, value.byteCount / 1024)
 
-        override fun entryRemoved(
-            evicted: Boolean,
-            key: String,
-            oldValue: Bitmap,
-            newValue: Bitmap?
-        ) {
-            if (oldValue !== newValue && !oldValue.isRecycled) oldValue.recycle()
-        }
+        // Canvas display lists can still reference an evicted bitmap on RenderThread.
+        // Let Android release it after those references expire; eviction is not ownership.
     }
     private var mapBitmap: Bitmap? = null
     private val mapMarkers: List<MapPoint> by lazy {
-        loadMapPoints("botw/ui/map/pins.json", MAP_MARKER_CATEGORIES)
+        loadNativeMapPoints()
     }
+    private var mapDiscovery: BotwMapDiscovery? = null
+    private var mapDiscoveryPending = false
+    private var mapDiscoveryScheduled = false
+    private var mapDiscoveryEpoch = 0
+    private fun clearMapDiscovery() {
+        mapDiscoveryEpoch++
+        handler.removeCallbacks(mapDiscoveryPoll)
+        mapDiscoveryScheduled = false
+        mapDiscoveryPending = false
+        mapDiscovery = null
+        selectedShrine = null
+    }
+    private val mapDiscoveryPoll = object : Runnable {
+        override fun run() {
+            mapDiscoveryScheduled = false
+            if (!isAttachedToWindow || page != Page.Map || !isSaveLoaded() || mapDiscoveryPending) return
+            val executor = pollExecutor ?: return
+            val generation = pollGeneration
+            val previous = mapDiscovery
+            val epoch = mapDiscoveryEpoch
+            mapDiscoveryPending = true
+            executor.execute {
+                val next = runCatching {
+                    BotwMapDiscovery.parse(NativeLibrary.getBotwMapDiscovery(previous?.revision ?: ""), previous)
+                }.getOrNull()
+                handler.post {
+                    if (generation != pollGeneration || epoch != mapDiscoveryEpoch) return@post
+                    mapDiscoveryPending = false
+                    if (mapDiscovery !== next) {
+                        mapDiscovery = next
+                        if (selectedShrine?.let { !isShrineDiscovered(it) } == true) selectedShrine = null
+                        if (page == Page.Map) postInvalidateOnAnimation()
+                    }
+                    if (page == Page.Map && isAttachedToWindow && isSaveLoaded()) {
+                        mapDiscoveryScheduled = true
+                        handler.postDelayed(this, 250L)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun isShrineDiscovered(shrine: ShrinePoint): Boolean =
+        mapDiscovery != null && (mapDiscovery!!.visible.contains("Location_${shrine.id}") ||
+            shrine.id in snapshot.enteredShrines || shrine.id in snapshot.clearedShrines)
     private val shrines: List<ShrinePoint> by lazy { loadShrines() }
 
 
@@ -592,6 +718,7 @@ internal class BotwCompanionView(
         if (payload.full) {
             fullPollSamples++
             val next = payload.fullSnapshot ?: return scheduleNextPoll()
+            if (!next.saveLoaded) clearMapDiscovery()
             if (preserveStableSnapshot(next.status, next.saveLoaded)) {
                 lastFullSnapshotAt = 0L
                 recordPollTiming(payload.nativeNanos, payload.parseNanos, payload.totalNanos, false)
@@ -700,6 +827,7 @@ internal class BotwCompanionView(
                         invalidate()
                     }
                 } else if (live.status != "ready") {
+                    clearMapDiscovery()
                     lastFullSnapshotAt = 0L
                     if (isSaveLoaded() && !preserveStableSnapshot(live.status, false)) {
                         snapshot = Snapshot(
@@ -852,6 +980,9 @@ internal class BotwCompanionView(
     }
 
     override fun onDetachedFromWindow() {
+        stopUiMotion()
+        clearMapDiscovery()
+        stopInventoryMotion()
         BotwControllerBridge.detach(this)
         handler.removeCallbacks(poll)
         handler.removeCallbacks(actionRefresh)
@@ -896,14 +1027,27 @@ internal class BotwCompanionView(
             return
         }
         drawBackground(canvas)
+        updateUiMotion()
         drawTopNavigation(canvas)
+        val pageLayer = if (pageReveal.value < 1f) canvas.saveLayerAlpha(
+            0f, 86f, DESIGN_WIDTH, DESIGN_HEIGHT, (pageReveal.value*255).roundToInt()) else canvas.save()
         when (page) {
             Page.Inventory -> drawInventoryPage(canvas)
             Page.Map -> drawMapPage(canvas)
             Page.Quests -> drawQuestPage(canvas)
         }
-        contextItem()?.let { drawItemContextMenu(canvas, it) }
+        canvas.restoreToCount(pageLayer)
+        contextItem()?.let {
+            val menuLayer = if (menuReveal.value < 1f) canvas.saveLayerAlpha(
+                0f, 0f, DESIGN_WIDTH, DESIGN_HEIGHT, (menuReveal.value*255).roundToInt()) else canvas.save()
+            drawItemContextMenu(canvas, it)
+            canvas.restoreToCount(menuLayer)
+        }
         drawControllerFocus(canvas)
+        if (touchRipple.value < 1f) {
+            feedbackPaint.color = Color.argb(((1f-touchRipple.value)*65).roundToInt(), 65, 225, 239)
+            canvas.drawCircle(rippleX,rippleY,10f+touchRipple.value*30f,feedbackPaint)
+        }
         canvas.restore()
         recordDrawTime(drawStartedAt)
     }
@@ -978,6 +1122,9 @@ internal class BotwCompanionView(
             text(canvas, value.title, rect.centerX() + 14f, rect.centerY() + 10f, 25f, if (page == value) cyan else warmWhite, Paint.Align.CENTER)
             if (page == value) cornerMarks(canvas, rect, cyan)
         }
+        val left = margin + navigationPosition.value*(tabWidth+gap)
+        feedbackPaint.color = cyan
+        canvas.drawRoundRect(RectF(left+24f,76f,left+tabWidth-24f,79f),1.5f,1.5f,feedbackPaint)
     }
 
     private fun drawInventoryPage(canvas: Canvas) {
@@ -987,12 +1134,11 @@ internal class BotwCompanionView(
         panel(canvas, left)
         panel(canvas, rightStats)
         panel(canvas, rightPlayer)
-        val categoryTexturesReady = exactTexturesReady(categoryIconAssets)
-        val itemTexturesReady = exactItemTexturesReady(visibleInventoryItems())
-        val inventoryTexturesReady = categoryTexturesReady && itemTexturesReady
-        if (!inventoryTexturesReady) {
-            drawCalibrating(canvas, RectF(19f, 164f, 668f, 998f), "Loading exact inventory textures")
-        } else if (snapshot.capabilities and CAP_INVENTORY != 0) {
+        if (snapshot.capabilities and CAP_INVENTORY != 0) {
+            // Texture readiness belongs to each icon, not the entire inventory. A newly
+            // exposed uncached row must never replace already-visible slots with a loader.
+            exactTexturesReady(categoryIconAssets)
+            exactItemTexturesReady(visibleInventoryItems())
             drawCategoryBar(canvas)
             drawInventoryGrid(canvas)
             drawSelectedItem(canvas)
@@ -1092,27 +1238,35 @@ internal class BotwCompanionView(
             return
         }
         val first = rowOffset * GRID_COLUMNS
-        val last = min(items.size, first + GRID_COLUMNS * GRID_ROWS_VISIBLE)
+        val last = min(items.size, first + GRID_COLUMNS * (GRID_ROWS_VISIBLE + 1))
+        val remainder = inventoryRowRemainder
+        canvas.save()
+        canvas.clipRect(GRID_START_X, GRID_START_Y, 651f, GRID_BOTTOM)
         for (index in first until last) {
             val local = index - first
             val column = local % GRID_COLUMNS
             val row = local / GRID_COLUMNS
             val rect = RectF(
                 GRID_START_X + column * (GRID_CELL_WIDTH + GRID_GAP),
-                GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP),
+                GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) - remainder,
                 GRID_START_X + column * (GRID_CELL_WIDTH + GRID_GAP) + GRID_CELL_WIDTH,
-                GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) + GRID_CELL_HEIGHT
+                GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) + GRID_CELL_HEIGHT - remainder
             )
             drawItemCell(canvas, rect, items[index], index == selectedItem)
+            if (index == selectedItem && selectionGlow.value > 0f) {
+                feedbackPaint.color = Color.argb((selectionGlow.value*42).roundToInt(),65,225,239)
+                canvas.drawRoundRect(rect,3f,3f,feedbackPaint)
+            }
         }
+        canvas.restore()
         val rowCount = ceil(items.size / GRID_COLUMNS.toFloat()).toInt()
         if (rowCount > GRID_ROWS_VISIBLE) {
             val track = RectF(661f, GRID_START_Y, 671f, GRID_BOTTOM)
             paint.color = Color.argb(90, 40, 190, 202)
             canvas.drawRoundRect(track, 5f, 5f, paint)
             val thumbHeight = max(64f, track.height() * GRID_ROWS_VISIBLE / rowCount)
-            val thumbY = track.top + (track.height() - thumbHeight) * rowOffset /
-                max(1, rowCount - GRID_ROWS_VISIBLE)
+            val thumbY = track.top + (track.height() - thumbHeight) * inventoryScrollY /
+                (max(1, rowCount - GRID_ROWS_VISIBLE) * (GRID_CELL_HEIGHT + GRID_GAP))
             paint.color = cyan
             canvas.drawRoundRect(
                 RectF(track.left - 2f, thumbY, track.right + 2f, thumbY + thumbHeight),
@@ -1313,6 +1467,10 @@ internal class BotwCompanionView(
             return
         }
         val viewport = mapViewportRect()
+        if (!mapDiscoveryPending && !mapDiscoveryScheduled) {
+            mapDiscoveryScheduled = true
+            handler.post(mapDiscoveryPoll)
+        }
         val position = snapshot.map ?: return
         if (!mapCentered) recenterMap(position, redraw = false)
         val map = loadBitmap(MAP_TEXTURE_ASSET)
@@ -1341,9 +1499,26 @@ internal class BotwCompanionView(
                 (MAP_WORLD_MAX - MAP_WORLD_MIN)) * map.height).roundToInt()
         )
         canvas.drawBitmap(map, source, viewport, paint)
+        // Discovery is separate from the terrain texture: an installed texture/cache
+        // must never reveal a region that this save has not unlocked.
+        canvas.save()
+        canvas.clipRect(viewport)
+        paint.color = Color.rgb(3, 19, 24)
+        paint.alpha = 255
+        val discovery = mapDiscovery
+        if (discovery == null) {
+            canvas.drawRect(viewport, paint)
+        } else {
+            val scale = viewport.width()/visibleWorld
+            canvas.translate(viewport.left-worldLeft*scale, viewport.top-worldTop*scale)
+            canvas.scale(scale, scale)
+            canvas.drawPath(discovery.fog, paint)
+        }
+        canvas.restore()
         drawMapMarkers(canvas, viewport, worldLeft, worldTop, visibleWorld)
         drawTowerMarkers(canvas, viewport, worldLeft, worldTop, visibleWorld)
         drawShrineMarkers(canvas, viewport, worldLeft, worldTop, visibleWorld)
+        drawSavedMapMarkers(canvas, viewport, worldLeft, worldTop, visibleWorld)
         drawPlayerMapMarker(canvas, viewport, position, worldLeft, worldTop, visibleWorld)
         drawMapGuides(canvas, viewport, visibleWorld)
         stroke.color = cyan
@@ -1602,6 +1777,7 @@ internal class BotwCompanionView(
         val worldTop = (mapCenterZ - half).coerceIn(MAP_WORLD_MIN, MAP_WORLD_MAX - visibleWorld)
         val touchRadius = MAP_PIN_HALF_SIZE + 10f
         return shrines.asSequence()
+            .filter { isShrineDiscovered(it) }
             .filter { it.id in snapshot.enteredShrines || it.id in snapshot.clearedShrines }
             .map { shrine ->
                 val (x, y) = worldToMap(
@@ -1614,6 +1790,42 @@ internal class BotwCompanionView(
             ?.first
     }
 
+    private fun drawSavedMapMarkers(
+        canvas: Canvas, viewport: RectF, worldLeft: Float, worldTop: Float, visibleWorld: Float
+    ) {
+        val markers = mapDiscovery?.userMarkers ?: return
+        canvas.save()
+        canvas.clipRect(viewport)
+        for (marker in markers) {
+            val (x,y) = worldToMap(viewport,marker.x,marker.z,worldLeft,worldTop,visibleWorld)
+            if (x !in viewport.left..viewport.right || y !in viewport.top..viewport.bottom) continue
+            val half = MAP_PIN_HALF_SIZE
+            val target = RectF(x-half,y-half,x+half,y+half)
+            paint.alpha = 255
+            if (marker.icon in 27..35) {
+                // Native 288x32 atlas: nine 32x32 stamp glyphs. Enum 36 is unused.
+                val atlas = loadBitmap("botw/ui/map/stamps.png") ?: continue
+                if (atlas.width != atlas.height*9) continue
+                val index = marker.icon-27
+                val source = android.graphics.Rect(index*atlas.height,0,(index+1)*atlas.height,atlas.height)
+                paint.colorFilter = cyanMapIconTint
+                canvas.drawBitmap(atlas,source,target,paint)
+            } else {
+                val asset = when (marker.icon) {
+                    37 -> "pin_red"; 38 -> "pin_blue"; 39 -> "pin_yellow"
+                    40 -> "pin_green"; 41 -> "pin_purple"; else -> continue
+                }
+                val icon = loadBitmap("botw/ui/map/$asset.png") ?: continue
+                paint.colorFilter = cyanMapIconTint
+                canvas.drawBitmap(icon,null,target,paint)
+            }
+            paint.colorFilter = null
+        }
+        paint.colorFilter = null
+        paint.alpha = 255
+        canvas.restore()
+    }
+
     private fun drawMapMarkers(
         canvas: Canvas, viewport: RectF, worldLeft: Float, worldTop: Float, visibleWorld: Float
     ) {
@@ -1622,6 +1834,7 @@ internal class BotwCompanionView(
         canvas.clipRect(viewport)
         mapMarkers.forEach { marker ->
             if (marker.category !in MAP_MARKER_CATEGORIES) return@forEach
+            if (mapDiscovery?.visible?.contains(marker.discoveryFlag) != true) return@forEach
             if (marker.category == "Shrine" || marker.category == "Sheikah Tower") {
                 return@forEach
             }
@@ -1677,6 +1890,7 @@ internal class BotwCompanionView(
         canvas.clipRect(viewport)
         mapMarkers.forEach { marker ->
             if (marker.category != "Sheikah Tower" ||
+                mapDiscovery?.visible?.contains(marker.discoveryFlag) != true ||
                 detailZoom !in marker.minZoom..marker.maxZoom
             ) return@forEach
             val (x, y) = worldToMap(
@@ -1731,8 +1945,7 @@ internal class BotwCompanionView(
         canvas.clipRect(viewport)
         shrines.forEach { shrine ->
             val cleared = shrine.id in snapshot.clearedShrines
-            val entered = cleared || shrine.id in snapshot.enteredShrines
-            if (!entered) return@forEach
+            if (!isShrineDiscovered(shrine)) return@forEach
             val (x, y) = worldToMap(
                 viewport, shrine.x, shrine.z, worldLeft, worldTop, visibleWorld
             )
@@ -1846,6 +2059,33 @@ internal class BotwCompanionView(
             canvas, label, rect.centerX(), rect.centerY() + 8f, 20f,
             if (enabled) warmWhite else muted, Paint.Align.CENTER
         )
+    }
+
+    private fun loadNativeMapPoints(): List<MapPoint> = try {
+        context.assets.open("botw/ui/map/discovery.json").bufferedReader().use { reader ->
+            val markers = JSONObject(reader.readText()).getJSONArray("markers")
+            buildList {
+                for (index in 0 until markers.length()) {
+                    val marker = markers.getJSONObject(index)
+                    val category = marker.getString("category")
+                    if (category !in MAP_MARKER_CATEGORIES) continue
+                    val icon = when (category) {
+                        "Sheikah Tower" -> "tower.png"
+                        "Shrine" -> "shrine.png"
+                        "Stable" -> "stable.png"
+                        "Village" -> "village.png"
+                        else -> continue
+                    }
+                    add(MapPoint(category, marker.getString("name"),
+                        marker.getDouble("x").toFloat(), marker.getDouble("z").toFloat(),
+                        0, Int.MAX_VALUE, "botw/ui/map/$icon", 1f, 1f,
+                        marker.getString("flag")))
+                }
+            }
+        }
+    } catch (exception: Exception) {
+        Log.error("[BOTW Companion] Native map metadata unavailable: ${exception.message}")
+        emptyList()
     }
 
     private fun loadMapPoints(path: String, includedCategories: Set<String>): List<MapPoint> =
@@ -2346,6 +2586,7 @@ internal class BotwCompanionView(
         if (!controllerActive || !isSaveLoaded()) return false
         if (event.action == KeyEvent.ACTION_UP) return isControllerNavigationKey(event.keyCode)
         if (event.action != KeyEvent.ACTION_DOWN) return false
+        if (isControllerNavigationKey(event.keyCode)) stopInventoryMotion()
         val handled = when (event.keyCode) {
             KeyEvent.KEYCODE_DPAD_LEFT -> moveControllerFocus(-1, 0)
             KeyEvent.KEYCODE_DPAD_RIGHT -> moveControllerFocus(1, 0)
@@ -2395,6 +2636,7 @@ internal class BotwCompanionView(
         val now = SystemClock.uptimeMillis()
         if (now - controllerMotionAt < 170L) return true
         controllerMotionAt = now
+        stopInventoryMotion()
         if (abs(horizontal) >= abs(vertical)) {
             moveControllerFocus(if (horizontal < 0f) -1 else 1, 0)
         } else {
@@ -2516,8 +2758,11 @@ internal class BotwCompanionView(
         }
         selectedItem = next.coerceIn(items.indices)
         nextRow = selectedItem / GRID_COLUMNS
-        if (nextRow < rowOffset) rowOffset = nextRow
-        if (nextRow >= rowOffset + GRID_ROWS_VISIBLE) rowOffset = nextRow - GRID_ROWS_VISIBLE + 1
+        val stride = GRID_CELL_HEIGHT + GRID_GAP
+        if (nextRow * stride < inventoryScrollY) rowOffset = nextRow
+        if (nextRow * stride + GRID_CELL_HEIGHT > inventoryScrollY + GRID_BOTTOM - GRID_START_Y) {
+            rowOffset = nextRow - GRID_ROWS_VISIBLE + 1
+        }
     }
 
     private fun moveQuestSelection(dy: Int) {
@@ -2592,6 +2837,7 @@ internal class BotwCompanionView(
     private fun nearestVisibleClearedShrine(): ShrinePoint? {
         val half = (MAP_WORLD_MAX - MAP_WORLD_MIN) / mapZoom / 2f
         return shrines.asSequence()
+            .filter { isShrineDiscovered(it) }
             .filter { it.id in snapshot.enteredShrines || it.id in snapshot.clearedShrines }
             .filter { abs(it.x - mapCenterX) <= half && abs(it.z - mapCenterZ) <= half }
             .minByOrNull { (it.x - mapCenterX) * (it.x - mapCenterX) +
@@ -2608,15 +2854,16 @@ internal class BotwCompanionView(
             }
             ControllerFocus.Inventory -> {
                 val local = selectedItem - rowOffset * GRID_COLUMNS
-                if (local !in 0 until GRID_COLUMNS * GRID_ROWS_VISIBLE) null else {
+                if (local !in 0 until GRID_COLUMNS * (GRID_ROWS_VISIBLE + 1)) null else {
                     val column = local % GRID_COLUMNS
                     val row = local / GRID_COLUMNS
                     RectF(
                         GRID_START_X + column * (GRID_CELL_WIDTH + GRID_GAP),
-                        GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP),
+                        GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) - inventoryRowRemainder,
                         GRID_START_X + column * (GRID_CELL_WIDTH + GRID_GAP) + GRID_CELL_WIDTH,
-                        GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) + GRID_CELL_HEIGHT
-                    )
+                        GRID_START_Y + row * (GRID_CELL_HEIGHT + GRID_GAP) + GRID_CELL_HEIGHT -
+                            inventoryRowRemainder
+                    ).takeIf { it.bottom > GRID_START_Y && it.top < GRID_BOTTOM }
                 }
             }
             ControllerFocus.Runes -> {
@@ -2646,11 +2893,16 @@ internal class BotwCompanionView(
             }
         }
         rect?.let {
+            canvas.save()
+            if (controllerFocus == ControllerFocus.Inventory) {
+                canvas.clipRect(GRID_START_X - 5f, GRID_START_Y, 656f, GRID_BOTTOM)
+            }
             stroke.color = warmWhite
             stroke.strokeWidth = 3f
             canvas.drawRect(RectF(it.left - 3f, it.top - 3f, it.right + 3f, it.bottom + 3f), stroke)
             stroke.strokeWidth = 1f
             cornerMarks(canvas, RectF(it.left - 5f, it.top - 5f, it.right + 5f, it.bottom + 5f), cyan)
+            canvas.restore()
         }
         paint.color = Color.argb(205, 0, 15, 18)
         canvas.drawRoundRect(RectF(1010f, 1019f, 1224f, 1063f), 5f, 5f, paint)
@@ -2663,13 +2915,39 @@ internal class BotwCompanionView(
         if (scale <= 0f || !scale.isFinite()) return true
         val x = (event.x - (width - DESIGN_WIDTH * scale) / 2f) / scale
         val y = (event.y - (height - DESIGN_HEIGHT * scale) / 2f) / scale
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            rippleX = x; rippleY = y
+            touchRipple.animateTo(1f, 260L, 0f)
+        } else if (event.actionMasked == MotionEvent.ACTION_CANCEL ||
+            event.actionMasked == MotionEvent.ACTION_POINTER_DOWN ||
+            (event.actionMasked == MotionEvent.ACTION_MOVE &&
+                (abs(x-rippleX) > 12f || abs(y-rippleY) > 12f))) {
+            touchRipple.stop()
+            touchRipple.animateTo(1f, 0L)
+        }
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) stopInventoryMotion()
+        inventoryVelocity?.addMovement(event)
+        val releaseVelocity = if (event.actionMasked == MotionEvent.ACTION_UP) {
+            inventoryVelocity?.let { tracker ->
+                tracker.computeCurrentVelocity(1000, inventoryTouchConfig.scaledMaximumFlingVelocity.toFloat())
+                val velocity = -tracker.yVelocity
+                if (abs(velocity) >= inventoryTouchConfig.scaledMinimumFlingVelocity) velocity / scale else 0f
+            } ?: 0f
+        } else 0f
+        if (event.actionMasked == MotionEvent.ACTION_UP ||
+            event.actionMasked == MotionEvent.ACTION_CANCEL ||
+            event.actionMasked == MotionEvent.ACTION_POINTER_DOWN
+        ) {
+            inventoryVelocity?.recycle()
+            inventoryVelocity = null
+        }
         contextItem()?.let { return handleContextMenuTouch(event, x, y, it) }
         if (selectedShrine == null) mapScaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = x
                 downY = y
-                downRowOffset = rowOffset
+                downInventoryScrollY = inventoryScrollY
                 downCategoryScrollX = categoryScrollX
                 downQuestScroll = questScroll
                 downMapCenterX = mapCenterX
@@ -2693,6 +2971,9 @@ internal class BotwCompanionView(
                     x in GRID_START_X..671f &&
                     y in GRID_START_Y..GRID_BOTTOM
                 draggingScrollbar = draggingInventory && x >= 650f
+                if (draggingInventory && !draggingScrollbar) {
+                    inventoryVelocity = VelocityTracker.obtain().also { it.addMovement(event) }
+                }
                 draggingMap = page == Page.Map && mapViewportRect().contains(x, y)
                 draggingQuests = page == Page.Quests &&
                     x in QUEST_LIST_LEFT..QUEST_LIST_RIGHT &&
@@ -2753,8 +3034,7 @@ internal class BotwCompanionView(
                 }
                 if (draggingInventory && max(abs(x - downX), abs(y - downY)) > 12f) {
                     inventoryMoved = true
-                    val deltaRows = ((downY - y) / (GRID_CELL_HEIGHT + GRID_GAP)).roundToInt()
-                    setRowOffset(downRowOffset + deltaRows)
+                    setInventoryScroll(downInventoryScrollY + downY - y)
                     return true
                 }
             }
@@ -2778,6 +3058,7 @@ internal class BotwCompanionView(
                 }
                 val wasInventoryScroll = inventoryMoved
                 val wasInventoryGesture = draggingInventory
+                val wasScrollbarGesture = draggingScrollbar
                 val wasCategoryGesture = draggingCategories
                 val wasMapGesture = draggingMap
                 val wasQuestGesture = draggingQuests
@@ -2795,6 +3076,13 @@ internal class BotwCompanionView(
                 }
                 if (isTap) performClick()
                 if (wasInventoryScroll) {
+                    if (!wasScrollbarGesture && releaseVelocity != 0f) {
+                        inventoryScroller.fling(
+                            0, inventoryScrollY.roundToInt(), 0, releaseVelocity.roundToInt(),
+                            0, 0, 0, (maximumRowOffset() * (GRID_CELL_HEIGHT + GRID_GAP)).roundToInt()
+                        )
+                        postInvalidateOnAnimation()
+                    }
                     return true
                 }
                 if (wasMapGesture) {
@@ -2921,6 +3209,29 @@ internal class BotwCompanionView(
         return true
     }
 
+    private fun stopInventoryMotion() {
+        inventoryScroller.forceFinished(true)
+        inventoryVelocity?.recycle()
+        inventoryVelocity = null
+    }
+
+    override fun computeScroll() {
+        if (inventoryScroller.isFinished) return
+        if (!isSaveLoaded() || page != Page.Inventory || contextItemId != null) {
+            stopInventoryMotion()
+            return
+        }
+        if (inventoryScroller.computeScrollOffset()) {
+            val maximum = maximumRowOffset() * (GRID_CELL_HEIGHT + GRID_GAP)
+            setInventoryScroll(inventoryScroller.currY.toFloat())
+            if (inventoryScroller.currY < 0 || inventoryScroller.currY > maximum) {
+                inventoryScroller.forceFinished(true)
+            } else if (!inventoryScroller.isFinished) {
+                postInvalidateOnAnimation()
+            }
+        }
+    }
+
     private fun runeStripRect(panel: RectF = RectF(687f, 350f, 1230f, 1070f)) =
         RectF(panel.left + 14f, panel.bottom - 108f, panel.right - 14f, panel.bottom - 14f)
 
@@ -2975,6 +3286,7 @@ internal class BotwCompanionView(
                 rune.selected && (rune.type == target || (rune.id == "bombs" && target == 0))
             }
             if (confirmed || SystemClock.uptimeMillis() >= pendingRuneRefreshDeadline) {
+                if (confirmed) confirmActionFeedback()
                 pendingRuneType = null
                 pendingRuneRefreshDeadline = 0L
             } else {
@@ -3001,6 +3313,7 @@ internal class BotwCompanionView(
                 mailboxAddressMatches(snapshot.actionCompleted, targetId) &&
                 expectedType != null && snapshot.actionType == expectedType
             if (confirmed) {
+                confirmActionFeedback()
                 Log.info(
                     "[BOTW-EQUIP] completed action=$pendingEquipActionName id=$targetId " +
                         "equippedAfter=${target?.equipped} state=${snapshot.equipState} " +
@@ -3056,6 +3369,7 @@ internal class BotwCompanionView(
             } && mailboxAddressMatches(snapshot.actionCompleted, pending.item.id) &&
                 snapshot.actionType == expectedType
             if (confirmed) {
+                confirmActionFeedback()
                 val previewIcon = loadItemBitmap(pending.item)?.let { bitmap ->
                     runCatching {
                         bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
@@ -3143,10 +3457,10 @@ internal class BotwCompanionView(
             return null
         }
         val localX = x - GRID_START_X
-        val localY = y - GRID_START_Y
+        val localY = y - GRID_START_Y + inventoryRowRemainder
         val column = (localX / (GRID_CELL_WIDTH + GRID_GAP)).toInt()
         val row = (localY / (GRID_CELL_HEIGHT + GRID_GAP)).toInt()
-        if (column !in 0 until GRID_COLUMNS || row !in 0 until GRID_ROWS_VISIBLE ||
+        if (column !in 0 until GRID_COLUMNS || row !in 0..GRID_ROWS_VISIBLE ||
             localX % (GRID_CELL_WIDTH + GRID_GAP) > GRID_CELL_WIDTH ||
             localY % (GRID_CELL_HEIGHT + GRID_GAP) > GRID_CELL_HEIGHT
         ) {
@@ -3166,17 +3480,19 @@ internal class BotwCompanionView(
             .takeIf { it in categories.indices }
     }
 
-    private fun setRowOffset(value: Int) {
-        rowOffset = value.coerceIn(0, maximumRowOffset())
+    private fun setInventoryScroll(value: Float) {
+        val next = value.coerceIn(0f, maximumRowOffset() * (GRID_CELL_HEIGHT + GRID_GAP))
+        if (next == inventoryScrollY) return
+        inventoryScrollY = next
         selectedItem = selectedItem.coerceIn(0, max(0, filteredItems().lastIndex))
-        invalidate()
+        postInvalidateOnAnimation()
     }
 
     private fun updateScrollbarPosition(y: Float) {
         val maximum = maximumRowOffset()
         if (maximum == 0) return
         val fraction = ((y - GRID_START_Y) / (GRID_BOTTOM - GRID_START_Y)).coerceIn(0f, 1f)
-        setRowOffset((fraction * maximum).roundToInt())
+        setInventoryScroll(fraction * maximum * (GRID_CELL_HEIGHT + GRID_GAP))
     }
 
     private fun notifyPlayerAppearance() {
@@ -3211,7 +3527,10 @@ internal class BotwCompanionView(
         }
         val preferredIndex = preferredItemId?.let { id -> items.indexOfFirst { it.id == id } } ?: -1
         selectedItem = if (preferredIndex >= 0) preferredIndex else selectedItem.coerceIn(items.indices)
-        rowOffset = rowOffset.coerceIn(0, maximumRowOffset())
+        // Snapshot refresh must not round an in-progress touch drag back to a whole row.
+        inventoryScrollY = inventoryScrollY.coerceIn(
+            0f, maximumRowOffset() * (GRID_CELL_HEIGHT + GRID_GAP)
+        )
     }
 
     private fun filteredItems(): List<Item> {
@@ -3235,7 +3554,7 @@ internal class BotwCompanionView(
             return visibleInventoryCache
         }
         val first = rowOffset * GRID_COLUMNS
-        val last = min(items.size, first + GRID_COLUMNS * GRID_ROWS_VISIBLE)
+        val last = min(items.size, first + GRID_COLUMNS * (GRID_ROWS_VISIBLE + 1))
         val visible = items.subList(first.coerceAtMost(items.size), last).toMutableList()
         items.getOrNull(selectedItem)?.let { selected ->
             if (visible.none { it.id == selected.id }) visible += selected
@@ -3245,6 +3564,11 @@ internal class BotwCompanionView(
         visibleInventoryRow = rowOffset
         visibleInventorySelection = selectedItem
         visibleInventoryCache = visible
+        // Warm one adjacent row in either direction on row changes, not on every pixel.
+        // These are the same exact icons, still loaded by the existing bounded executor/cache.
+        val warmFirst = max(0, first - GRID_COLUMNS)
+        val warmLast = min(items.size, last + GRID_COLUMNS)
+        for (index in warmFirst until warmLast) loadItemBitmap(items[index])
         return visibleInventoryCache
     }
 
@@ -3932,11 +4256,13 @@ internal class BotwCompanionView(
                     null
                 }
                 handler.post {
-                    runtimeTextureRequests.remove(path)
                     if (generation != textureGeneration || !isAttachedToWindow) {
                         bitmap?.recycle()
                         return@post
                     }
+                    // A completion from an old view generation must not clear the new
+                    // generation's request for the same icon and queue duplicate decodes.
+                    runtimeTextureRequests.remove(path)
                     if (bitmap == null) {
                         runtimeTextureMissing += path
                         handler.postDelayed({
@@ -3952,7 +4278,7 @@ internal class BotwCompanionView(
                         } else {
                             bitmapCache.put(path, bitmap)
                         }
-                        invalidate()
+                        postInvalidateOnAnimation()
                     }
                 }
             }

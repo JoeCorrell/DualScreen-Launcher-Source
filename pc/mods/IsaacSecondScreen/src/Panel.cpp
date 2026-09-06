@@ -30,12 +30,17 @@ namespace {
 
 constexpr int kWidth = 1240;
 constexpr int kHeight = 1080;
-constexpr int kDashboardPageCount = 3;
-constexpr int kItemColumns = 10;
-constexpr int kItemCell = 72;
-constexpr int kItemGridLeft = 62;
-constexpr int kItemGridTop = 350;
-constexpr int kItemGridHeight = 440;
+constexpr int kDashboardPageCount = 4;
+constexpr int kItemColumns = 6;
+constexpr int kItemVisibleRows = 3;
+constexpr int kItemSlotSize = 86;
+constexpr int kItemColumnStep = 126;
+constexpr int kItemRowStep = 92;
+constexpr int kItemGridLeft = 240;
+constexpr int kItemGridTop = 590;
+constexpr int kItemGridWidth =
+    (kItemColumns - 1) * kItemColumnStep + kItemSlotSize;
+constexpr int kItemGridHeight = kItemVisibleRows * kItemRowStep;
 constexpr unsigned short kTouchPort = 7788;
 constexpr unsigned short kStatePort = 7791;
 constexpr UINT kTouchMessage = WM_APP + 0x4941;
@@ -177,7 +182,7 @@ int ItemRows() {
 
 float MaximumItemScroll() {
   return static_cast<float>(
-      std::max(0, ItemRows() * kItemCell - kItemGridHeight));
+      std::max(0, ItemRows() * kItemRowStep - kItemGridHeight));
 }
 
 bool CreateSurface(HDC reference, Surface* surface) {
@@ -473,11 +478,14 @@ void DrawStaticPage(Page page, HDC dc) {
   g_font.Draw(dc, "TRINKETS", 1059.0f, 70.0f, 22.0f, kInk, true);
   const char* title = page == Page::kStats
                           ? "STATS"
-                          : (page == Page::kRunInfo ? "RUN INFO"
-                                                    : "DUNGEON MAP");
+                          : (page == Page::kRunInfo
+                                 ? "RUN INFO"
+                                 : (page == Page::kItems ? "ITEMS"
+                                                         : "DUNGEON MAP"));
   const bool map_page = page == Page::kMap;
-  g_font.Draw(dc, title, map_page ? 620.0f : 790.0f,
-              map_page ? 520.0f : 510.0f,
+  const bool centered_page = map_page || page == Page::kItems;
+  g_font.Draw(dc, title, centered_page ? 620.0f : 790.0f,
+              map_page ? 520.0f : (page == Page::kItems ? 500.0f : 510.0f),
               map_page ? 48.0f : 58.0f, kInk, true);
 
   AlphaFill(dc, Rect(60, 168, 272, 170), 105, kInk);
@@ -765,6 +773,7 @@ void DrawHeart(HDC dc, const char* animation, int x, int y, int size = 48) {
 
 void DrawStatsPage(HDC dc);
 void DrawRunInfoPage(HDC dc);
+void DrawItemsPage(HDC dc);
 std::string CurseNames(int mask);
 
 void DrawItemAsset(HDC dc, const ItemMetadata* metadata, const RECT& bounds) {
@@ -1144,6 +1153,8 @@ void DrawDashboard(HDC dc) {
     DrawStatsPage(dc);
   } else if (g_page == Page::kRunInfo) {
     DrawRunInfoPage(dc);
+  } else if (g_page == Page::kItems) {
+    DrawItemsPage(dc);
   } else {
     const std::string floor = Upper(Clean(
         g_state.map.floor, Clean(g_state.run.floor, "UNKNOWN FLOOR")));
@@ -1152,60 +1163,110 @@ void DrawDashboard(HDC dc) {
   }
 }
 
-[[maybe_unused]] void DrawItemsPage(HDC dc) {
-  for (size_t index = 0; index < g_state.inventory.actives.size(); ++index) {
-    const ActiveItem& entry = g_state.inventory.actives[index];
-    const int x = 72 + static_cast<int>(index) * 118;
-    DrawItemAsset(dc, FindCollectible(entry.id), Rect(x, 145, x + 88, 233));
-    g_font.Draw(dc, Number(entry.charge) + "+" +
-                        Number(entry.battery_charge),
-                static_cast<float>(x + 44), 232.0f, 19.0f, kInk, true);
+void DrawItemPageArrow(HDC dc, bool points_left) {
+  const int center_x = points_left ? 170 : 1070;
+  const int center_y = 730;
+  POINT outer[3] = {};
+  POINT inner[3] = {};
+  if (points_left) {
+    outer[0] = {center_x + 17, center_y - 34};
+    outer[1] = {center_x - 19, center_y};
+    outer[2] = {center_x + 17, center_y + 34};
+    inner[0] = {center_x + 10, center_y - 21};
+    inner[1] = {center_x - 10, center_y};
+    inner[2] = {center_x + 10, center_y + 21};
+  } else {
+    outer[0] = {center_x - 17, center_y - 34};
+    outer[1] = {center_x + 19, center_y};
+    outer[2] = {center_x - 17, center_y + 34};
+    inner[0] = {center_x - 10, center_y - 21};
+    inner[1] = {center_x + 10, center_y};
+    inner[2] = {center_x - 10, center_y + 21};
   }
-  for (size_t index = 0; index < g_state.inventory.trinkets.size(); ++index) {
-    const Trinket& entry = g_state.inventory.trinkets[index];
-    const int x = 575 + static_cast<int>(index) * 112;
-    DrawItemAsset(dc, FindTrinket(entry.id), Rect(x, 145, x + 88, 233));
-    if (entry.golden) Frame(dc, Rect(x, 145, x + 88, 233), RGB(190, 147, 42), 3);
-  }
-  for (size_t index = 0; index < g_state.inventory.pockets.size(); ++index) {
-    const int x = 865 + static_cast<int>(index) * 108;
-    DrawSprite(dc, PocketFrame(g_state.inventory.pockets[index]),
-               Rect(x, 150, x + 80, 230));
-  }
+  HBRUSH outer_brush = CreateSolidBrush(kInk);
+  HBRUSH inner_brush = CreateSolidBrush(RGB(161, 124, 80));
+  HPEN pen = CreatePen(PS_NULL, 0, kInk);
+  HGDIOBJ old_brush = SelectObject(dc, outer_brush);
+  HGDIOBJ old_pen = SelectObject(dc, pen);
+  Polygon(dc, outer, 3);
+  SelectObject(dc, inner_brush);
+  Polygon(dc, inner, 3);
+  SelectObject(dc, old_brush);
+  SelectObject(dc, old_pen);
+  DeleteObject(outer_brush);
+  DeleteObject(inner_brush);
+  DeleteObject(pen);
+}
+
+void DrawItemSelection(HDC dc, const RECT& slot) {
+  constexpr int length = 17;
+  constexpr int weight = 4;
+  constexpr int inset = 5;
+  const COLORREF marker = RGB(241, 236, 214);
+  const int left = slot.left - inset;
+  const int top = slot.top - inset;
+  const int right = slot.right + inset;
+  const int bottom = slot.bottom + inset;
+  Fill(dc, Rect(left, top, left + length, top + weight), marker);
+  Fill(dc, Rect(left, top, left + weight, top + length), marker);
+  Fill(dc, Rect(right - length, top, right, top + weight), marker);
+  Fill(dc, Rect(right - weight, top, right, top + length), marker);
+  Fill(dc, Rect(left, bottom - weight, left + length, bottom), marker);
+  Fill(dc, Rect(left, bottom - length, left + weight, bottom), marker);
+  Fill(dc, Rect(right - length, bottom - weight, right, bottom), marker);
+  Fill(dc, Rect(right - weight, bottom - length, right, bottom), marker);
+}
+
+void DrawItemsPage(HDC dc) {
+  g_font.Draw(dc,
+              Number(static_cast<int>(g_state.inventory.collectibles.size())) +
+                  " / 721",
+              620.0f, 558.0f, 24.0f, kInk, true);
 
   const int saved = SaveDC(dc);
-  IntersectClipRect(dc, kItemGridLeft, kItemGridTop,
-                    kItemGridLeft + kItemColumns * kItemCell,
-                    kItemGridTop + kItemGridHeight);
-  const int first_row = static_cast<int>(std::floor(g_item_scroll / kItemCell));
+  IntersectClipRect(dc, kItemGridLeft - 6, kItemGridTop - 6,
+                    kItemGridLeft + kItemGridWidth + 6,
+                    kItemGridTop + kItemGridHeight + 6);
+  const int first_row =
+      static_cast<int>(std::floor(g_item_scroll / kItemRowStep));
   const int last_row = static_cast<int>(
-      std::ceil((g_item_scroll + kItemGridHeight) / kItemCell));
-  for (int row = first_row; row <= last_row; ++row) {
+      std::ceil((g_item_scroll + kItemGridHeight) / kItemRowStep));
+  for (int row = first_row; row < last_row; ++row) {
     for (int column = 0; column < kItemColumns; ++column) {
       const size_t index = static_cast<size_t>(row * kItemColumns + column);
-      if (index >= g_state.inventory.collectibles.size()) continue;
-      const CollectedItem& entry = g_state.inventory.collectibles[index];
-      const int x = kItemGridLeft + column * kItemCell;
-      const int y = static_cast<int>(kItemGridTop + row * kItemCell -
+      const int x = kItemGridLeft + column * kItemColumnStep;
+      const int y = static_cast<int>(kItemGridTop + row * kItemRowStep -
                                      g_item_scroll);
-      if (entry.id == g_selected_item) {
-        AlphaFill(dc, Rect(x - 4, y - 4, x + kItemCell - 4,
-                           y + kItemCell - 4),
-                  70, RGB(123, 32, 25));
-        Frame(dc, Rect(x - 4, y - 4, x + kItemCell - 4,
-                       y + kItemCell - 4),
-              kWine, 3);
-      }
-      DrawItemAsset(dc, FindCollectible(entry.id),
-                    Rect(x, y, x + kItemCell - 12, y + kItemCell - 12));
-      if (entry.count > 1) {
-        g_font.Draw(dc, "x" + Number(entry.count),
-                    static_cast<float>(x + 48), static_cast<float>(y + 45),
-                    17.0f, kInk);
+      const RECT slot = Rect(x, y, x + kItemSlotSize, y + kItemSlotSize);
+      DrawAssetStretch(dc, "custom/item_slot_dark.png", slot, true);
+      if (index < g_state.inventory.collectibles.size()) {
+        const CollectedItem& entry = g_state.inventory.collectibles[index];
+        DrawItemAsset(dc, FindCollectible(entry.id),
+                      Rect(x + 12, y + 12, x + kItemSlotSize - 12,
+                           y + kItemSlotSize - 12));
+        if (entry.count > 1) {
+          g_font.Draw(dc, "x" + Number(entry.count),
+                      static_cast<float>(x + kItemSlotSize - 28),
+                      static_cast<float>(y + kItemSlotSize - 25), 16.0f,
+                      RGB(238, 225, 193));
+        }
+        if (entry.id == g_selected_item) DrawItemSelection(dc, slot);
       }
     }
   }
   RestoreDC(dc, saved);
+
+  DrawItemPageArrow(dc, true);
+  DrawItemPageArrow(dc, false);
+
+  // Keep the description strip exactly under the six item columns.  Preserve
+  // the source texture's aspect ratio while scaling it down to the grid width.
+  constexpr int kDescriptionEdgeOverhang = 5;
+  const RECT description_panel =
+      Rect(kItemGridLeft - kDescriptionEdgeOverhang, 873,
+           kItemGridLeft + kItemGridWidth + kDescriptionEdgeOverhang, 1002);
+  DrawAssetStretch(dc, "custom/item_description_panel.png",
+                   description_panel, true);
 
   const ItemMetadata* selected = FindCollectible(g_selected_item);
   if (selected) {
@@ -1222,24 +1283,23 @@ void DrawDashboard(HDC dc) {
         live && !live->description.empty() ? live->description
                                            : selected->description;
     const int quality = live && live->quality >= 0 ? live->quality
-                                                    : selected->quality;
-    const RECT detail = Rect(806, 300, 1171, 768);
-    AlphaFill(dc, detail, 225, kParchment);
-    Frame(dc, detail, RGB(98, 72, 50), 3);
-    DrawItemAsset(dc, selected, Rect(936, 320, 1046, 430));
-    g_font.Draw(dc, Upper(Clean(name, "UNKNOWN ITEM")), 988.0f,
-                446.0f, 27.0f, kInk, true);
+                                                     : selected->quality;
+    DrawItemAsset(dc, selected, Rect(250, 883, 360, 992));
+    g_font.Draw(dc, Upper(Clean(name, "UNKNOWN ITEM")), 387.0f,
+                887.0f, 25.0f, kInk);
     if (quality >= 0) {
-      g_font.Draw(dc, "QUALITY " + Number(quality), 988.0f,
-                  484.0f, 21.0f, kInk, true);
+      g_font.Draw(dc, "QUALITY " + Number(quality), 900.0f,
+                  890.0f, 15.0f, kInk, true);
     }
     if (!description.empty() && description != name) {
-      const auto lines = g_font.Wrap(description, 23.0f, 310.0f);
-      for (size_t line = 0; line < std::min<size_t>(7, lines.size()); ++line) {
-        g_font.Draw(dc, lines[line], 834.0f,
-                    535.0f + static_cast<float>(line) * 30.0f, 23.0f, kInk);
+      const auto lines = g_font.Wrap(description, 19.0f, 510.0f);
+      for (size_t line = 0; line < std::min<size_t>(3, lines.size()); ++line) {
+        g_font.Draw(dc, lines[line], 387.0f,
+                    928.0f + static_cast<float>(line) * 23.0f, 19.0f, kInk);
       }
     }
+  } else {
+    g_font.Draw(dc, "SELECT AN ITEM", 620.0f, 921.0f, 24.0f, kInk, true);
   }
 }
 
@@ -1435,7 +1495,9 @@ void SetPage(Page page) {
   g_page = page;
   const char* name = g_page == Page::kStats
                          ? "stats"
-                         : (g_page == Page::kRunInfo ? "run-info" : "map");
+                         : (g_page == Page::kRunInfo
+                                ? "run-info"
+                                : (g_page == Page::kItems ? "items" : "map"));
   Log(LogLevel::kInfo, "[Touch] dashboard page=%s", name);
   RequestRender(true);
 }
@@ -1453,13 +1515,33 @@ void HandleTap(float normalized_x, float normalized_y) {
     return;
   const float x = normalized_x * kWidth;
   const float y = normalized_y * kHeight;
-  if (g_page != Page::kItems || x < kItemGridLeft ||
-      x >= kItemGridLeft + kItemColumns * kItemCell || y < kItemGridTop ||
+  if (g_page != Page::kItems) return;
+  if (y >= kItemGridTop && y < kItemGridTop + kItemGridHeight && x < 205.0f) {
+    g_item_scroll = std::clamp(
+        g_item_scroll - kItemVisibleRows * kItemRowStep, 0.0f,
+        MaximumItemScroll());
+    RequestRender(true);
+    return;
+  }
+  if (y >= kItemGridTop && y < kItemGridTop + kItemGridHeight && x > 1025.0f) {
+    g_item_scroll = std::clamp(
+        g_item_scroll + kItemVisibleRows * kItemRowStep, 0.0f,
+        MaximumItemScroll());
+    RequestRender(true);
+    return;
+  }
+  if (x < kItemGridLeft || x >= kItemGridLeft + kItemGridWidth ||
+      y < kItemGridTop ||
       y >= kItemGridTop + kItemGridHeight)
     return;
-  const int column = static_cast<int>((x - kItemGridLeft) / kItemCell);
+  const int column = static_cast<int>((x - kItemGridLeft) / kItemColumnStep);
+  if (column < 0 || column >= kItemColumns ||
+      x - (kItemGridLeft + column * kItemColumnStep) >= kItemSlotSize)
+    return;
   const int row = static_cast<int>((y - kItemGridTop + g_item_scroll) /
-                                   kItemCell);
+                                    kItemRowStep);
+  if (y - kItemGridTop + g_item_scroll - row * kItemRowStep >= kItemSlotSize)
+    return;
   const size_t index = static_cast<size_t>(row * kItemColumns + column);
   if (index < g_state.inventory.collectibles.size()) {
     g_selected_item = g_state.inventory.collectibles[index].id;
@@ -1485,8 +1567,8 @@ void HandleInput(const PanelInput& input) {
     case PanelInputKind::kNavDown:
       if (g_page == Page::kItems) {
         const float direction = input.kind == PanelInputKind::kNavUp ? -1.0f
-                                                                    : 1.0f;
-        g_item_scroll = std::clamp(g_item_scroll + direction * kItemCell,
+                                                                     : 1.0f;
+        g_item_scroll = std::clamp(g_item_scroll + direction * kItemRowStep,
                                    0.0f, MaximumItemScroll());
         RequestRender(true);
       }
@@ -1783,6 +1865,8 @@ bool CoreAssetsReady() {
   const char* required[] = {
       "custom/background.png",
       "custom/sticky_note.png",
+      "custom/item_slot_dark.png",
+      "custom/item_description_panel.png",
       "game/font/upheaval_0.png",
       "game/gfx/items/pick ups/pickup_007_pill.png",
   };
@@ -1895,6 +1979,7 @@ DWORD WINAPI PanelThread(void*) {
   DrawStaticPage(Page::kMap, g_static_pages[0].dc);
   DrawStaticPage(Page::kStats, g_static_pages[1].dc);
   DrawStaticPage(Page::kRunInfo, g_static_pages[2].dc);
+  DrawStaticPage(Page::kItems, g_static_pages[3].dc);
   Log(LogLevel::kInfo, "[PanelInit] dashboard backgrounds ready");
 
   WSADATA data = {};

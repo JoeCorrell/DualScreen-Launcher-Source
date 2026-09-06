@@ -236,8 +236,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { app.switchBackend.installContent(game, uri, kind) }
     }
 
-    fun installSwitchMod(game: SwitchGameDefinition, uri: Uri) {
-        viewModelScope.launch { app.switchBackend.installMod(game, uri) }
+    suspend fun discoverSwitchMods(game: SwitchGameDefinition, uri: Uri) =
+        app.switchBackend.discoverModFolders(game, uri)
+
+    fun installSwitchMods(game: SwitchGameDefinition, uri: Uri, selected: List<com.dualscreen.launcher.switch.SwitchModFolder>) {
+        viewModelScope.launch { app.switchBackend.installMods(game, uri, selected) }
     }
 
     fun setSwitchPatchEnabled(game: SwitchGameDefinition, name: String, enabled: Boolean) {

@@ -49,6 +49,7 @@ internal fun modUpdateFraction(progress: InstallProgress?): Float {
 
 internal fun gameArtwork(gameId: String): Int = when (gameId) {
     "skyrim-se" -> R.drawable.art_skyrim
+    "assassins-creed-ii" -> R.drawable.art_assassins_creed_ii
     "fallout3" -> R.drawable.art_fallout3
     "fallout4" -> R.drawable.art_fallout4
     "grim-dawn" -> R.drawable.art_grim_dawn
@@ -67,11 +68,13 @@ internal fun switchGameArtwork(gameId: String): Int = when (gameId) {
     "pokemon-legends-za" -> R.drawable.art_switch_pokemon_za
     "skyward-sword-hd" -> R.drawable.art_switch_skyward_sword
     "xenoblade-chronicles-x" -> R.drawable.art_switch_xenoblade_x
+    "super-mario-odyssey" -> R.drawable.art_switch_mario_odyssey
     else -> R.drawable.ic_launcher
 }
 
 internal fun gameShortTitle(gameId: String): String = when (gameId) {
     "skyrim-se" -> "Skyrim Special Edition"
+    "assassins-creed-ii" -> "Assassin's Creed II"
     "fallout3" -> "Fallout 3"
     "fallout4" -> "Fallout 4"
     "grim-dawn" -> "Grim Dawn"

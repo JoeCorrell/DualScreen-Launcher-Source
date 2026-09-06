@@ -24,7 +24,11 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
 #include "core/loader/nso.h"
+#include "core/companion/external_module.h"
 #include "core/loader/sshd_companion_payload.h"
+#include "core/loader/sshd_map_ui_code.h"
+#include "core/loader/smo_outfit_code.h"
+#include "core/loader/smo_outfit_protocol.h"
 #include "core/loader/xcx_companion_payload.h"
 #include "core/memory.h"
 
@@ -111,31 +115,25 @@ constexpr u32 BotwEatNotifyOffset = 0x00D4279C;
 constexpr u32 BotwEatNotifyStorageOffset = 0x01E15FB8;
 constexpr u32 BotwEatScreenRegistryOffset = 0x01E374B8;
 constexpr u32 BotwActorMessageSendOffset = 0x0154C61C;
-constexpr u32 BotwCaptureSpawnedActorOffset = 0x00CC12F0;
+constexpr u32 BotwCapturePlayerAccessorOffset = 0x00CC12F0;
 constexpr u32 BotwGetActorMessageIdOffset = 0x01070E58;
 constexpr u32 BotwReleaseCapturedActorOffset = 0x01126464;
-// PlayerGrab normally updates this manager's root transform while gameplay is active. Companion
-// Hold runs outside that PlayerGrab state transition, so the bridge mirrors the same root matrix
-// update without invoking CarryBox's state-transition dispatcher.
-constexpr u32 BotwCarryBoxManagerOffset = 0x01E0C828;
-constexpr u32 BotwCarryBoxRootMatrixOffset = 0xD8;
-constexpr u32 BotwCarryBoxAnchorOffset = 0x310;
-constexpr u32 BotwCarryBoxFlagsOffset = 0xA78;
-constexpr u32 BotwPlayerWorldMatrixOffset = 0x398;
+// CarryBox::calc_'s Normal -> Held predicate. The custom pouch path can finish Player's
+// deferred attachment without a pending grab message on CarryBox. Test that native
+// attachment here, on CarryBox's own update, just as its Grab child AI does at main+94A1B0.
+constexpr u32 BotwCarryGrabReadyHookOffset = 0x00806D20;
+constexpr u32 BotwCarryGrabReadyHookInstruction = 0x3941A268; // ldrb w8, [x19, #0x68]
 constexpr u32 BotwHoldMessageTypeOffset = 0x016E6B50;
 constexpr u32 BotwHoldCallerCapturePointerOffset = 0x00DA47C4;
 constexpr u32 BotwHoldCallerSenderOffset = 0x00DA47D0;
 constexpr u32 BotwHoldControllerGotLoadOffset = 0x00E47B10;
 constexpr u32 BotwHoldControllerObjectLoadOffset = 0x00E47B14;
-// PauseMenuDataMgr's Hold command sends the CarryBox adoption message from the persistent
-// controller-owned transceiver at +0x150. The transceiver remains registered during gameplay even
-// when the vanilla inventory has never been opened. Its sender identity is significant: sending
-// the same message from Link's Actor transceiver creates the held actor but never parents it.
+// The persistent controller transceiver sends 08000003 to Player (pouch upper/face animation).
+// This is NOT CarryBox adoption: PMDM's native spawn path sends 08000016 / 01800004 separately.
 constexpr u32 BotwHoldControllerMessageSenderOffset = 0x150;
 constexpr u32 BotwHoldControllerMessageDispatcherOffset =
     BotwHoldControllerMessageSenderOffset + 0x08;
 constexpr u32 BotwHoldControllerMailboxOffset = 0xC8;
-constexpr u32 BotwActionPlayerMailboxOffset = 0x110;
 constexpr u32 BotwEatTargetReadOffset = 0x00E3EE40;
 constexpr u32 BotwHoldCaptureScratchOffset = 0x160;
 constexpr u32 BotwHoldMessageScratchOffset = 0x180;
@@ -187,26 +185,7 @@ constexpr u32 Mk8dItemBridgeOffset = Mk8dTextFileSize;
 constexpr u32 Mk8dItemBridgeSize = Mk8dRoDataLocation - Mk8dItemBridgeOffset;
 constexpr u32 Mk8dCompanionMailboxPageSize = 0x1000;
 
-constexpr u64 PlzaCompanionTitleId = 0x0100F43008C44000ULL;
-constexpr std::array<u8, 0x20> PlzaCompanionBuildId{
-    0xB1, 0xF1, 0x2F, 0xD9, 0x19, 0xEA, 0xE8, 0x6A,
-    0xB8, 0xA9, 0x78, 0x31, 0x76, 0x77, 0xE6, 0x4B,
-    0xCE, 0x44, 0x3D, 0x1F, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-};
-constexpr u32 PlzaTextLocation = 0x00000000;
-constexpr u32 PlzaTextFileSize = 0x03163F70;
-constexpr u32 PlzaRoDataLocation = 0x03164000;
-constexpr u32 PlzaRoDataSize = 0x00A5E000;
-constexpr u32 PlzaDataLocation = 0x03BC2000;
-constexpr u32 PlzaDataSize = 0x003BC430;
-constexpr u32 PlzaBssSize = 0x021FCBD0;
-constexpr u32 PlzaFieldPreUpdateHookOffset = 0x0031232C;
-constexpr u32 PlzaFieldPreUpdateHookInstruction = 0xD10183FF;
-constexpr u32 PlzaBagPresenterOwnerGotOffset = 0x03EC6D48;
-constexpr u32 PlzaBagNativeDispatchOffset = 0x00C150E4;
-constexpr u32 PlzaCompanionMailboxPageSize = 0x1000;
-constexpr u32 PlzaCompanionBridgePageSize = 0x1000;
+
 
 constexpr u32 SshdTextLocation = 0x00000000;
 constexpr u32 SshdTextFileSize = 0x0105C950;
@@ -222,6 +201,20 @@ constexpr u32 SshdBssSize = 0x2B816320;
 // waiting forever whenever the block was skipped.
 constexpr u32 SshdMapCaptureHookOffset = 0x00E2391C;
 constexpr u32 SshdMapCaptureHookInstruction = 0x910183FD; // add x29, sp, #0x60
+// The renderer has restored temporary texture-cache ownership at this point.
+// Observe command-recording completion here, before the native UI can request
+// another render. This is not a GPU fence; GPU consumers use the GPU scheduler.
+constexpr u32 SshdMapCompleteHookOffset = 0x00E280B4;
+constexpr u32 SshdMapCompleteHookInstruction = 0x3915891F; // strb wzr, [x8, #0x562]
+constexpr u32 SshdMapUiHookOffset = 0x00012CC8;
+constexpr u32 SshdMapUiHookInstruction = 0xB927C69F; // str wzr, [x20, #0x27c4]
+constexpr u32 SshdMapInitializeOffset = 0x00C448E0;
+constexpr u32 SshdMapInitializeInstruction = 0xD10303FF; // sub sp, sp, #0xc0
+// The native resource initializer also enters map-camera/input mode here.
+// Companion initialization skips only this side-effect block; normal map entry is unchanged.
+constexpr u32 SshdMapCameraHookOffset = 0x00C46C20;
+constexpr u32 SshdMapCameraHookInstruction = 0x90004FE9;
+constexpr u32 SshdMapCameraResumeOffset = 0x00C46C4C;
 constexpr u32 SshdTelemetryBridgeOffset = SshdTextFileSize;
 constexpr u32 SshdTelemetryBridgeSize = SshdRoDataLocation - SshdTelemetryBridgeOffset;
 constexpr u32 SshdCompanionMailboxPageSize = 0x1000;
@@ -455,17 +448,7 @@ bool IsExactMk8dCompanionMain(const NSOHeader& header, std::string_view name) {
            header.segments[2].bss_size == Mk8dBssSize;
 }
 
-bool IsExactPlzaCompanionMain(const NSOHeader& header, std::string_view name) {
-    return name == "main" &&
-           header.build_id == PlzaCompanionBuildId &&
-           header.segments[0].location == PlzaTextLocation &&
-           header.segments[0].size == PlzaTextFileSize &&
-           header.segments[1].location == PlzaRoDataLocation &&
-           header.segments[1].size == PlzaRoDataSize &&
-           header.segments[2].location == PlzaDataLocation &&
-           header.segments[2].size == PlzaDataSize &&
-           header.segments[2].bss_size == PlzaBssSize;
-}
+
 
 bool IsExactSshdCompanionMain(const NSOHeader& header, std::string_view name) {
     return name == "main" &&
@@ -477,6 +460,14 @@ bool IsExactSshdCompanionMain(const NSOHeader& header, std::string_view name) {
            header.segments[2].location == SshdDataLocation &&
            header.segments[2].size == SshdDataSize &&
            header.segments[2].bss_size == SshdBssSize;
+}
+
+bool IsExactSmoCompanionMain(const NSOHeader& header, std::string_view name) {
+    return name == "main" && std::equal(header.build_id.begin(), header.build_id.end(), SmoOutfit::BuildId) &&
+           header.segments[0].location == 0 && header.segments[0].size == 0xbf1838 &&
+           header.segments[1].location == 0xbf2000 && header.segments[1].size == 0x105b1f8 &&
+           header.segments[2].location == 0x1c4e000 && header.segments[2].size == 0x213400 &&
+           header.segments[2].bss_size == 0x746c00;
 }
 
 bool IsExactXcxCompanionMain(const NSOHeader& header, std::string_view name) {
@@ -506,25 +497,33 @@ struct CompanionMemoryReservation {
     u32 mailbox_offset{};
     u32 bridge_offset{};
     u32 bridge_size{};
+    bool external{};
 };
 
 std::optional<CompanionMemoryReservation> ReserveCompanionMailbox(
     const NSOHeader& header, std::string_view name, Kernel::CodeSet& codeset, u32& image_size) {
     const bool botw = EnableBotwCompanion && IsExactBotwCompanionMain(header, name);
     const bool mk8d = IsExactMk8dCompanionMain(header, name);
-    const bool plza = IsExactPlzaCompanionMain(header, name);
+    DsNsoInfo module_info{};
+    std::copy(header.build_id.begin(),header.build_id.end(),module_info.build_id);
+    module_info.text_address=header.segments[0].location; module_info.text_size=header.segments[0].size;
+    module_info.ro_address=header.segments[1].location; module_info.ro_size=header.segments[1].size;
+    module_info.data_address=header.segments[2].location; module_info.data_size=header.segments[2].size;
+    module_info.bss_size=header.segments[2].bss_size;
+    const auto external=ExternalCompanion::Probe(module_info,std::string(name));
     const bool sshd = IsExactSshdCompanionMain(header, name);
     const bool xcx = IsExactXcxCompanionMain(header, name);
+    const bool smo = IsExactSmoCompanionMain(header, name);
     const u32 bridge_size = botw ? BotwCompanionBridgePageSize
-                                 : plza ? PlzaCompanionBridgePageSize
+                                 : external ? external->bridge_size
                                  : sshd ? SshdCompanionBridgePageSize
-                                 : xcx ? XcxCompanionBridgePageSize : 0;
+                                 : xcx ? XcxCompanionBridgePageSize : smo ? 0x4000 : 0;
     const u32 mailbox_size = mk8d ? Mk8dCompanionMailboxPageSize
-                                  : plza ? PlzaCompanionMailboxPageSize
+                                  : external ? external->mailbox_size
                                   : sshd ? SshdCompanionMailboxPageSize
-                                  : xcx ? XcxCompanionMailboxPageSize
+                                  : xcx ? XcxCompanionMailboxPageSize : smo ? 0x1000
                                          : BotwCompanionMailboxPageSize;
-    if ((!botw && !mk8d && !plza && !sshd && !xcx) ||
+    if ((!botw && !mk8d && !external && !sshd && !xcx && !smo) ||
         bridge_size > std::numeric_limits<u32>::max() - mailbox_size ||
         image_size > std::numeric_limits<u32>::max() - bridge_size - mailbox_size) {
         return std::nullopt;
@@ -547,7 +546,61 @@ std::optional<CompanionMemoryReservation> ReserveCompanionMailbox(
         injected.offset = bridge_offset;
         injected.size = bridge_size;
     }
-    return CompanionMemoryReservation{mailbox_offset, bridge_offset, bridge_size};
+    return CompanionMemoryReservation{mailbox_offset, bridge_offset, bridge_size, external.has_value()};
+}
+
+bool InstallSmoOutfitPayload(std::vector<u8>& image, size_t module_start,
+                            u32 mailbox_offset, u32 bridge_offset, u32 bridge_size) {
+    constexpr u32 Hook = 0x4cd7b8;
+    // This compiled PIC blob is linked at page offset zero. ADRP is page-relative,
+    // not byte-relative: placing it directly after the 128-byte trampolines made
+    // literal reads address instructions instead of the pose-validation constants.
+    constexpr u32 CodeOffset = SmoOutfitPayload::CodeOffset;
+    static_assert(CodeOffset >= 128 && CodeOffset % SmoOutfitPayload::CodeAlignment == 0);
+    if ((bridge_offset % SmoOutfitPayload::CodeAlignment) != 0 ||
+        CodeOffset + sizeof(SmoOutfitPayload::Code) > bridge_size ||
+        module_start + bridge_offset + bridge_size > image.size() ||
+        module_start + mailbox_offset + sizeof(SmoOutfit::Mailbox) > image.size() ||
+        bridge_offset < Hook || bridge_offset - Hook >= 0x8000000) return false;
+    for (const auto& signature : SmoOutfitPayload::Signatures) {
+        for (size_t i = 0; i < signature.words.size(); ++i) {
+            if (ReadCodeWord(image, module_start + signature.rva + 4 * i) != signature.words[i]) {
+                LOG_ERROR(Loader, "[SMO] Wardrobe bridge rejected modified native function {:X}", signature.rva);
+                return false;
+            }
+        }
+    }
+    // Function-entry trampoline: exePlay has only one argument (Scene*).
+    // AAPCS caller-saved registers may be clobbered; preserve x0 and caller LR.
+    // On success the native scene was killed, so return instead of executing it.
+    std::array<u32,32> stub{
+        0xA9BF7BE0, 0xAA0003E2, 0xAA1F03E3, 0xAA1F03E4,
+        EncodeAdrp(0, bridge_offset + 16, 0), EncodeAddPageOffset(0, 0),
+        EncodeAdrp(1, bridge_offset + 24, mailbox_offset), EncodeAddPageOffset(1, mailbox_offset),
+        EncodeRelativeCall(bridge_offset + 32, bridge_offset + CodeOffset),
+        0x34000060, 0xA8C17BE0, 0xD65F03C0, 0xA8C17BE0,
+        0xD10403FF, EncodeRelativeBranch(bridge_offset + 56, Hook + 4), 0xD503201F,
+        // StageScene::init's one start lookup. x19 is Scene*, x0/1 are
+        // PlayerStartInfoHolder*/start ID. Preserve the BL return address.
+        0xA9BF7BFF, 0xAA0003E3, 0xAA0103E4, 0xAA1303E2,
+        EncodeAdrp(0, bridge_offset + 80, 0), EncodeAddPageOffset(0, 0),
+        EncodeAdrp(1, bridge_offset + 88, mailbox_offset), EncodeAddPageOffset(1, mailbox_offset),
+        EncodeRelativeCall(bridge_offset + 96, bridge_offset + CodeOffset),
+        0xA8C17BFF, 0xD65F03C0, 0xD503201F, 0xD503201F, 0xD503201F, 0xD503201F, 0xD503201F};
+    SmoOutfit::Mailbox mailbox{};
+    mailbox.magic = SmoOutfit::Magic; mailbox.version = SmoOutfit::Version;
+    mailbox.size = sizeof(mailbox);
+    std::memcpy(image.data() + module_start + mailbox_offset, &mailbox, sizeof(mailbox));
+    std::memcpy(image.data() + module_start + bridge_offset, stub.data(), sizeof(stub));
+    std::memcpy(image.data() + module_start + bridge_offset + CodeOffset,
+                SmoOutfitPayload::Code.data(), sizeof(SmoOutfitPayload::Code));
+    const u32 branch = EncodeRelativeBranch(Hook, bridge_offset);
+    std::memcpy(image.data() + module_start + Hook, &branch, sizeof(branch));
+    const u32 start_call = EncodeRelativeCall(0x4c9b30, bridge_offset + 64);
+    std::memcpy(image.data() + module_start + 0x4c9b30, &start_call, sizeof(start_call));
+    LOG_INFO(Loader, "[SMO] Location-preserving wardrobe bridge installed, mailbox={:X} code={:X}",
+             mailbox_offset, bridge_offset + CodeOffset);
+    return true;
 }
 
 bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_start,
@@ -592,17 +645,51 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
              ((right & 0x1FU) << 16) | ((left & 0x1FU) << 5));
     };
 
-    constexpr u32 StackSize = 0x80;
-    emit(0xD1000000U | (StackSize << 10) | (31U << 5) | 31U); // sub sp, sp, #0x80
+    constexpr u32 StackSize = 0x2B0;
+    emit(0xD1000000U | (StackSize << 10) | (31U << 5) | 31U);
     emit_store_pair64(9, 10, 0x00);
     emit_store_pair64(11, 12, 0x10);
     emit_store_pair64(13, 14, 0x20);
     emit_store_pair64(15, 30, 0x30);
     emit(0xD53B4200U | 17U); // mrs x17, nzcv
     emit(EncodeStoreUnsigned64(17, 31, 0x40));
-    emit(0x3D8017E0U); // str q0, [sp, #0x50]
-    emit(0x3D801BE1U); // str q1, [sp, #0x60]
-    emit(0x3D801FE2U); // str q2, [sp, #0x70]
+    // Native initialization is an AAPCS call. Preserve all volatile integer
+    // registers and all 128 bits of every SIMD register, including the upper
+    // halves of q8-q15 which the callee need not preserve.
+    emit_store_pair64(0, 1, 0x50);
+    emit_store_pair64(2, 3, 0x60);
+    emit_store_pair64(4, 5, 0x70);
+    emit_store_pair64(6, 7, 0x80);
+    emit_store_pair64(8, 18, 0x90);
+    emit(0xD53B4400U | 17U); // mrs x17, fpcr
+    emit(EncodeStoreUnsigned64(17, 31, 0xA0));
+    emit(0xD53B4420U | 17U); // mrs x17, fpsr
+    emit(EncodeStoreUnsigned64(17, 31, 0xA8));
+    for (u32 reg = 0; reg < 32; ++reg) {
+        emit(0x3D800000U | (((0xB0U + reg * 16U) / 16U) << 10) | (31U << 5) | reg);
+    }
+
+    // Both hook sites enter the same register-preserving island. Replay each
+    // displaced instruction before inspecting the mailbox. The prologue's SP
+    // is above both the island's 0x10 bytes and this bridge's saved context.
+    emit_address(16, SshdMapUiHookOffset + sizeof(u32));
+    emit_compare_registers(true, 30, 16);
+    const auto branch_ui_entry = emit(0);
+    emit_address(16, SshdMapCompleteHookOffset + sizeof(u32));
+    emit_compare_registers(true, 30, 16);
+    const auto branch_completion_entry = emit(0);
+    emit(0x91000000U | ((StackSize + 0x10U + 0x60U) << 10) | (31U << 5) | 29U);
+    emit_address(9, mailbox_main_offset);
+    emit(EncodeLoadUnsigned32(10, 9, offsetof(Payload, ui_frame_tick)));
+    emit(EncodeAddImmediate32(10, 10, 1));
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, ui_frame_tick)));
+    const auto branch_entry_ready = emit(0);
+    const auto completion_entry = code.size();
+    emit(SshdMapCompleteHookInstruction);
+    const auto entry_ready = code.size();
+    code[branch_completion_entry] =
+        EncodeConditionalBranch(0, branch_completion_entry, completion_entry);
+    code[branch_entry_ready] = EncodeLocalBranch(branch_entry_ready, entry_ready);
 
     emit_address(9, mailbox_main_offset);
     emit_move_wide(11, static_cast<u16>(SshdCompanionPayload::Magic & 0xFFFFU), false, false);
@@ -646,6 +733,39 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     const auto branch_request_no_map_global = emit(0);
     emit_move_wide(13, static_cast<u16>(SshdMapGlobalToCaptureDelta), false, false);
     emit(EncodeSubtractRegisters64(13, 12, 13)); // capture = global - 0xF358
+    emit(EncodeLoadUnsigned32(17, 13, SshdMapCaptureWidthOffset));
+    const auto branch_map_initialized = emit(0);
+    // RenderingWait's native initializer selects the current stage resources,
+    // discovered geometry, floor bounds, and map transforms. Invoke it on the
+    // game thread with the already-created map controller, without opening or
+    // advancing the interactive map state machine.
+    emit_load_address(17, 0x02BF9940); // current Link actor
+    const auto branch_initialize_no_player = emit(0);
+    emit_move_wide(16, 0x0D38, false, false);
+    emit_move_wide(16, 1, true, true);
+    emit(EncodeSubtractRegisters64(0, 12, 16)); // MapMain = global - 0x10D38
+    emit(EncodeLoadUnsigned64(17, 0, 0x1A8)); // initialized layout root
+    const auto branch_initialize_no_layout = emit(0);
+    emit_move_wide(10, 2, false, false);
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, ui_guard)));
+    emit_address(16, SshdMapInitializeOffset);
+    emit(0xD63F0200U); // blr x16
+    emit_address(9, mailbox_main_offset);
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, ui_guard)));
+    emit(EncodeLoadUnsigned32(10, 9, offsetof(Payload, ui_reserved)));
+    emit(EncodeAddImmediate32(10, 10, 1));
+    emit(EncodeStoreUnsigned32(10, 9, offsetof(Payload, ui_reserved)));
+    // MapMain, dStage and even the native texture cache key can be reused
+    // across areas. RenderingWait resets the picture/layout despite identical
+    // pointers. Rebind and finish the noninteractive layout animation for this
+    // initialization, otherwise only the independently updated pins remain.
+    emit(EncodeStoreUnsigned64(31, 9, offsetof(Payload, ui_owner)));
+    emit(EncodeStoreUnsigned32(31, 9, offsetof(Payload, ui_frames)));
+    emit_load_address(11, SshdStageRoomManagerPointerOffset);
+    emit_load_address(12, SshdMapGlobalPointerOffset);
+    emit_move_wide(13, static_cast<u16>(SshdMapGlobalToCaptureDelta), false, false);
+    emit(EncodeSubtractRegisters64(13, 12, 13));
+    const auto map_initialized = code.size();
     emit(EncodeLoadUnsigned32(17, 12, SshdMapGlobalScaleOffset));
     const auto branch_invalid_map_scale = emit(0);
     emit(EncodeLoadUnsigned32(17, 13, SshdMapCaptureWidthOffset));
@@ -862,9 +982,18 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     emit(EncodeStoreUnsigned32(13, 9, offsetof(Payload, map_state)));
 
     const auto exit = code.size();
-    emit(0x3DC017E0U); // ldr q0, [sp, #0x50]
-    emit(0x3DC01BE1U); // ldr q1, [sp, #0x60]
-    emit(0x3DC01FE2U); // ldr q2, [sp, #0x70]
+    for (u32 reg = 0; reg < 32; ++reg) {
+        emit(0x3DC00000U | (((0xB0U + reg * 16U) / 16U) << 10) | (31U << 5) | reg);
+    }
+    emit(EncodeLoadUnsigned64(17, 31, 0xA0));
+    emit(0xD51B4400U | 17U); // msr fpcr, x17
+    emit(EncodeLoadUnsigned64(17, 31, 0xA8));
+    emit(0xD51B4420U | 17U); // msr fpsr, x17
+    emit_load_pair64(8, 18, 0x90);
+    emit_load_pair64(6, 7, 0x80);
+    emit_load_pair64(4, 5, 0x70);
+    emit_load_pair64(2, 3, 0x60);
+    emit_load_pair64(0, 1, 0x50);
     emit(EncodeLoadUnsigned64(17, 31, 0x40));
     emit(0xD51B4200U | 17U); // msr nzcv, x17
     emit_load_pair64(15, 30, 0x30);
@@ -875,7 +1004,6 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     emit(EncodeLoadUnsigned64(16, 31, 0));
     emit(EncodeLoadUnsigned64(17, 31, 8));
     emit(0x910043FFU); // add sp, sp, #0x10
-    emit(SshdMapCaptureHookInstruction);
     emit(0xD65F03C0U); // ret
 
     code[branch_state_pending] =
@@ -891,6 +1019,12 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
         EncodeCompareBranchZero(true, 11, branch_request_no_stage, reject_no_stage);
     code[branch_request_no_map_global] = EncodeCompareBranchZero(
         true, 12, branch_request_no_map_global, reject_no_map_global);
+    code[branch_map_initialized] = EncodeCompareBranchZero(
+        false, 17, branch_map_initialized, map_initialized) | 0x01000000U;
+    code[branch_initialize_no_player] = EncodeCompareBranchZero(
+        true, 17, branch_initialize_no_player, reject_no_map_global);
+    code[branch_initialize_no_layout] = EncodeCompareBranchZero(
+        true, 17, branch_initialize_no_layout, reject_no_map_global);
     code[branch_invalid_map_scale] = EncodeCompareBranchZero(
         false, 17, branch_invalid_map_scale, reject_invalid_map_scale);
     code[branch_invalid_capture_width] = EncodeCompareBranchZero(
@@ -944,13 +1078,51 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
     code[branch_invalid_map_floor_reject] =
         EncodeLocalBranch(branch_invalid_map_floor_reject, reject);
 
+    const auto ui_entry = code.size();
+    code[branch_ui_entry] = EncodeConditionalBranch(0, branch_ui_entry, ui_entry);
+    emit(SshdMapUiHookInstruction);
+    // m2d setup runs on multiple NVN channels. The companion owns channel zero;
+    // another channel's projection/state is not a valid context for its pass.
+    emit_address(16, 0x04CBDBA0);
+    emit_compare_registers(true, 20, 16);
+    const auto branch_wrong_ui_channel = emit(0);
+    code[branch_wrong_ui_channel] = EncodeConditionalBranch(1, branch_wrong_ui_channel, exit);
+    emit_load_address(2, SshdMapGlobalPointerOffset);
+    emit_move_wide(16, 0x0D38, false, false);
+    emit_move_wide(16, 1, true, true);
+    emit(0xCB100042U); // sub x2, x2, x16: MapMain = MapGlobal - 0x10d38
+    emit_move_wide(3, 0, false, false); // native GUI channel 0
+    emit_address(0, 0); // relocated main base
+    emit_address(1, mailbox_main_offset);
+    const auto ui_call = emit(0);
+    const auto ui_exit = emit(0);
+    code[ui_exit] = EncodeLocalBranch(ui_exit, exit);
+    const auto ui_code = code.size();
+    code[ui_call] = EncodeRelativeCall(bridge_main_offset + ui_call * 4,
+                                      bridge_main_offset + ui_code * 4);
+    code.insert(code.end(), SshdCompanionPayload::MapUiCode.begin(),
+                SshdCompanionPayload::MapUiCode.end());
     const size_t code_size = code.size() * sizeof(u32);
-    const std::array<u32, 5> island{{
+    const std::array<u32, 16> island{{
         0xD10043FFU, // sub sp, sp, #0x10
         0xA90047F0U, // stp x16, x17, [sp]
         EncodeAdrp(16, SshdTelemetryBridgeOffset + 2 * sizeof(u32), bridge_main_offset),
         EncodeAddPageOffset(16, bridge_main_offset),
         0xD61F0200U, // br x16
+        // Camera gate, entered by B: preserve LR and NZCV as well as scratch registers.
+        0xD10043FFU,
+        0xA90047F0U,
+        EncodeAdrp(16, SshdTelemetryBridgeOffset + 7 * 4, mailbox_main_offset),
+        EncodeAddPageOffset(16, mailbox_main_offset),
+        EncodeLoadUnsigned32(16, 16, offsetof(Payload, ui_guard)),
+        0x36000000U | (1U << 19) | (3U << 5) | 16U, // tbz w16,#1,normal
+        0xA8C147F0U, // ldp x16,x17,[sp],#16
+        EncodeRelativeCall(SshdTelemetryBridgeOffset + 12 * 4,
+                           SshdMapCameraResumeOffset) & ~0x80000000U,
+        0xA8C147F0U,
+        EncodeAdrp(9, SshdTelemetryBridgeOffset + 14 * 4, 0x01642000),
+        EncodeRelativeCall(SshdTelemetryBridgeOffset + 15 * 4,
+                           SshdMapCameraHookOffset + 4) & ~0x80000000U,
     }};
     const size_t island_size = island.size() * sizeof(u32);
     if ((mailbox_main_offset & 0xFFFU) != 0 || (bridge_main_offset & 0xFFFU) != 0 ||
@@ -962,11 +1134,18 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
         return false;
     }
     const size_t hook = module_start + SshdMapCaptureHookOffset;
+    const size_t complete_hook = module_start + SshdMapCompleteHookOffset;
+    const size_t ui_hook = module_start + SshdMapUiHookOffset;
     const size_t island_cave = module_start + SshdTelemetryBridgeOffset;
     const size_t bridge_cave = module_start + bridge_main_offset;
-    if (hook + sizeof(u32) > image.size() || island_cave + island_size > image.size() ||
+    if (hook + sizeof(u32) > image.size() || complete_hook + sizeof(u32) > image.size() ||
+        island_cave + island_size > image.size() ||
         bridge_cave + code_size > image.size() ||
         ReadCodeWord(image, hook) != SshdMapCaptureHookInstruction ||
+        ReadCodeWord(image, complete_hook) != SshdMapCompleteHookInstruction ||
+        ReadCodeWord(image, ui_hook) != SshdMapUiHookInstruction ||
+        ReadCodeWord(image, module_start + SshdMapCameraHookOffset) != SshdMapCameraHookInstruction ||
+        ReadCodeWord(image, module_start + SshdMapInitializeOffset) != SshdMapInitializeInstruction ||
         !std::all_of(image.begin() + static_cast<ptrdiff_t>(island_cave),
                      image.begin() + static_cast<ptrdiff_t>(island_cave + island_size),
                      [](u8 value) { return value == 0; }) ||
@@ -986,15 +1165,78 @@ bool InstallSshdCompanionTelemetryPayload(std::vector<u8>& image, size_t module_
 
     const u32 hook_call =
         EncodeRelativeCall(SshdMapCaptureHookOffset, SshdTelemetryBridgeOffset);
+    const u32 complete_call =
+        EncodeRelativeCall(SshdMapCompleteHookOffset, SshdTelemetryBridgeOffset);
     std::memcpy(image.data() + island_cave, island.data(), island_size);
     std::memcpy(image.data() + bridge_cave, code.data(), code_size);
     std::memcpy(image.data() + hook, &hook_call, sizeof(hook_call));
+    std::memcpy(image.data() + complete_hook, &complete_call, sizeof(complete_call));
+    const u32 ui_hook_call = EncodeRelativeCall(SshdMapUiHookOffset, SshdTelemetryBridgeOffset);
+    std::memcpy(image.data() + ui_hook, &ui_hook_call, sizeof(ui_hook_call));
+    const u32 camera_gate = EncodeRelativeCall(SshdMapCameraHookOffset,
+        SshdTelemetryBridgeOffset + 5 * 4) & ~0x80000000U;
+    std::memcpy(image.data() + module_start + SshdMapCameraHookOffset, &camera_gate, sizeof(camera_gate));
     LOG_INFO(Loader,
              "[SSHD-MAP] installed NCE-safe game-thread capture bridge: version={} bytes={} "
              "mailbox=main+{:#x} island=main+{:#x} bridge=main+{:#x} hook=main+{:#x}",
              SshdCompanionPayload::Version, code_size, mailbox_main_offset,
              SshdTelemetryBridgeOffset, bridge_main_offset, SshdMapCaptureHookOffset);
     return true;
+}
+
+// No native calls or game-state writes in this trampoline. Preserve all registers except w8
+// (the displaced load's result), NZCV, and SP. The original cbnz performs the transition through
+// CarryBox::enterHeld -> Grab::enter -> its native bone-bound held action. Release/drop/cooking
+// continue through the unmodified native children. Only the Normal action reaches this hook.
+std::vector<u32> BuildBotwCarryGrabReadyHook(u32 stub_offset) {
+    std::vector<u32> code;
+    const auto emit = [&](u32 instruction) {
+        const size_t index = code.size();
+        code.push_back(instruction);
+        return index;
+    };
+    std::vector<size_t> reject_zero;
+    std::vector<size_t> reject_nonzero;
+    emit(BotwCarryGrabReadyHookInstruction);
+    const auto native_pending = emit(0);
+    emit(0xA9BF2BE9U); // stp x9, x10, [sp, #-16]!
+    emit(EncodeAdrp(9, stub_offset + static_cast<u32>(code.size() * 4),
+                    BotwPlayerInfoStorageOffset));
+    emit(EncodeLoadUnsigned64(9, 9, BotwPlayerInfoStorageOffset & 0xFFFU));
+    reject_zero.push_back(emit(0)); // no PlayerInfo
+    emit(EncodeLoadUnsigned64(9, 9, 0x60));
+    reject_zero.push_back(emit(0)); // no live Player
+    emit(EncodeLoadUnsigned64(10, 21, 0x80)); // CarryBox calc parent
+    emit(0xCA09014AU); // eor x10, x10, x9 (preserve NZCV)
+    reject_nonzero.push_back(emit(0));
+    emit(EncodeLoadUnsigned64(10, 9, 0x88)); // reciprocal Player calc child
+    emit(0xCA15014AU); // eor x10, x10, x21
+    reject_nonzero.push_back(emit(0));
+    emit(EncodeLoadUnsigned8(10, 9, 0xD11)); // Player carrying pouch
+    const auto not_carrying = emit(0);
+    emit(EncodeLoadUnsigned8(10, 21, 0x92C)); // CarryBox grab helper +BC: attached
+    const auto not_attached = emit(0);
+    emit(EncodeLoadUnsigned32(10, 21, 0x970)); // helper +100: attachment state
+    emit(0x521F014AU); // eor w10, w10, #2 (preserve NZCV)
+    const auto not_held = emit(0);
+    emit(0x52800028U); // mov w8, #1: allow the ORIGINAL native Held transition
+    const auto restore = code.size();
+    emit(0xA8C12BE9U); // ldp x9, x10, [sp], #16
+    const auto return_index = code.size();
+    emit(EncodeRelativeBranch(stub_offset + static_cast<u32>(return_index * 4),
+                              BotwCarryGrabReadyHookOffset + 4));
+    code[native_pending] =
+        EncodeCompareBranchZero(false, 8, native_pending, return_index) | 0x01000000U;
+    for (const size_t index : reject_zero) {
+        code[index] = EncodeCompareBranchZero(true, 9, index, restore);
+    }
+    for (const size_t index : reject_nonzero) {
+        code[index] = EncodeCompareBranchZero(true, 10, index, restore) | 0x01000000U;
+    }
+    code[not_carrying] = EncodeCompareBranchZero(false, 10, not_carrying, restore);
+    code[not_attached] = EncodeCompareBranchZero(false, 10, not_attached, restore);
+    code[not_held] = EncodeCompareBranchZero(false, 10, not_held, restore) | 0x01000000U;
+    return code;
 }
 
 bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
@@ -1049,26 +1291,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const auto emit_unlock = [&] {
         unlock_calls.push_back(emit(0));
     };
-
-    // PlayerGrab's gameplay update feeds Link's 3x4 world matrix into CarryBox every frame via
-    // main+00B2345C. A companion Hold starts during gameplay instead of returning from PauseMenu,
-    // so PlayerGrab is not guaranteed to run that first update. Keep the real CarryBox root tied
-    // to Link at this already game-thread-bound dispatcher until the anchor enters its release
-    // state (flags bit 0). Per-item hand matrices and actor ownership remain game-managed.
-    emit_load_address(12, BotwCarryBoxManagerOffset);
-    const auto branch_no_carry_box_transform_manager = emit(0);
-    emit(EncodeLoadUnsigned64(13, 12, BotwCarryBoxAnchorOffset));
-    const auto branch_no_carry_box_transform_anchor = emit(0);
-    emit(EncodeLoadUnsigned32(13, 12, BotwCarryBoxFlagsOffset));
-    const auto branch_carry_box_transform_releasing = emit(0);
-    emit_page_address(14, mailbox_main_offset);
-    emit(EncodeLoadUnsigned64(13, 14, BotwActionPlayerMailboxOffset));
-    const auto branch_no_carry_box_transform_player = emit(0);
-    for (u32 matrix_offset = 0; matrix_offset < 0x30; matrix_offset += sizeof(u64)) {
-        emit(EncodeLoadUnsigned64(15, 13, BotwPlayerWorldMatrixOffset + matrix_offset));
-        emit(EncodeStoreUnsigned64(15, 12, BotwCarryBoxRootMatrixOffset + matrix_offset));
-    }
-    const auto carry_box_transform_synced = code.size();
 
     emit_page_address(9, mailbox_main_offset);
     emit(0x9100412AU);
@@ -1210,7 +1432,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     emit(EncodeStoreUnsigned8(31, 0, 0));
     emit(EncodeStoreUnsigned64(31, 0, 8));
     emit(EncodeStoreUnsigned8(31, 0, 0x10));
-    emit_call(BotwCaptureSpawnedActorOffset);
+    emit_call(BotwCapturePlayerAccessorOffset);
     emit_page_address(14, mailbox_main_offset);
     emit(EncodeAddImmediate64(5, 14, BotwHoldCaptureScratchOffset));
     emit(EncodeLoadUnsigned64(8, 5, 8));
@@ -1584,14 +1806,6 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     }
 
     code[branch_running] = EncodeConditionalBranch(0, branch_running, running_claim);
-    code[branch_no_carry_box_transform_manager] = EncodeCompareBranchZero(
-        true, 12, branch_no_carry_box_transform_manager, carry_box_transform_synced);
-    code[branch_no_carry_box_transform_anchor] = EncodeCompareBranchZero(
-        true, 13, branch_no_carry_box_transform_anchor, carry_box_transform_synced);
-    code[branch_carry_box_transform_releasing] = EncodeTestBitBranch(
-        true, 13, 0, branch_carry_box_transform_releasing, carry_box_transform_synced);
-    code[branch_no_carry_box_transform_player] = EncodeCompareBranchZero(
-        true, 13, branch_no_carry_box_transform_player, carry_box_transform_synced);
     code[branch_not_queued] = EncodeConditionalBranch(1, branch_not_queued, passthrough);
     code[branch_claim_retry] =
         EncodeCompareBranchZero(false, 13, branch_claim_retry, claim) | 0x01000000U;
@@ -1755,6 +1969,10 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     static_assert(BotwRuneManagerStaticOffset >= BotwDataLocation);
     static_assert(BotwRuneManagerStaticOffset <
                   BotwDataLocation + BotwDataSize + BotwBssSize);
+    const u32 carry_grab_stub_offset =
+        bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
+    const auto carry_grab_code = BuildBotwCarryGrabReadyHook(carry_grab_stub_offset);
+    code.insert(code.end(), carry_grab_code.begin(), carry_grab_code.end());
     const size_t code_size = code.size() * sizeof(u32);
     if (code_size > bridge_size) {
         LOG_ERROR(Loader,
@@ -1772,6 +1990,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     }
     const size_t hook = module_start + BotwEquipHookOffset;
     const size_t eat_exit_hook = module_start + BotwEatGameplayExitHookOffset;
+    const size_t carry_grab_hook = module_start + BotwCarryGrabReadyHookOffset;
     const size_t cave = module_start + bridge_main_offset;
     const size_t context_name = module_start + BotwActionContextNameOffset;
     if (cave > image.size() || code_size > image.size() - cave) {
@@ -1810,7 +2029,7 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwUpdateCookEffectsOffset, 0xFC1C0FE8U, "live cook-effect update"},
         {BotwEatNotifyOffset, 0xD10243FFU, "eat animation event"},
         {BotwActorMessageSendOffset, 0xA9BC7BFDU, "actor message send"},
-        {BotwCaptureSpawnedActorOffset, 0xD0008A88U, "spawned actor capture"},
+        {BotwCapturePlayerAccessorOffset, 0xD0008A88U, "player accessor capture"},
         {BotwGetActorMessageIdOffset, 0xA9BE7BFDU, "actor message id"},
         {BotwReleaseCapturedActorOffset, 0xA9BE7BFDU, "captured actor release"},
         {BotwHoldMessageTypeOffset, 0x08000003U, "hold message type"},
@@ -1820,6 +2039,11 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
         {BotwHoldControllerObjectLoadOffset, 0xF9400100U, "hold controller object"},
         {BotwEatTargetReadOffset, 0xF95B267AU, "eat target read"},
         {BotwEatGameplayExitHookOffset, BotwEatGameplayExitHookInstruction, "eat exit hook"},
+        {BotwCarryGrabReadyHookOffset, BotwCarryGrabReadyHookInstruction, "carry grab-ready hook"},
+        {BotwCarryGrabReadyHookOffset - 8, 0x39546EA8U, "carry grabbed flag"},
+        {BotwCarryGrabReadyHookOffset + 4, 0x35001B68U, "carry native held branch"},
+        {0x00807094, 0x97FFFE16U, "carry native held transition"},
+        {0x0056B27C, 0x9121C000U, "carry grab-helper layout"},
         {BotwRequestEquippedItemOffset, 0xD10103FFU, "equipment request"},
         {BotwEquipmentActorsReadyOffset, 0x39422008U, "equipment actor state"},
         {BotwGetPlayerOffset, 0xF9403001U, "player lookup"},
@@ -1873,7 +2097,11 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const u32 eat_exit_stub_offset =
         bridge_main_offset + static_cast<u32>(eat_exit_stub * sizeof(u32));
     if (!direct_branch_fits(BotwEquipHookOffset, bridge_main_offset) ||
-        !direct_branch_fits(BotwEatGameplayExitHookOffset, eat_exit_stub_offset)) {
+        !direct_branch_fits(BotwEatGameplayExitHookOffset, eat_exit_stub_offset) ||
+        !direct_branch_fits(BotwCarryGrabReadyHookOffset, carry_grab_stub_offset) ||
+        !direct_branch_fits(carry_grab_stub_offset +
+                                static_cast<u32>((carry_grab_code.size() - 1) * sizeof(u32)),
+                            BotwCarryGrabReadyHookOffset + sizeof(u32))) {
         LOG_ERROR(Loader,
                   "[BOTW-ITEM-ACTION] bridge install rejected: injected page is outside "
                   "AArch64 branch range");
@@ -1882,15 +2110,18 @@ bool InstallBotwCompanionEquipHook(std::vector<u8>& image, size_t module_start,
     const u32 branch = EncodeRelativeBranch(BotwEquipHookOffset, bridge_main_offset);
     const u32 eat_exit_branch = EncodeRelativeBranch(
         BotwEatGameplayExitHookOffset, eat_exit_stub_offset);
+    const u32 carry_grab_branch =
+        EncodeRelativeBranch(BotwCarryGrabReadyHookOffset, carry_grab_stub_offset);
     std::memcpy(image.data() + cave, code.data(), code_size);
     std::memcpy(image.data() + hook, &branch, sizeof(branch));
     std::memcpy(image.data() + eat_exit_hook, &eat_exit_branch, sizeof(eat_exit_branch));
+    std::memcpy(image.data() + carry_grab_hook, &carry_grab_branch, sizeof(carry_grab_branch));
     LOG_INFO(Loader,
              "[BOTW-ITEM-ACTION] installed menu-independent action bridge: {} bytes, "
              "mailbox=main+{:#x}, bridge=main+{:#x}, bridgePage={} bytes, "
-             "eat-entry=main+{:#x}",
+             "eat-entry=main+{:#x}, carry-grab-ready=main+{:#x}",
              code_size, mailbox_main_offset, bridge_main_offset, bridge_size,
-             BotwEatGameplayEntryOffset);
+             BotwEatGameplayEntryOffset, carry_grab_stub_offset);
     return true;
 }
 
@@ -2217,226 +2448,6 @@ bool InstallXcxCompanionActionHook(std::vector<u8>& image, size_t module_start,
     return true;
 }
 
-bool InstallPlzaCompanionItemHook(std::vector<u8>& image, size_t module_start,
-                                  u32 mailbox_main_offset, u32 bridge_main_offset,
-                                  u32 bridge_size) {
-    constexpr u32 RequestOffset = 0x00;
-    constexpr u32 CompletedOffset = 0x08;
-    constexpr u32 StateOffset = 0x10;
-    constexpr u32 ItemOffset = 0x18;
-    constexpr u32 PouchOffset = 0x20;
-    constexpr u32 AuxOffset = 0x24;
-    constexpr u32 ResultOffset = 0x28;
-    constexpr u32 SavedStackSize = 0x120;
-
-    std::vector<u32> code;
-    code.reserve(160);
-    const auto emit = [&](u32 instruction) {
-        const size_t index = code.size();
-        code.push_back(instruction);
-        return index;
-    };
-    const auto emit_address = [&](u32 target_register, u32 target_offset) {
-        const auto instruction_offset =
-            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
-        emit(EncodeAdrp(target_register, instruction_offset, target_offset));
-        emit(EncodeAddPageOffset(target_register, target_offset));
-    };
-    const auto emit_load_address = [&](u32 target_register, u32 target_offset) {
-        const auto instruction_offset =
-            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
-        emit(EncodeAdrp(target_register, instruction_offset, target_offset));
-        emit(EncodeLoadUnsigned64(target_register, target_register, target_offset & 0xFFFU));
-    };
-    const auto emit_call = [&](u32 target_offset) {
-        const auto instruction_offset =
-            bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
-        emit(EncodeRelativeCall(instruction_offset, target_offset));
-    };
-    const auto emit_store_pair64 = [&](u32 first, u32 second, u32 offset) {
-        emit(0xA9000000U | (((offset / 8U) & 0x7FU) << 15) |
-             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
-    };
-    const auto emit_load_pair64 = [&](u32 first, u32 second, u32 offset) {
-        emit(0xA9400000U | (((offset / 8U) & 0x7FU) << 15) |
-             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
-    };
-    const auto emit_store_pair128 = [&](u32 first, u32 second, u32 offset) {
-        emit(0xAD000000U | (((offset / 16U) & 0x7FU) << 15) |
-             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
-    };
-    const auto emit_load_pair128 = [&](u32 first, u32 second, u32 offset) {
-        emit(0xAD400000U | (((offset / 16U) & 0x7FU) << 15) |
-             ((second & 0x1FU) << 10) | (31U << 5) | (first & 0x1FU));
-    };
-
-    emit(PlzaFieldPreUpdateHookInstruction);
-    emit_address(15, mailbox_main_offset);
-    emit(EncodeAddImmediate64(9, 15, StateOffset));
-    emit(0x88DFFC00U | (9U << 5) | 10U);
-    emit(EncodeCompareImmediate32(10, 1));
-    const auto branch_not_queued = emit(0);
-
-    emit(0xD1000000U | (SavedStackSize << 10) | (31U << 5) | 31U);
-    emit_store_pair64(0, 1, 0x00);
-    emit_store_pair64(2, 3, 0x10);
-    emit_store_pair64(4, 5, 0x20);
-    emit_store_pair64(6, 7, 0x30);
-    emit_store_pair64(8, 9, 0x40);
-    emit_store_pair64(10, 11, 0x50);
-    emit_store_pair64(12, 13, 0x60);
-    emit_store_pair64(14, 15, 0x70);
-    emit_store_pair64(16, 17, 0x80);
-    emit_store_pair64(18, 30, 0x90);
-    emit_store_pair128(0, 1, 0xA0);
-    emit_store_pair128(2, 3, 0xC0);
-    emit_store_pair128(4, 5, 0xE0);
-    emit_store_pair128(6, 7, 0x100);
-
-    emit(0x5280004AU);
-    emit(0x889FFC00U | (9U << 5) | 10U);
-    emit_load_address(8, PlzaBagPresenterOwnerGotOffset);
-    const auto branch_no_owner = emit(0);
-    emit(EncodeLoadUnsigned64(0, 8, 0x130));
-    const auto branch_no_presenter = emit(0);
-    emit(EncodeLoadUnsigned64(8, 0, 0x68));
-    const auto branch_no_scheduler = emit(0);
-    emit(EncodeLoadUnsigned64(8, 0, 0x118));
-    const auto branch_no_context_118 = emit(0);
-
-    emit(EncodeLoadUnsigned32(11, 15, ItemOffset));
-    emit(EncodeLoadUnsigned32(12, 15, AuxOffset));
-    emit(EncodeLoadUnsigned32(13, 15, PouchOffset));
-    emit(EncodeStoreUnsigned16(11, 0, 0x140));
-    emit(EncodeStoreUnsigned16(12, 0, 0x142));
-    emit(EncodeLoadUnsigned64(8, 0, 0x118));
-    emit(EncodeStoreUnsigned8(13, 8, 0x100));
-    emit_call(PlzaBagNativeDispatchOffset);
-
-    emit_address(15, mailbox_main_offset);
-    emit(EncodeStoreUnsigned32(31, 15, ResultOffset));
-    emit(EncodeLoadUnsigned64(11, 15, RequestOffset));
-    emit(EncodeStoreUnsigned64(11, 15, CompletedOffset));
-    emit(EncodeStoreUnsigned64(31, 15, RequestOffset));
-    emit(EncodeAddImmediate64(9, 15, StateOffset));
-    emit(0x5280006AU);
-    emit(0x889FFC00U | (9U << 5) | 10U);
-    const auto branch_success_restore = emit(0);
-
-    const auto reject_no_owner = code.size();
-    emit(0x5280002BU);
-    const auto branch_owner_reject = emit(0);
-    const auto reject_no_presenter = code.size();
-    emit(0x5280004BU);
-    const auto branch_presenter_reject = emit(0);
-    const auto reject_no_context = code.size();
-    emit(0x5280006BU);
-
-    const auto reject_publish = code.size();
-    emit(EncodeStoreUnsigned32(11, 15, ResultOffset));
-    emit(EncodeLoadUnsigned64(12, 15, RequestOffset));
-    emit(EncodeStoreUnsigned64(12, 15, CompletedOffset));
-    emit(EncodeStoreUnsigned64(31, 15, RequestOffset));
-    emit(EncodeAddImmediate64(9, 15, StateOffset));
-    emit(0x5280008AU);
-    emit(0x889FFC00U | (9U << 5) | 10U);
-
-    const auto restore = code.size();
-    emit_load_pair128(6, 7, 0x100);
-    emit_load_pair128(4, 5, 0xE0);
-    emit_load_pair128(2, 3, 0xC0);
-    emit_load_pair128(0, 1, 0xA0);
-    emit_load_pair64(18, 30, 0x90);
-    emit_load_pair64(16, 17, 0x80);
-    emit_load_pair64(14, 15, 0x70);
-    emit_load_pair64(12, 13, 0x60);
-    emit_load_pair64(10, 11, 0x50);
-    emit_load_pair64(8, 9, 0x40);
-    emit_load_pair64(6, 7, 0x30);
-    emit_load_pair64(4, 5, 0x20);
-    emit_load_pair64(2, 3, 0x10);
-    emit_load_pair64(0, 1, 0x00);
-    emit(0x91000000U | (SavedStackSize << 10) | (31U << 5) | 31U);
-
-    const auto passthrough = code.size();
-    const auto return_offset =
-        bridge_main_offset + static_cast<u32>(code.size() * sizeof(u32));
-    emit(EncodeRelativeBranch(return_offset, PlzaFieldPreUpdateHookOffset + sizeof(u32)));
-
-    code[branch_not_queued] = EncodeConditionalBranch(1, branch_not_queued, passthrough);
-    code[branch_no_owner] =
-        EncodeCompareBranchZero(true, 8, branch_no_owner, reject_no_owner);
-    code[branch_no_presenter] =
-        EncodeCompareBranchZero(true, 0, branch_no_presenter, reject_no_presenter);
-    code[branch_no_scheduler] =
-        EncodeCompareBranchZero(true, 8, branch_no_scheduler, reject_no_context);
-    code[branch_no_context_118] =
-        EncodeCompareBranchZero(true, 8, branch_no_context_118, reject_no_context);
-    code[branch_success_restore] = EncodeLocalBranch(branch_success_restore, restore);
-    code[branch_owner_reject] = EncodeLocalBranch(branch_owner_reject, reject_publish);
-    code[branch_presenter_reject] =
-        EncodeLocalBranch(branch_presenter_reject, reject_publish);
-
-    if ((mailbox_main_offset & 0xFFFU) != 0 || (bridge_main_offset & 0xFFFU) != 0 ||
-        bridge_size != PlzaCompanionBridgePageSize ||
-        bridge_main_offset != mailbox_main_offset + PlzaCompanionMailboxPageSize) {
-        LOG_ERROR(Loader,
-                  "[PLZA-ITEM-ACTION] bridge install rejected: invalid RW/RX layout");
-        return false;
-    }
-    const size_t code_size = code.size() * sizeof(u32);
-    const size_t hook = module_start + PlzaFieldPreUpdateHookOffset;
-    const size_t dispatch = module_start + PlzaBagNativeDispatchOffset;
-    const size_t cave = module_start + bridge_main_offset;
-    if (hook + sizeof(u32) > image.size() || dispatch + sizeof(u32) > image.size() ||
-        cave > image.size() || code_size > image.size() - cave || code_size > bridge_size) {
-        LOG_ERROR(Loader,
-                  "[PLZA-ITEM-ACTION] bridge install rejected: code range is outside the image");
-        return false;
-    }
-    const u32 hook_instruction = ReadCodeWord(image, hook);
-    const u32 dispatch_instruction = ReadCodeWord(image, dispatch);
-    if (hook_instruction != PlzaFieldPreUpdateHookInstruction ||
-        dispatch_instruction != 0xD10203FFU) {
-        LOG_ERROR(Loader,
-                  "[PLZA-ITEM-ACTION] bridge install rejected: native signature mismatch "
-                  "hook=main+{:#x} observed={:#010x} expected={:#010x} "
-                  "dispatch=main+{:#x} observed={:#010x} expected={:#010x}",
-                  PlzaFieldPreUpdateHookOffset, hook_instruction,
-                  PlzaFieldPreUpdateHookInstruction, PlzaBagNativeDispatchOffset,
-                  dispatch_instruction, 0xD10203FFU);
-        return false;
-    }
-    const auto cave_mismatch = std::find_if(
-        image.begin() + static_cast<ptrdiff_t>(cave),
-        image.begin() + static_cast<ptrdiff_t>(cave + code_size),
-        [](u8 value) { return value != 0; });
-    if (cave_mismatch != image.begin() + static_cast<ptrdiff_t>(cave + code_size)) {
-        LOG_ERROR(Loader,
-                  "[PLZA-ITEM-ACTION] bridge install rejected: executable page is not empty");
-        return false;
-    }
-    const s64 hook_delta = static_cast<s64>(bridge_main_offset) -
-                           static_cast<s64>(PlzaFieldPreUpdateHookOffset);
-    const s64 dispatch_delta = static_cast<s64>(PlzaBagNativeDispatchOffset) -
-                               static_cast<s64>(bridge_main_offset);
-    if ((hook_delta & 3) != 0 || hook_delta < -(1LL << 27) || hook_delta >= (1LL << 27) ||
-        dispatch_delta < -(1LL << 27) || dispatch_delta >= (1LL << 27)) {
-        LOG_ERROR(Loader,
-                  "[PLZA-ITEM-ACTION] bridge install rejected: branch target is out of range");
-        return false;
-    }
-    const u32 hook_branch =
-        EncodeRelativeBranch(PlzaFieldPreUpdateHookOffset, bridge_main_offset);
-    std::memcpy(image.data() + cave, code.data(), code_size);
-    std::memcpy(image.data() + hook, &hook_branch, sizeof(hook_branch));
-    LOG_INFO(Loader,
-             "[PLZA-ITEM-ACTION] installed native field-update bridge: {} bytes, "
-             "mailbox=main+{:#x}, bridge=main+{:#x}, hook=main+{:#x}, dispatch=main+{:#x}",
-             code_size, mailbox_main_offset, bridge_main_offset,
-             PlzaFieldPreUpdateHookOffset, PlzaBagNativeDispatchOffset);
-    return true;
-}
 
 bool InstallMk8dCompanionItemHook(std::vector<u8>& image, size_t module_start,
                                   u32 mailbox_main_offset) {
@@ -2650,6 +2661,14 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
             if (IsExactMk8dCompanionMain(nso_header, name)) {
                 companion_hook_installed = InstallMk8dCompanionItemHook(
                     codeset.memory, module_start, mailbox_main_offset);
+            } else if (IsExactSmoCompanionMain(nso_header, name)) {
+                if (module_start <= companion_memory->bridge_offset &&
+                    companion_memory->bridge_offset - module_start <= std::numeric_limits<u32>::max()) {
+                    companion_hook_installed = InstallSmoOutfitPayload(
+                        codeset.memory, module_start, mailbox_main_offset,
+                        static_cast<u32>(companion_memory->bridge_offset - module_start),
+                        companion_memory->bridge_size);
+                }
             } else if (IsExactXcxCompanionMain(nso_header, name)) {
                 if (module_start <= companion_memory->bridge_offset &&
                     companion_memory->bridge_offset - module_start <=
@@ -2668,11 +2687,11 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
                         static_cast<u32>(companion_memory->bridge_offset - module_start),
                         companion_memory->bridge_size);
                 }
-            } else if (IsExactPlzaCompanionMain(nso_header, name)) {
+            } else if (companion_memory->external) {
                 if (module_start <= companion_memory->bridge_offset &&
                     companion_memory->bridge_offset - module_start <=
                         std::numeric_limits<u32>::max()) {
-                    companion_hook_installed = InstallPlzaCompanionItemHook(
+                    companion_hook_installed = ExternalCompanion::Install(
                         codeset.memory, module_start, mailbox_main_offset,
                         static_cast<u32>(companion_memory->bridge_offset - module_start),
                         companion_memory->bridge_size);
@@ -2690,9 +2709,10 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         }
         if (load_into_process && companion_hook_installed && pm &&
             (pm->GetTitleID() == Mk8dCompanionTitleId ||
-             pm->GetTitleID() == PlzaCompanionTitleId ||
+             pm->GetTitleID() == ExternalCompanion::TitleId() ||
              pm->GetTitleID() == XcxCompanionPayload::TitleId ||
              pm->GetTitleID() == SshdCompanionPayload::TitleId ||
+             pm->GetTitleID() == SmoOutfit::TitleId ||
              (EnableBotwCompanion && pm->GetTitleID() == BotwCompanionTitleId))) {
             companion_mailbox_address = load_base + companion_memory->mailbox_offset;
         }

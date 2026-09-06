@@ -363,6 +363,7 @@ public final class SecondScreenOutput {
          * player's current bindings, so this panel uses that channel alone.
          */
         if (isDeusExPanel() || isSkyrimPanel() || isGrimDawnPanel()
+                || NativePanelIdentity.isAssassinsCreedII(guestWindowClassName, guestWindowTitle)
                 || isTransformersWfcPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle)) return true;
 

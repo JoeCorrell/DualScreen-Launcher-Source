@@ -188,7 +188,7 @@ internal fun GameDetailsPage(
                                 else -> "Not included (optional)"
                             },
                         )
-                        InformationRow("Save location", game.saveDirectory)
+                        InformationRow("Save location", game.saveDirectory.ifBlank { "Managed by the game" })
                         InformationRow("Shared folder", "/Dualscreen/Games/${game.storageName}")
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -349,7 +349,7 @@ private fun ActionPanel(
                     label = "Import Save ZIP",
                     icon = Icons.Default.UploadFile,
                     onClick = onImportSave,
-                    enabled = !busy,
+                    enabled = !busy && game.saveDirectory.isNotBlank(),
                     modifier = Modifier.weight(1f),
                 )
                 PrimaryAction(

@@ -17,6 +17,7 @@
 #include "core/loader/sshd_companion_payload.h"
 #include "core/memory.h"
 #include "jni/native.h"
+#include "video_core/renderer_base.h"
 
 namespace SshdCompanion {
 namespace {
@@ -423,6 +424,50 @@ bool IsReadableRange(Core::Memory::Memory& memory, VAddr address, std::size_t si
     return address && size && memory.IsValidVirtualAddressRange(address, size);
 }
 
+std::optional<VideoCore::CompanionTextureProbe> ReadNativeMapTexture(Core::System& system, VAddr main_base,
+                                                                  VAddr ui_wrapper = 0) {
+    auto& memory = system.ApplicationMemory();
+    const auto stage = Read<u64>(memory, main_base + StageRoomManagerPointerOffset).value_or(0);
+    if (!stage) return std::nullopt;
+    const auto wrapper = ui_wrapper ? ui_wrapper : Read<u64>(memory, stage + 0x550).value_or(0);
+    if (!wrapper) return std::nullopt;
+    const auto key = Read<u64>(memory, wrapper + 0x18).value_or(0);
+    if (!key) return std::nullopt;
+
+    // Match main+0x10540C0's hash and exact-key checks. Do not dereference key
+    // as pixels: main+0x10544B0 uses it to select a separate NVN render target.
+    const u64 expected_tag = (key >> 7) | (1ULL << 63);
+    u32 slot = static_cast<u32>((key >> 7) & 0x3FFF);
+    for (u32 attempt = 0; attempt < 0x4000; ++attempt, slot = (slot + 1) & 0x3FFF) {
+        const auto tag = Read<u64>(memory, main_base + 0x17730F0 + slot * 8).value_or(0);
+        if (!tag) return std::nullopt;
+        if (tag != expected_tag ||
+            Read<u64>(memory, main_base + 0x17930F0 + slot * 8).value_or(0) != key) continue;
+        const auto index = Read<u32>(memory, main_base + 0x17B30F0 + slot * 4).value_or(~0U);
+        const auto capacity = Read<u32>(memory, main_base + 0x17C30F4).value_or(0);
+        if (index >= capacity) return std::nullopt;
+        const VAddr entry = main_base + 0x17C30F8 + static_cast<u64>(index) * 0x50;
+        if (Read<u8>(memory, entry + 0x30).value_or(0) != 1) return std::nullopt;
+        const VAddr texture = Read<u64>(memory, entry).value_or(0);
+        if (!texture) return std::nullopt;
+
+        // Verified SDK accessors are ldr w0,[x0,#0x28/0x2c/0x38] and
+        // ldr x0,[x0,#0x80]. Validate the address accessor before using its ABI.
+        const auto getter = Read<u64>(memory, main_base + 0x2C8EB08).value_or(0);
+        if (Read<u64>(memory, getter).value_or(0) != 0xD65F03C0F9404000ULL) return std::nullopt;
+        const auto gpu_address = Read<u64>(memory, texture + 0x80).value_or(0);
+        const auto width = Read<u32>(memory, texture + 0x28).value_or(0);
+        const auto height = Read<u32>(memory, texture + 0x2C).value_or(0);
+        const auto format = Read<u32>(memory, texture + 0x38).value_or(0);
+        if (!gpu_address || !width || !height || width > 16384 || height > 16384 ||
+            format != 0x25 || Read<u64>(memory, entry).value_or(0) != texture ||
+            (!ui_wrapper && Read<u64>(memory, stage + 0x550).value_or(0) != wrapper) ||
+            Read<u64>(memory, wrapper + 0x18).value_or(0) != key) return std::nullopt;
+        return VideoCore::CompanionTextureProbe{TitleId, gpu_address, width, height, ui_wrapper != 0};
+    }
+    return std::nullopt;
+}
+
 VAddr SelectReadablePointer(Core::Memory::Memory& memory, VAddr direct, VAddr fallback,
                             std::size_t minimum_size) {
     if (IsReadableRange(memory, direct, minimum_size)) {
@@ -471,21 +516,23 @@ std::optional<std::size_t> MapTiledSourceSize(u16 width, u16 height, u8 format) 
 }
 
 std::optional<Loader::SshdCompanionPayload::Mailbox> ReadMapCaptureMailbox(
-    Core::Memory::Memory& memory, VAddr address) {
+    Core::Memory::Memory& memory, VAddr address, bool* busy = nullptr) {
     using Payload = Loader::SshdCompanionPayload::Mailbox;
-    const auto before = Read<u32>(memory, address + offsetof(Payload, map_metadata_sequence));
-    if (!before || (*before & 1U) != 0) {
-        return std::nullopt;
+    if (busy) *busy = false;
+    for (unsigned attempt = 0; attempt < 4; ++attempt) {
+        const auto before = Read<u32>(memory, address + offsetof(Payload, map_metadata_sequence));
+        const auto payload = Read<Payload>(memory, address);
+        const auto after = Read<u32>(memory, address + offsetof(Payload, map_metadata_sequence));
+        if (!before || !payload || !after ||
+            payload->magic != Loader::SshdCompanionPayload::Magic ||
+            payload->version != Loader::SshdCompanionPayload::Version ||
+            payload->size != sizeof(Payload)) return std::nullopt;
+        if (*before == *after && (*after & 1U) == 0) return payload;
     }
-    const auto payload = Read<Payload>(memory, address);
-    const auto after = Read<u32>(memory, address + offsetof(Payload, map_metadata_sequence));
-    if (!payload || !after || *before != *after || (*after & 1U) != 0 ||
-        payload->magic != Loader::SshdCompanionPayload::Magic ||
-        payload->version != Loader::SshdCompanionPayload::Version ||
-        payload->size != sizeof(Payload)) {
-        return std::nullopt;
-    }
-    return payload;
+    // Contention does not invalidate the resident GPU resource. The caller's
+    // stage/epoch lifecycle still invalidates it when the game changes areas.
+    if (busy) *busy = true;
+    return std::nullopt;
 }
 
 bool HasReadyMapImage(Core::Memory::Memory& memory, VAddr main_base, VAddr mailbox_address) {
@@ -1242,202 +1289,164 @@ int FillSnapshot(EmulationSession& session, void* output, std::size_t output_siz
     return sizeof(frame);
 }
 
+void SetMapView(EmulationSession& session, float zoom, float pan_x, float pan_y) {
+    using Payload = Loader::SshdCompanionPayload::Mailbox;
+    if (!std::isfinite(zoom) || !std::isfinite(pan_x) || !std::isfinite(pan_y)) return;
+    [[maybe_unused]] auto access = session.LockSystemAccess();
+    if (!session.IsRunning()) return;
+    auto& system = session.System();
+    if (system.GetApplicationProcessProgramID() != TitleId ||
+        system.GetApplicationProcessBuildID() != BuildId) return;
+    const auto mailbox = system.GetApplicationProcessCompanionMailbox();
+    auto& memory = system.ApplicationMemory();
+    if (!mailbox) return;
+    const u32 sequence = Read<u32>(memory, mailbox + offsetof(Payload, ui_gesture_sequence)).value_or(0) & ~1U;
+    Write(memory, mailbox + offsetof(Payload, ui_gesture_sequence), sequence + 1U);
+    Write(memory, mailbox + offsetof(Payload, ui_gesture_zoom), std::clamp(zoom, 1.f, 4.f));
+    Write(memory, mailbox + offsetof(Payload, ui_gesture_pan_x), std::clamp(pan_x, -4.f, 4.f));
+    Write(memory, mailbox + offsetof(Payload, ui_gesture_pan_y), std::clamp(pan_y, -4.f, 4.f));
+    std::atomic_thread_fence(std::memory_order_release);
+    Write(memory, mailbox + offsetof(Payload, ui_gesture_sequence), sequence + 2U);
+}
+
 int CopyMapImage(EmulationSession& session, void* output, std::size_t output_size) {
     using Payload = Loader::SshdCompanionPayload::Mailbox;
-    using CaptureState = Loader::SshdCompanionPayload::MapCaptureState;
-    using CaptureResult = Loader::SshdCompanionPayload::MapCaptureResult;
+    using State = Loader::SshdCompanionPayload::MapCaptureState;
+    if (!output || output_size < sizeof(MapTextureMetadata)) return -1;
+    [[maybe_unused]] auto system_access = session.LockSystemAccess();
+    if (!session.IsRunning()) return -2;
+    auto& system = session.System();
+    if (system.GetApplicationProcessProgramID() != TitleId ||
+        system.GetApplicationProcessBuildID() != BuildId) return -2;
+    const auto [main_base, main_size] = system.GetApplicationProcessMainModule();
+    const VAddr mailbox = system.GetApplicationProcessCompanionMailbox();
+    if (!main_base || main_size < RequiredMainSize || !mailbox) return -3;
+    auto& memory = system.ApplicationMemory();
+    auto& renderer = system.GPU().Renderer();
+    bool metadata_busy = false;
+    const auto payload = ReadMapCaptureMailbox(memory, mailbox, &metadata_busy);
+    if (!payload) {
+        if (metadata_busy) return -6;
+        renderer.SetCompanionTexture({});
+        return -3;
+    }
+    const auto state = static_cast<State>(payload->map_state);
+    Write(memory, mailbox + offsetof(Payload, ui_request), payload->ui_request + 1U);
+    static std::atomic<u32> ui_log_counter{0};
+    if ((ui_log_counter.fetch_add(1) % 50) == 0) {
+        LOG_INFO(Frontend, "[SSHD-MAP-UI] status={} frames={} owner={:#x} texture={:#x} "
+                          "stage={:#x} guard={} initializations={} area={} floor={} hints={}", payload->ui_status, payload->ui_frames,
+                 payload->ui_owner, payload->ui_texture, payload->ui_stage, payload->ui_guard,
+                 payload->ui_reserved,
+                 std::string(payload->stage_name.begin(),
+                             std::find(payload->stage_name.begin(), payload->stage_name.end(), '\0')),
+                 payload->map_floor,
+                 std::count_if(payload->ui_hint_panes.begin(), payload->ui_hint_panes.end(),
+                               [](u64 pane) { return pane != 0; }));
+    }
+    if (state == State::Ready || state == State::Rejected) {
+        Write(memory, mailbox + offsetof(Payload, map_acknowledged), payload->map_completed);
+    } else if (state == State::Idle && payload->map_request == payload->map_completed) {
+        u32 request = MapRequestSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (!request) request = MapRequestSequence.fetch_add(1, std::memory_order_relaxed) + 1;
+        Write(memory, mailbox + offsetof(Payload, map_request), request);
+    }
+    // Distinguish native initialization from GPU residency. The old decoder
+    // treated the legacy cache key as GX pixels and produced the colored strip.
+    const auto global = Read<u64>(memory, main_base + MapGlobalPointerOffset).value_or(0);
+    const auto capture = global >= 0xF358 ? global - 0xF358 : 0;
+    const auto width = Read<float>(memory, capture + 0xA0).value_or(0);
+    const auto height = Read<float>(memory, capture + 0xA8).value_or(0);
+    const auto current_stage = Read<u64>(memory, main_base + StageRoomManagerPointerOffset).value_or(0);
+    const bool native_ui = payload->ui_frames && payload->ui_stage == current_stage;
+    const auto texture = ReadNativeMapTexture(system, main_base, native_ui ? payload->ui_texture : 0);
+    if (!texture || !std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0) {
+        renderer.SetCompanionTexture({});
+        return -5;
+    }
+    // dStage's map orthographic projection multiplies its horizontal world
+    // extent by these native viewport globals (main+E26xxx). Texture pixels
+    // alone therefore do not encode the map's display aspect ratio.
+    const float native_width = Read<float>(memory, main_base + 0x02BF9D60).value_or(0.f);
+    const float reference_width = Read<float>(memory, main_base + 0x02BF9D58).value_or(0.f);
+    const float display_aspect = native_ui ? static_cast<float>(texture->width) / texture->height :
+                                            width / height * native_width / reference_width;
+    if (!std::isfinite(display_aspect) || display_aspect <= 0.f) {
+        renderer.SetCompanionTexture({});
+        return -5;
+    }
+    renderer.SetCompanionTexture(*texture);
+    static std::atomic<u64> logged_address{0};
+    if (logged_address.exchange(texture->gpu_address) != texture->gpu_address) {
+        LOG_INFO(Frontend, "[SSHD-MAP-GPU] publish gpu={:#x} size={}x{} native_extents={}x{} "
+                          "projection_width={}/{} display_aspect={}",
+                 texture->gpu_address, texture->width, texture->height, width, height,
+                 native_width, reference_width, display_aspect);
+        renderer.RequestCompanionTextureProbe(*texture);
+    }
+    MapTextureMetadata header{};
+    header.magic = MapImageMagic;
+    header.version = 3; // Metadata only: the actual image stays on the GPU.
+    header.header_size = sizeof(header);
+    header.sequence = payload->map_in_flight;
+    header.width = static_cast<u16>(texture->width);
+    header.height = static_cast<u16>(texture->height);
+    header.display_aspect = display_aspect;
+    header.source_format = 0x25;
+    header.floor = static_cast<s8>(Read<s32>(memory, global + MapGlobalFloorOffset).value_or(0));
+    header.reserved = renderer.CompanionPresentedAddress() == texture->gpu_address ? 1 : 0;
+    if (!ReadBytes(memory, main_base + CurrentStageOffset, header.stage_name, sizeof(header.stage_name))) {
+        renderer.SetCompanionTexture({});
+        return -2;
+    }
+    std::memcpy(output, &header, sizeof(header));
+    return sizeof(header);
+}
 
-    if (!output || output_size < sizeof(MapImageHeaderV1)) {
+int GetBottleState(EmulationSession& session, int slot, int item) {
+    [[maybe_unused]] auto system_access = session.LockSystemAccess();
+    if (!session.IsRunning() || slot < 0 || slot >= 8 || item < 0 || item > 255) {
         return -1;
     }
-
-    Payload capture{};
-    std::vector<u8> tiled;
-    {
-        [[maybe_unused]] auto system_access = session.LockSystemAccess();
-        if (!session.IsRunning()) {
-            return -2;
-        }
-        auto& system = session.System();
-        if (system.GetApplicationProcessProgramID() != TitleId ||
-            system.GetApplicationProcessBuildID() != BuildId) {
-            return -2;
-        }
-        const auto [main_base, main_size] = system.GetApplicationProcessMainModule();
-        const VAddr mailbox_address = system.GetApplicationProcessCompanionMailbox();
-        if (!main_base || main_size < RequiredMainSize || !mailbox_address) {
-            return -3;
-        }
-        auto& memory = system.ApplicationMemory();
-        const auto payload = ReadMapCaptureMailbox(memory, mailbox_address);
-        if (!payload) {
-            // The bridge initializes its exact-version header on the guest
-            // game thread. Do not write into an unrecognized mailbox.
-            constexpr u64 InvalidMailboxSignature = 0xFFFFFFFFFFFFFFFEULL;
-            if (LoggedMapCaptureSignature.exchange(InvalidMailboxSignature,
-                                                   std::memory_order_relaxed) !=
-                InvalidMailboxSignature) {
-                LOG_INFO(Frontend, "[SSHD-MAP] waiting for capture-hook mailbox initialization");
-            }
-            return -3;
-        }
-
-        const u64 capture_signature =
-            static_cast<u64>(payload->map_state) |
-            (static_cast<u64>(payload->map_result) << 4) |
-            (static_cast<u64>(payload->map_request) << 8) |
-            (static_cast<u64>(payload->map_in_flight) << 24) |
-            (static_cast<u64>(payload->map_completed) << 40) |
-            (static_cast<u64>(payload->map_format) << 56);
-        if (LoggedMapCaptureSignature.exchange(capture_signature,
-                                               std::memory_order_relaxed) !=
-            capture_signature) {
-            LOG_INFO(Frontend,
-                     "[SSHD-MAP] state={} result={} request={} in_flight={} completed={} "
-                     "ack={} stage={:#x} texture={:#x} data={:#x} size={}x{} format={} floor={}",
-                     payload->map_state, payload->map_result, payload->map_request,
-                     payload->map_in_flight, payload->map_completed,
-                     payload->map_acknowledged, payload->map_stage,
-                     payload->map_texture, payload->map_data, payload->map_width,
-                     payload->map_height, payload->map_format, payload->map_floor);
-        }
-
-        const auto state = static_cast<CaptureState>(payload->map_state);
-        if (state == CaptureState::Rejected) {
-            Write(memory, mailbox_address + offsetof(Payload, map_acknowledged),
-                  payload->map_completed);
-            return payload->map_result == static_cast<u32>(CaptureResult::NoStage) ? -2 : -5;
-        }
-        if (state == CaptureState::Idle) {
-            if (payload->map_request == payload->map_completed) {
-                u32 request = MapRequestSequence.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (request == 0) {
-                    request = MapRequestSequence.fetch_add(1, std::memory_order_relaxed) + 1;
-                }
-                if (!Write(memory, mailbox_address + offsetof(Payload, map_request), request)) {
-                    return -3;
-                }
-            }
-            return 0;
-        }
-        if (state == CaptureState::Pending) {
-            return 0;
-        }
-        if (state != CaptureState::Ready ||
-            payload->map_result != static_cast<u32>(CaptureResult::Success) ||
-            payload->map_completed == 0 ||
-            payload->map_completed != payload->map_in_flight) {
-            return -3;
-        }
-
-        const auto current_stage =
-            Read<u64>(memory, main_base + StageRoomManagerPointerOffset);
-        if (!current_stage || *current_stage != payload->map_stage) {
-            Write(memory, mailbox_address + offsetof(Payload, map_acknowledged),
-                  payload->map_completed);
-            return 0;
-        }
-        if (payload->map_format != GxTextureFormatRgb5a3 &&
-            payload->map_format != GxTextureFormatRgba8) {
-            // Fail closed until a format has a verified GX block decoder.
-            Write(memory, mailbox_address + offsetof(Payload, map_acknowledged),
-                  payload->map_completed);
-            return -4;
-        }
-        const auto source_size = MapTiledSourceSize(
-            payload->map_width, payload->map_height, payload->map_format);
-        if (!source_size || !payload->map_texture || !payload->map_data ||
-            !IsReadableRange(memory, payload->map_data, *source_size)) {
-            Write(memory, mailbox_address + offsetof(Payload, map_acknowledged),
-                  payload->map_completed);
-            return -5;
-        }
-
-        const std::size_t pixel_size = static_cast<std::size_t>(payload->map_width) *
-                                       payload->map_height * 4;
-        if (pixel_size > std::numeric_limits<std::size_t>::max() -
-                             sizeof(MapImageHeaderV1)) {
-            return -5;
-        }
-        const std::size_t required = sizeof(MapImageHeaderV1) + pixel_size;
-        if (required > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-            return -5;
-        }
-        if (output_size < required) {
-            return -static_cast<int>(required);
-        }
-
-        tiled.resize(*source_size);
-        if (!ReadBytes(memory, payload->map_data, tiled.data(), tiled.size())) {
-            return -5;
-        }
-        if (!Write(memory, mailbox_address + offsetof(Payload, map_acknowledged),
-                   payload->map_completed)) {
-            return -3;
-        }
-        capture = *payload;
+    auto& system = session.System();
+    if (system.GetApplicationProcessProgramID() != TitleId ||
+        system.GetApplicationProcessBuildID() != BuildId) {
+        return -1;
     }
-
-    MapImageHeaderV1 header{};
-    header.magic = MapImageMagic;
-    header.version = 1;
-    header.header_size = sizeof(header);
-    header.sequence = capture.map_completed;
-    header.width = capture.map_width;
-    header.height = capture.map_height;
-    header.row_stride = static_cast<u32>(capture.map_width) * 4;
-    header.pixel_format = MapImagePixelFormatRgba8888;
-    header.source_format = capture.map_format;
-    header.floor = capture.map_floor;
-    std::memcpy(header.stage_name, capture.map_stage_name.data(),
-                sizeof(header.stage_name));
-    std::memcpy(output, &header, sizeof(header));
-
-    auto* pixels = static_cast<u8*>(output) + sizeof(header);
-    const std::size_t blocks_x = (static_cast<std::size_t>(capture.map_width) + 3) / 4;
-    for (std::size_t y = 0; y < capture.map_height; ++y) {
-        for (std::size_t x = 0; x < capture.map_width; ++x) {
-            const std::size_t block = (y / 4) * blocks_x + (x / 4);
-            const std::size_t in_block = (y & 3U) * 8 + (x & 3U) * 2;
-            const std::size_t destination =
-                (y * static_cast<std::size_t>(capture.map_width) + x) * 4;
-            if (capture.map_format == GxTextureFormatRgb5a3) {
-                const std::size_t source = block * 32 + in_block;
-                const u16 texel = static_cast<u16>(
-                    (static_cast<u16>(tiled[source]) << 8) | tiled[source + 1]);
-                if ((texel & 0x8000U) != 0) {
-                    const u8 red = static_cast<u8>((texel >> 10) & 0x1FU);
-                    const u8 green = static_cast<u8>((texel >> 5) & 0x1FU);
-                    const u8 blue = static_cast<u8>(texel & 0x1FU);
-                    pixels[destination + 0] = static_cast<u8>((red << 3) | (red >> 2));
-                    pixels[destination + 1] =
-                        static_cast<u8>((green << 3) | (green >> 2));
-                    pixels[destination + 2] = static_cast<u8>((blue << 3) | (blue >> 2));
-                    pixels[destination + 3] = 0xFF;
-                } else {
-                    const u8 alpha = static_cast<u8>((texel >> 12) & 0x07U);
-                    pixels[destination + 0] =
-                        static_cast<u8>(((texel >> 8) & 0x0FU) * 0x11U);
-                    pixels[destination + 1] =
-                        static_cast<u8>(((texel >> 4) & 0x0FU) * 0x11U);
-                    pixels[destination + 2] =
-                        static_cast<u8>((texel & 0x0FU) * 0x11U);
-                    pixels[destination + 3] =
-                        static_cast<u8>((static_cast<u16>(alpha) * 255U + 3U) / 7U);
-                }
-            } else {
-                const std::size_t source = block * 64 + in_block;
-                pixels[destination + 0] = tiled[source + 1];
-                pixels[destination + 1] = tiled[source + 0x20];
-                pixels[destination + 2] = tiled[source + 0x21];
-                pixels[destination + 3] = tiled[source + 0];
-            }
-        }
+    const auto [main_base, main_size] = system.GetApplicationProcessMainModule();
+    if (!main_base || main_size < RequiredMainSize) return -1;
+    auto& memory = system.ApplicationMemory();
+    const auto manager = Read<u64>(memory, main_base + FileManagerPointerOffset).value_or(0);
+    const auto player = Read<u64>(memory, main_base + PlayerPointerOffset).value_or(0);
+    if (!manager || !player) return -1;
+    const auto save = manager + FileManagerSaveAOffset;
+    std::array<char, 8> stage{};
+    if (!ReadBytes(memory, main_base + CurrentStageOffset, stage.data(), stage.size()) ||
+        !HasPlayableStageName(stage.data(), stage.size()) ||
+        Read<u16>(memory, save + SaveCurrentHealthOffset).value_or(0) == 0) return -1;
+    const auto packed = Read<s32>(memory, save + SavePouchOffset + slot * 4).value_or(-1);
+    const auto held = Read<u16>(memory, player + 0x6404);
+    const auto animation = Read<u16>(memory, player + 0x1A44);
+    if (!held || !animation || packed < 0) return -1;
+    const auto selected = Read<u8>(memory, save + SaveSelectedPouchOffset).value_or(255);
+    const u64 diagnostic = static_cast<u64>(*held) << 40 |
+        static_cast<u64>(*animation) << 24 | static_cast<u64>(selected) << 16 |
+        static_cast<u64>(slot) << 8 | static_cast<u64>(item);
+    static u64 last_diagnostic = ~u64{};
+    if (diagnostic != last_diagnostic) {
+        last_diagnostic = diagnostic;
+        LOG_INFO(Frontend, "[SSHD Item] Bottle slot={} item={} held={} animation={} selected={}",
+                 slot, item, *held, *animation, selected);
     }
-
-    return static_cast<int>(sizeof(header) +
-                            static_cast<std::size_t>(capture.map_width) *
-                                capture.map_height * 4);
+    // AE0104/AE0118 identify consumption and AE0128 identifies BINOUT.
+    // AE0138's isUsingBottle() specifically recognizes the empty catch bottle
+    // (13), not a filled potion (12). Native BINHOLD (441) is the filled-bottle
+    // pose observed after R; both bottle types must prevent a second ready input.
+    if (selected == slot && ((*animation >= 435 && *animation <= 437) || *animation == 442)) return 3;
+    if ((packed & 0xFF) != item) return -1;
+    if (*held != 12 && *held != 13) return 0;
+    if (selected != slot) return -1;
+    return (*held == 12 && *animation == 441) || (*held == 13 && *animation != 295) ? 2 : 1;
 }
 
 bool PerformAction(EmulationSession& session, int action, int argument) {

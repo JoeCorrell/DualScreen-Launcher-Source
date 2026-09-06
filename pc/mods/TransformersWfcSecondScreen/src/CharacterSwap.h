@@ -190,10 +190,20 @@ class CharacterSwapOperations {
       CharacterSwapCapture* capture) noexcept = 0;
 
   // RevertMutation is called for every applied or dirty-failed mutation, in
-  // strict reverse order. A failure does not stop the remaining rollback.
+  // strict reverse order. Individual cleanup failures do not skip remaining
+  // reversals, except when the required graph-quiescence gate rejects/waits.
   virtual bool RevertMutation(CharacterSwapMutation mutation,
                               const CharacterSwapRequest& request,
                               CharacterSwapCapture* capture) noexcept = 0;
+
+  // Called after reverting released input/AI guards, before ANY graph rollback.
+  // Reacquiring an AI guard can be asynchronous. kWait leaves the intact
+  // committed graph and command gate in place across engine ticks; kReady
+  // means it is safe to reverse ownership, including any stopped-cache cleanup.
+  // kReject abandons unsafe reversal and remains failed-closed.
+  virtual CharacterSwapPreflight PrepareRollbackGraph(
+      const CharacterSwapRequest& request,
+      const CharacterSwapCapture& capture) noexcept = 0;
 
   // Both verification methods must be read-only.
   virtual bool VerifyCommittedGraph(
@@ -203,7 +213,8 @@ class CharacterSwapOperations {
       const CharacterSwapRequest& request,
       const CharacterSwapCapture& capture) noexcept = 0;
 
-  // Called after synchronous rollback. The adapter should keep external
+  // Called after completed rollback or an unsafe/timed-out rollback wait.
+  // The adapter should keep external
   // command/input gates closed if rollback_complete is false.
   virtual void EnterFailedClosed(
       const CharacterSwapRequest& request,
@@ -258,6 +269,8 @@ class CharacterSwapTransaction {
   bool ApplyOne(CharacterSwapMutation mutation) noexcept;
   void FailAndRollback(CharacterSwapFailure cause,
                        CharacterSwapMutation failed_mutation) noexcept;
+  void ContinueRollback() noexcept;
+  void FinishRollback(bool abandon_pending = false) noexcept;
   bool CaptureMatchesRequest(const CharacterSwapCapture& capture) const
       noexcept;
   static bool IsInternallyValid(const CharacterSwapCapture& capture) noexcept;
@@ -277,6 +290,9 @@ class CharacterSwapTransaction {
   CharacterSwapMutation applied_[kMutationCapacity] = {};
   size_t applied_count_ = 0;
   uint64_t transaction_started_at_millis_ = 0;
+  uint64_t current_tick_millis_ = 0;
+  uint64_t rollback_started_at_millis_ = 0;
+  bool rollback_graph_gate_pending_ = false;
   uint64_t last_accepted_at_millis_ = 0;
   bool has_last_accepted_time_ = false;
   bool has_capture_ = false;

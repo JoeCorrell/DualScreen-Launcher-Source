@@ -15,12 +15,19 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--build-root", type=Path, required=True)
     parser.add_argument("--player-assets", type=Path, required=True)
+    parser.add_argument("--model-subdirectory", default="",
+                        help="Optional relative model directory, e.g. held")
     parser.add_argument(
         "--replace-existing",
         action="store_true",
         help="Replace GLBs already present in the Android asset directory",
     )
     args = parser.parse_args()
+    subdirectory = Path(args.model_subdirectory)
+    if subdirectory.is_absolute() or '..' in subdirectory.parts:
+        raise ValueError('model subdirectory must stay inside the asset root')
+    model_root = args.player_assets / subdirectory
+    model_root.mkdir(parents=True, exist_ok=True)
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     if manifest.get("errors"):
@@ -33,7 +40,7 @@ def main() -> int:
     preserved = 0
     for model_name in sorted(manifest["models"]):
         source = args.build_root / model_name / f"{model_name}.glb"
-        destination = args.player_assets / f"{model_name}.glb"
+        destination = model_root / f"{model_name}.glb"
         if not source.is_file():
             raise FileNotFoundError(source)
         if destination.exists() and not args.replace_existing:
@@ -43,6 +50,7 @@ def main() -> int:
         copied += 1
 
     for actor, entry in sorted(manifest["actors"].items()):
+        entry = dict(entry, file=(subdirectory / entry['file']).as_posix())
         model_file = args.player_assets / entry["file"]
         if not model_file.is_file():
             raise FileNotFoundError(f"{actor} references missing {model_file}")

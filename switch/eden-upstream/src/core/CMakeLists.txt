@@ -5,6 +5,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 add_library(core STATIC
+    companion/external_module.cpp
     arm/arm_interface.cpp
     arm/arm_interface.h
     arm/debug.cpp

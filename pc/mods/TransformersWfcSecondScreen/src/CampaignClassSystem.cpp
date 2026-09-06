@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 
 #include "Log.h"
+#include "NativeCampaignTravel.h"
 #include "UnrealBridge.h"
 
 namespace wfcds {
@@ -104,6 +106,7 @@ struct CampaignClassFlow {
   bool prompt_pending = false;
   bool release_travel = false;
   bool travel_forwarded = false;
+  bool initial_commit_armed = false;
   bool character_select_seen = false;
   bool customization_seen = false;
   bool customization_close_requested = false;
@@ -136,7 +139,6 @@ struct CampaignClassFlow {
 };
 
 CampaignClassFlow g_flow;
-UnrealFunctionHandle g_start_level;
 UnrealFunctionHandle g_select_character;
 UnrealFunctionHandle g_get_playable_characters;
 UnrealFunctionHandle g_is_character_unlocked;
@@ -158,7 +160,6 @@ UnrealFunctionHandle g_check_custom_character_data_loaded;
 UnrealFunctionHandle g_resolve_character_data;
 UnrealFunctionHandle g_spawn_ai_character;
 UnrealFunctionHandle g_get_ai_character_definition;
-UnrealFunctionExecDetour g_start_level_detour;
 UnrealFunctionExecDetour g_select_character_detour;
 UnrealFunctionExecDetour g_get_playable_characters_detour;
 UnrealFunctionExecDetour g_find_iconic_character_detour;
@@ -197,6 +198,7 @@ uint32_t g_spawn_ai_character_name_offset = 0;
 void* g_character_data_helpers = nullptr;
 uint32_t g_character_data_helpers_index = 0;
 int g_direct_resolution_slot = -1;
+bool g_direct_resolution_loadout_valid = false;
 bool g_ai_definition_substitution_active = false;
 std::array<CharacterCatalogEntry, kMaxRosterSize> g_catalog = {};
 size_t g_catalog_count = 0;
@@ -784,41 +786,41 @@ bool ParseLoadoutTokens(const LoadoutText& source,
   return *output_count != 0;
 }
 
-bool ApplyLoadoutArrayOverride(const UnrealStructValueView& character,
-                               const wchar_t* field_name,
-                               const LoadoutText& source,
-                               size_t maximum_elements) {
-  if (!source.text[0]) return true;
-  if (std::strcmp(source.text.data(), "Empty") == 0)
-    return UnrealShrinkStructArray(character, field_name, 0);
-  std::array<CharacterName, 4> tokens = {};
-  size_t token_count = 0;
-  if (!ParseLoadoutTokens(source, &tokens, &token_count)) return false;
-  token_count = token_count < maximum_elements ? token_count
-                                                : maximum_elements;
-  for (size_t index = 0; index < token_count; ++index) {
-    std::array<wchar_t, kCharacterNameCapacity> wide = {};
-    if ((tokens[index].text[0] && !ToWideName(tokens[index], &wide)) ||
-        !UnrealAssignStructStringArrayElementWide(
-            character, field_name, static_cast<int32_t>(index),
-            wide.data()))
-      return false;
-  }
-  return UnrealShrinkStructArray(character, field_name,
-                                 static_cast<int32_t>(token_count));
-}
-
 bool ApplyConfiguredLoadout(const UnrealStructValueView& character,
                             size_t slot) {
   if (slot >= kSquadSize) return false;
   const CharacterLoadout& loadout = g_configuration.loadouts[slot];
-  return ApplyLoadoutArrayOverride(character, L"WeaponTypes",
-                                   loadout.weapons, 2) &&
-         ApplyLoadoutArrayOverride(character, L"VehicleWeapons",
-                                   loadout.vehicle_weapons, 2) &&
-         ApplyLoadoutArrayOverride(character, L"Abilities",
-                                   loadout.abilities, 2) &&
-         ApplyLoadoutArrayOverride(character, L"Skills", loadout.skills, 3);
+  const LoadoutText* sources[] = {&loadout.weapons, &loadout.vehicle_weapons,
+                                 &loadout.abilities, &loadout.skills};
+  const wchar_t* fields[] = {L"WeaponTypes", L"VehicleWeapons", L"Abilities", L"Skills"};
+  const size_t limits[] = {2, 2, 2, 3};
+  std::array<UnrealStringArrayOverride, 4> edits = {};
+  std::array<std::array<std::array<wchar_t, kCharacterNameCapacity>, 4>, 4> wide = {};
+  std::array<std::array<const wchar_t*, 4>, 4> elements = {};
+  size_t edit_count = 0;
+  for (size_t field = 0; field < 4; ++field) {
+    const LoadoutText& source = *sources[field];
+    if (!source.text[0]) continue;  // Native commit: empty argument = unchanged.
+    const bool clear = std::strcmp(source.text.data(), "Empty") == 0;
+    std::array<CharacterName, 4> tokens = {};
+    size_t token_count = 0;
+    if (clear && field < 2) return false;  // Never remove native inventory.
+    if (!clear && !ParseLoadoutTokens(source, &tokens, &token_count)) return false;
+    // Native CommitCharacter changes only gun slots 0/1. Getter inserts melee
+    // at index 2 for display; neither melee nor grenade inventory is replaced.
+    if (field < 2) token_count = std::min(token_count, limits[field]);
+    else if (token_count > limits[field]) return false;
+    for (size_t j = 0; j < token_count; ++j) {
+      if (tokens[j].text[0] && !ToWideName(tokens[j], &wide[field][j])) return false;
+      elements[field][j] = wide[field][j].data();
+    }
+    edits[edit_count++] = {fields[field], elements[field].data(),
+        static_cast<int32_t>(token_count), field < 2};
+  }
+  // This result is owned by the caller's native return frame. The engine's
+  // allocator/assigner supports growth and cleanup; nothing is published until
+  // every field is valid and staged, so a failure cannot strand half a loadout.
+  return UnrealApplyOwnedStringArrayOverrides(character, edits.data(), edit_count);
 }
 
 bool CommitConfiguration(const CharacterName& initial) {
@@ -882,8 +884,11 @@ void WFCDS_UNREAL_EXEC_CALL HookedFindIconicCharacter(
           requested.text.data());
       return;
     }
-    if (!ApplyConfiguredLoadout(returned,
-                                static_cast<size_t>(configured_slot)))
+    const bool loadout_valid = ApplyConfiguredLoadout(
+        returned, static_cast<size_t>(configured_slot));
+    if (g_direct_resolution_slot == configured_slot)
+      g_direct_resolution_loadout_valid = loadout_valid;
+    if (!loadout_valid)
       Log(LogLevel::kError,
           "[CampaignClass] selected-character loadout override failed name=%s",
           requested.text.data());
@@ -948,6 +953,47 @@ bool ResolveCharacterDataHelpers() {
   return g_character_data_helpers_index != 0;
 }
 
+bool ValidateResolvedCharacter(const UnrealStructValueView& iconic,
+                                const UnrealStructValueView& resolved) {
+  void* chassis = nullptr;
+  void* melee = nullptr;
+  if (!UnrealReadStructObjectField(resolved, L"ChassisType", &chassis) ||
+      !chassis || !UnrealObjectIsA(chassis, L"TnTransformer") ||
+      !UnrealReadStructObjectField(resolved, L"MeleeWeapon", &melee) ||
+      !melee || !UnrealObjectIsA(melee, L"Class")) return false;
+  // ReplicateCharacterData logs bad IDs but returns success after omitting
+  // their entries. A matching CharacterName alone cannot certify a loadout.
+  // Abilities retain empty slots as None; Skills intentionally omit empties.
+  for (const wchar_t* field : {L"WeaponTypes", L"VehicleWeapons", L"Abilities", L"Skills"}) {
+    UnrealArrayView input = {}, output = {};
+    if (!UnrealReadStructTypedArray(iconic, field, L"StrProperty",
+                                    sizeof(UnrealArrayView), &input) ||
+        !UnrealReadStructTypedArray(resolved, field, L"ClassProperty",
+                                    sizeof(void*), &output)) return false;
+    const bool skills = std::wcscmp(field, L"Skills") == 0;
+    const bool abilities = std::wcscmp(field, L"Abilities") == 0;
+    const auto* strings = static_cast<const UnrealArrayView*>(input.data);
+    int32_t expected_count = 0;
+    for (int32_t i = 0; i < input.count; ++i) {
+      std::array<char, kLoadoutTextCapacity> id = {};
+      if (!UnrealReadStringValue(&strings[i], id.data(), id.size())) return false;
+      if (skills && !id[0]) continue;
+      void* asset = nullptr;
+      if (!UnrealReadObjectArrayElement(output, expected_count++, &asset) ||
+          ((id[0] || !abilities) && (!asset || !UnrealObjectIsA(asset, L"Class"))) ||
+          (abilities && !id[0] && asset)) return false;
+    }
+    if (output.count != expected_count ||
+        (!skills && !abilities && output.count == 0)) return false;
+    if (skills) {
+      UnrealArrayView levels = {};
+      if (!UnrealReadStructTypedArray(resolved, L"SkillLevels", L"ByteProperty",
+                                      1, &levels) || levels.count != output.count) return false;
+    }
+  }
+  return true;
+}
+
 bool EnsureResolvedCharacter(size_t slot) {
   if (!g_configuration.active || slot >= kSquadSize ||
       !PublishedObjectValid(g_flow.controller, g_flow.controller_index) ||
@@ -967,17 +1013,24 @@ bool EnsureResolvedCharacter(size_t slot) {
   // UE3's returned structs contain FString/TArray members whose backing data
   // must not be tied to a temporary reflected-call buffer.
   g_direct_resolution_slot = static_cast<int>(slot);
+  g_direct_resolution_loadout_valid = false;
   const bool iconic_ready = UnrealCallExactStringStructResultPersistent(
       g_flow.controller, g_find_iconic_character, L"CharacterName",
       selected.data(), cache.iconic_call_storage.data(),
       cache.iconic_call_storage.size(), &cache.iconic_data);
   g_direct_resolution_slot = -1;
-  if (!iconic_ready ||
+  if (!iconic_ready || !g_direct_resolution_loadout_valid ||
       !UnrealCallExactStructResultPersistent(
           g_character_data_helpers, g_resolve_character_data, L"CDIn",
           cache.iconic_data, cache.resolve_call_storage.data(),
           cache.resolve_call_storage.size(), &cache.resolved_data))
     return false;
+  if (!ValidateResolvedCharacter(cache.iconic_data, cache.resolved_data)) {
+    Log(LogLevel::kError,
+        "[CampaignClass] native resolution dropped or invalidated selected assets slot=%u selected=%s; chapter preparation rejected",
+        static_cast<unsigned>(slot), g_configuration.selected_characters[slot].text.data());
+    return false;
+  }
 
   CharacterName resolved_name;
   std::array<wchar_t, kCharacterNameCapacity> shell = {};
@@ -1017,12 +1070,30 @@ bool PrepareNextResolvedCharacter(ULONGLONG now) {
     // Resolve at most one character per game tick and only in the lobby.
     return true;
   }
-  g_flow.stage = SelectionStage::kComplete;
-  g_flow.close_pending = true;
+  std::array<wchar_t, kCharacterNameCapacity> shell = {};
+  if (!PublishedObjectValid(g_flow.selection_binding, g_flow.selection_binding_index) ||
+      !ToWideName(g_flow.native_initial, &shell)) {
+    AbortFlow("native selection binding expired before validated commit");
+    return false;
+  }
+  // SelectCharacter mutates PRI and clears checkpoint override data. Only
+  // enter it once all THREE characters resolve; never retain/reuse an FFrame
+  // from the earlier Scaleform callback across ticks.
+  g_flow.stage = SelectionStage::kVerifyInitialCharacter;
+  g_flow.initial_commit_armed = true;
+  const bool invoked = UnrealCallExactVoidStringInt(
+      g_flow.selection_binding, g_select_character, L"CharacterName", shell.data(),
+      L"Ignored", 0);
+  const bool consumed = !g_flow.initial_commit_armed;
+  g_flow.initial_commit_armed = false;
+  if (!invoked || !consumed || g_flow.stage == SelectionStage::kFailed) {
+    AbortFlow("validated native initial-character commit could not be dispatched");
+    return false;
+  }
   g_flow.action_started_at = now;
   g_flow.retry_at = now;
   Log(LogLevel::kInfo,
-      "[CampaignClass] all native squad character data prepared; closing selector");
+      "[CampaignClass] all three loadouts validated before native initial-character commit; verifying selection");
   return true;
 }
 
@@ -1059,7 +1130,11 @@ void WFCDS_UNREAL_EXEC_CALL HookedSpawnAiCharacter(
       original_storage = {};
   ResolvedCharacterCache& selected =
       g_configuration.resolved[static_cast<size_t>(slot)];
-  if (!UnrealReadObjectProperty(context, L"_CoopInfo", &coop_info) ||
+  // Native return storage is not a GC root. Revalidate its resolved object
+  // graph after travel/streaming before exposing it through a live template.
+  // This is a safety check, not durable retention or checkpoint persistence.
+  if (!ValidateResolvedCharacter(selected.iconic_data, selected.resolved_data) ||
+      !UnrealReadObjectProperty(context, L"_CoopInfo", &coop_info) ||
       !coop_info || !UnrealObjectIsA(coop_info, L"TnCoopInfo") ||
       !ToWideName(mission_shell, &shell_wide) ||
       !UnrealCallExactStringObjectResult(
@@ -1137,13 +1212,17 @@ void WFCDS_UNREAL_EXEC_CALL HookedSpawnAiCharacter(
           .text.data());
 }
 
-void WFCDS_UNREAL_EXEC_CALL HookedStartLevel(
-    void* context, void* unused_edx, void* frame, void* result) {
+bool AdmitNativeStartLevel(void* context) {
+  static unsigned readiness_reports = 0;
+  if (!g_hooks_ready && readiness_reports < 3) {
+    ++readiness_reports;
+    Log(LogLevel::kWarning,
+        "[CampaignClass] compiled StartLevel reached; native menu/loadout adapters not ready, preserving campaign travel");
+  }
   if (g_stopping || !g_hooks_ready || !g_game_thread ||
       GetCurrentThreadId() != g_game_thread || !UnrealObjectValid(context) ||
       !UnrealObjectIsA(context, L"TnGameLobbyGameCampaign")) {
-    CallOriginal(g_start_level_detour, context, unused_edx, frame, result);
-    return;
+    return true;
   }
 
   const uint32_t context_index = UnrealObjectIndex(context);
@@ -1153,29 +1232,28 @@ void WFCDS_UNREAL_EXEC_CALL HookedStartLevel(
     if (!UnrealCallBool(context, L"IsMultiplayerGame", &multiplayer)) {
       Log(LogLevel::kWarning,
           "[CampaignClass] native player-count state was unavailable; preserving original StartLevel");
-      CallOriginal(g_start_level_detour, context, unused_edx, frame, result);
-      return;
+      return true;
     }
     if (multiplayer) {
       // This system creates a local three-AI campaign squad. Never suppress or
       // rewrite a real co-op lobby's character ownership/replication path.
       Log(LogLevel::kInfo,
           "[CampaignClass] online co-op lobby detected; preserving native StartLevel");
-      CallOriginal(g_start_level_detour, context, unused_edx, frame, result);
-      return;
+      return true;
     }
     BeginFlow(context);
-    return;
+    return false;
   }
   if (g_flow.release_travel && !g_flow.travel_forwarded) {
     g_flow.travel_forwarded = true;
     Log(LogLevel::kInfo,
         "[CampaignClass] native selection complete; resuming original StartLevel");
-    CallOriginal(g_start_level_detour, context, unused_edx, frame, result);
+    return true;
   }
   // FinalCountdown can request StartLevel again before seamless travel has
   // retired this lobby. Suppress every duplicate after the one forwarded
   // call so statistics and ServerTravel are never issued twice.
+  return false;
 }
 
 void WFCDS_UNREAL_EXEC_CALL HookedGetPlayableCharacters(
@@ -1449,6 +1527,20 @@ void WFCDS_UNREAL_EXEC_CALL HookedCheckCustomCharacterDataLoaded(
 
 void WFCDS_UNREAL_EXEC_CALL HookedSelectCharacter(
     void* context, void* unused_edx, void* frame, void* result) {
+  if (IsFlowThread() && g_flow.active && g_flow.initial_commit_armed) {
+    g_flow.initial_commit_armed = false;  // Consume before any reentrant callback.
+    CharacterName requested;
+    if (context != g_flow.selection_binding ||
+        g_flow.stage != SelectionStage::kVerifyInitialCharacter ||
+        !UnrealReadFrameStringParameter(frame, g_select_character_name_offset,
+                                        requested.text.data(), requested.text.size()) ||
+        !SameName(g_flow.native_initial, requested.text.data())) {
+      AbortFlow("native initial-character commit token mismatch");
+      return;
+    }
+    CallOriginal(g_select_character_detour, context, unused_edx, frame, result);
+    return;
+  }
   // Outside the live pre-travel selector this is WFC's function, not ours.
   // In particular, seamless travel and checkpoint initialization can invoke
   // SelectCharacter while the old lobby UObject is still alive. The previous
@@ -1539,31 +1631,9 @@ void WFCDS_UNREAL_EXEC_CALL HookedSelectCharacter(
         AbortFlow("selected squad could not be mapped to mission character shells");
         return;
       }
-      {
-        std::array<wchar_t, kCharacterNameCapacity> native_initial = {};
-        std::array<wchar_t, kCharacterNameCapacity> selected_initial = {};
-        if (!ToWideName(g_flow.native_initial, &native_initial) ||
-            !ToWideName(g_flow.initial, &selected_initial) ||
-            !UnrealAssignFrameStringParameter(
-                frame, g_select_character_name_offset,
-                native_initial.data())) {
-          g_configuration = {};
-          AbortFlow("native initial-character parameter could not be prepared");
-          return;
-        }
-        CallOriginal(g_select_character_detour, context, unused_edx, frame,
-                     result);
-        if (!UnrealAssignFrameStringParameter(
-                frame, g_select_character_name_offset,
-                selected_initial.data())) {
-          g_configuration = {};
-          AbortFlow("native initial-character parameter could not be restored");
-          return;
-        }
-      }
-      g_flow.stage = SelectionStage::kVerifyInitialCharacter;
+      g_flow.stage = SelectionStage::kPrepareConfiguration;
       Log(LogLevel::kInfo,
-          "[CampaignClass] native initial-character assignment requested selected=%s mission-shell=%s slot=%u",
+          "[CampaignClass] selection staged before native assignment selected=%s mission-shell=%s slot=%u",
           selected.text.data(), g_flow.native_initial.text.data(),
           static_cast<unsigned>(g_configuration.initial_slot));
       return;
@@ -1650,7 +1720,6 @@ bool RestoreHook(UnrealFunctionExecDetour* detour) {
 
 bool InstallHooks() {
   if (g_hooks_ready) return true;
-  UnrealFunctionHandle start_level;
   UnrealFunctionHandle select_character;
   UnrealFunctionHandle get_playable_characters;
   UnrealFunctionHandle is_character_unlocked;
@@ -1693,12 +1762,9 @@ bool InstallHooks() {
   uint32_t resolved_character_size = 0;
   void* resolved_character_definition = nullptr;
   uint32_t spawn_ai_character_name_offset = 0;
-  // StartLevel is referenced by the FinalCountdown state, but the cooked
-  // UFunction itself is owned directly by TnGameLobbyGame (export 20991).
-  // Resolving it as a state child makes the entire hook set fail closed and
-  // leaves the campaign class flow permanently inactive.
-  if (!UnrealResolveExactScriptFunction(
-          0, L"TransGame.TnGameLobbyGame", L"StartLevel", &start_level) ||
+  // StartLevel is compiled and stripped at runtime. Its actual EAX-this
+  // entry is handled by NativeCampaignTravel, not a UFunction detour.
+  if (!NativeCampaignTravelReady() ||
       !UnrealResolveExactScriptFunction(
           0, L"TransGame.TnCharacterScriptBinding", L"SelectCharacter",
           &select_character) ||
@@ -1838,7 +1904,6 @@ bool InstallHooks() {
     return false;
   }
 
-  g_start_level = start_level;
   g_select_character = select_character;
   g_get_playable_characters = get_playable_characters;
   g_is_character_unlocked = is_character_unlocked;
@@ -1948,11 +2013,8 @@ bool InstallHooks() {
           &g_find_custom_character_detour) ||
       !install_hook("SpawnAiCharacter",
           g_spawn_ai_character, &HookedSpawnAiCharacter,
-          &g_spawn_ai_character_detour) ||
-      !install_hook("StartLevel",
-          g_start_level, &HookedStartLevel, &g_start_level_detour)) {
+          &g_spawn_ai_character_detour)) {
     bool restored_all = true;
-    restored_all = RestoreHook(&g_start_level_detour) && restored_all;
     restored_all = RestoreHook(&g_spawn_ai_character_detour) && restored_all;
     restored_all = RestoreHook(&g_find_custom_character_detour) && restored_all;
     restored_all = RestoreHook(&g_find_iconic_character_detour) && restored_all;
@@ -1991,7 +2053,6 @@ bool InstallHooks() {
           "[CampaignClass] CRITICAL: partial hook installation could not be rolled back; adapters disabled in pass-through mode");
       return false;
     }
-    g_start_level = {};
     g_select_character = {};
     g_get_playable_characters = {};
     g_is_character_unlocked = {};
@@ -2381,11 +2442,12 @@ bool VerifyInitialCharacter(ULONGLONG now) {
   if (UnrealCallString(g_flow.selection_binding, L"GetCurrentCharacter",
                        current.text.data(), current.text.size()) &&
       SameName(g_flow.native_initial, current.text.data())) {
-    g_flow.stage = SelectionStage::kPrepareConfiguration;
+    g_flow.stage = SelectionStage::kComplete;
+    g_flow.close_pending = true;
     g_flow.action_started_at = now;
     g_flow.retry_at = now;
     Log(LogLevel::kInfo,
-        "[CampaignClass] native initial-character assignment verified mission-shell=%s selected=%s; preparing squad data",
+        "[CampaignClass] native initial-character assignment verified mission-shell=%s selected=%s; closing validated selector",
         current.text.data(), g_flow.initial.text.data());
     return true;
   }
@@ -2417,18 +2479,14 @@ bool ResumeCampaignTravel(ULONGLONG now) {
   g_flow.retry_at = now + kUiRetryMs;
   if (!PublishedObjectValid(g_flow.lobby_game,
                             g_flow.lobby_game_index) ||
-      !UnrealExactScriptFunctionValid(g_start_level)) {
+      !NativeCampaignTravelReady()) {
     return false;
   }
 
-  // StartLevel has no parameters, so it is safe to invoke again from the
-  // outer game tick. The executor detour sees release_travel, forwards this
-  // invocation to the saved original executor exactly once, and marks the
-  // flow as forwarded before the original can initiate seamless travel.
-  // This explicit re-entry is required: FinalCountdown normally calls
-  // StartLevel only once, so waiting for a second native call can deadlock
-  // campaign travel behind the selector.
-  if (!UnrealCallExactVoid(g_flow.lobby_game, g_start_level)) {
+  // Re-enter the real compiled entry on the outer game tick. Admission marks
+  // travel_forwarded BEFORE the original can initiate seamless travel. No
+  // FFrame/retired script pointer is kept across selector frames.
+  if (!ResumeNativeCampaignTravel(g_flow.lobby_game)) {
     Log(LogLevel::kWarning,
         "[CampaignClass] original StartLevel resume call was rejected; retrying");
     return false;
@@ -2449,6 +2507,11 @@ bool TickCampaignClassSystem(void* game_engine, DWORD game_thread,
   if (!g_hooks_ready) {
     if (now < g_hook_retry_at) return true;
     g_hook_retry_at = now + kHookRetryMs;
+    if (!InstallNativeCampaignTravel(GetModuleHandleW(nullptr), game_thread,
+                                     &AdmitNativeStartLevel)) {
+      Log(LogLevel::kError, "[CampaignClass] compiled StartLevel signature/installation failed; game unchanged");
+      return true;
+    }
     const bool installed = InstallHooks();
     if (installed && did_work) *did_work = true;
     // A package can become available later in startup, so keep a bounded
@@ -2606,9 +2669,9 @@ bool CampaignClassSelectedCharacterName(const char* mission_shell,
 
 bool ShutdownCampaignClassSystem() {
   g_stopping = true;
+  StopNativeCampaignTravel();
   ResetFlow();
   bool restored = true;
-  restored = RestoreHook(&g_start_level_detour) && restored;
   restored = RestoreHook(&g_spawn_ai_character_detour) && restored;
   restored = RestoreHook(&g_find_custom_character_detour) && restored;
   restored = RestoreHook(&g_find_iconic_character_detour) && restored;
@@ -2628,7 +2691,6 @@ bool ShutdownCampaignClassSystem() {
   restored = RestoreHook(&g_get_current_character_detour) && restored;
   restored = RestoreHook(&g_get_custom_characters_detour) && restored;
   restored = RestoreHook(&g_get_playable_characters_detour) && restored;
-  g_start_level = {};
   g_select_character = {};
   g_get_playable_characters = {};
   g_is_character_unlocked = {};

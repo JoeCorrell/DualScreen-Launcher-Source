@@ -239,7 +239,7 @@ if (-not $SkipLauncherPayloadUpdate) {
             })
         }
     $manifest = [ordered]@{
-        version = 'isaac-native-j460-2026.09.04.14'
+        version = 'isaac-native-j460-2026.09.04.15'
         files = $files
         remove = @('resources/scripts/isaac_second_screen.dll')
     }

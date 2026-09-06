@@ -19,7 +19,7 @@ constexpr std::array<u8, 0x20> BuildId{
 };
 
 constexpr u32 Magic = 0x4C505353; // "SSPL" in little-endian memory.
-constexpr u32 Version = 2;
+constexpr u32 Version = 4;
 
 enum class MapCaptureState : u32 {
     Idle = 0,
@@ -86,9 +86,33 @@ struct Mailbox {
     s8 map_floor;
     u16 map_reserved2;
     std::array<char, 8> map_stage_name;
+    u32 ui_request;
+    u32 ui_frames;
+    u32 ui_status;
+    u32 ui_guard;
+    u64 ui_owner;
+    u64 ui_texture;
+    u64 ui_stage;
+    u32 ui_last_request;
+    u32 ui_idle_frames;
+    u32 ui_frame_tick;
+    u32 ui_drawn_tick;
+    u32 ui_was_visible;
+    u32 ui_reserved;
+    u32 ui_gesture_sequence;
+    float ui_gesture_zoom;
+    float ui_gesture_pan_x;
+    float ui_gesture_pan_y;
+    u32 ui_gesture_applied;
+    float ui_base_scroll_x;
+    float ui_base_scroll_z;
+    float ui_base_scale;
+    std::array<u64, 3> ui_hint_panes;
 };
 
-static_assert(sizeof(Mailbox) == 0x90);
+static_assert(sizeof(Mailbox) == 0x108);
+static_assert(offsetof(Mailbox, ui_gesture_sequence) == 0xD0);
+static_assert(offsetof(Mailbox, ui_request) == 0x90);
 static_assert(offsetof(Mailbox, sequence) == 0x0C);
 static_assert(offsetof(Mailbox, file_manager) == 0x10);
 static_assert(offsetof(Mailbox, stage_name) == 0x38);

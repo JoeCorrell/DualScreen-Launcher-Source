@@ -1,10 +1,10 @@
 {
-    "version":  "wfc-a408cd94b370-c152d1b70ed3-5a1b8e3f9fef",
+    "version":  "wfc-9360fb79a295-c152d1b70ed3-5a1b8e3f9fef",
     "files":  [
                   {
                       "source":  "dinput8.dll",
                       "target":  "Binaries/dinput8.dll",
-                      "sha256":  "a408cd94b370b5c01ff84aa4dc72d89885eee9ed2448f6fd55129ded68c2413e"
+                      "sha256":  "9360fb79a295e922c69ee228e39f3093071b2d61f702ecef20164d57f6c1a197"
                   },
                   {
                       "source":  "TransformersWfcSecondScreen.ini",
@@ -195,6 +195,71 @@
                       "source":  "assets/Club.png",
                       "target":  "Binaries/assets/Club.png",
                       "sha256":  "4c520302d0238900af880fceed9fc27268c48d2fc65817df1de03102b4197904"
+                  },
+                  {
+                      "source":  "assets/Combat_Backplate.png",
+                      "target":  "Binaries/assets/Combat_Backplate.png",
+                      "sha256":  "6366817e6fec2d8fe15c9bc1b118a9b54755cd180b9156a2a8cd39290ceccd6f"
+                  },
+                  {
+                      "source":  "assets/combat_layout_manifest.json",
+                      "target":  "Binaries/assets/combat_layout_manifest.json",
+                      "sha256":  "2c40b34f97e967d4c29690029d8f65d3160efd2f32f76f565f7648f26342dbeb"
+                  },
+                  {
+                      "source":  "assets/Combat_RefAbility1.png",
+                      "target":  "Binaries/assets/Combat_RefAbility1.png",
+                      "sha256":  "6b5c0c9581461b161872159bd0a89d09d9b65d25df594c22c4410ddd90b52117"
+                  },
+                  {
+                      "source":  "assets/Combat_RefAbility2.png",
+                      "target":  "Binaries/assets/Combat_RefAbility2.png",
+                      "sha256":  "ab87c6a01c2830b56474eb4a0027e1b0f20b128d32c2b41cdcd582fb0a543698"
+                  },
+                  {
+                      "source":  "assets/Combat_RefCharacter.png",
+                      "target":  "Binaries/assets/Combat_RefCharacter.png",
+                      "sha256":  "4d6957d557335e945e5a9fa878398ab4f27e699f25672192c064313dcc28aa1c"
+                  },
+                  {
+                      "source":  "assets/Combat_RefGrenade.png",
+                      "target":  "Binaries/assets/Combat_RefGrenade.png",
+                      "sha256":  "a8536aa85188827d14b97a6bf79113cf2e6549cac5fb0d297e6eff3ef906b718"
+                  },
+                  {
+                      "source":  "assets/Combat_RefMode.png",
+                      "target":  "Binaries/assets/Combat_RefMode.png",
+                      "sha256":  "b417b0d8de38f64eadff04d43e37b13d00d3eb4f0893ac4b6f04d12c5bd736c1"
+                  },
+                  {
+                      "source":  "assets/Combat_RefPrimary.png",
+                      "target":  "Binaries/assets/Combat_RefPrimary.png",
+                      "sha256":  "7a125324daf5f9dd8b40114dd8d3def7fb37ba0b377fc230003bf94e1260d482"
+                  },
+                  {
+                      "source":  "assets/Combat_RefRange.png",
+                      "target":  "Binaries/assets/Combat_RefRange.png",
+                      "sha256":  "a826ede2d5484c4aa6bb949b28777e7494ad724eacb1c93851525139f6b2d72e"
+                  },
+                  {
+                      "source":  "assets/Combat_RefSecondary.png",
+                      "target":  "Binaries/assets/Combat_RefSecondary.png",
+                      "sha256":  "0d0a4d2e8b927f26fe2b5e5ea1290a484ed8b3729ca484b15a4390359695a7d5"
+                  },
+                  {
+                      "source":  "assets/Combat_Reload.png",
+                      "target":  "Binaries/assets/Combat_Reload.png",
+                      "sha256":  "759882f2757c6189704b9f52d59567a67061464961d6af0a8a5c87ce868611ed"
+                  },
+                  {
+                      "source":  "assets/Combat_Swap.png",
+                      "target":  "Binaries/assets/Combat_Swap.png",
+                      "sha256":  "4da41b43f4024945abc6e4d5722e1d73d576e15d35e927f7444bd83e45c569e5"
+                  },
+                  {
+                      "source":  "assets/Combat_Transform.png",
+                      "target":  "Binaries/assets/Combat_Transform.png",
+                      "sha256":  "89e23d90595a721ed7438cf1b1c5fb46046331e7a83c266bac8f91f1b5eab9c5"
                   },
                   {
                       "source":  "assets/Deadend_Robot.png",

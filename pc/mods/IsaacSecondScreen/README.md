@@ -20,13 +20,15 @@ malformed, stale, and oversized packets. Map rooms are filtered by
 `RoomDescriptor.DisplayFlags` in Lua and again in native code so an
 undiscovered room is never exposed merely because its descriptor exists.
 
-The DLL owns three purpose-built 1240x1080 dashboards. All three reuse
+The DLL owns four purpose-built 1240x1080 dashboards. All four reuse
 `assets/custom/background.png`; Stats and Run Info layer
 `assets/custom/sticky_note.png` over the lower-left panel for the character and
-place their page data to its right. Every live label, icon, charge bar, chance,
-room tile, character portrait, metric, and collection count stays inside the
-parchment panels. Horizontal swipes cycle through map, stats, and run info. All
-dashboards keep the run timer,
+place their page data to its right. Items uses `assets/custom/item_slot_dark.png`
+for a selectable 6x3 collection grid and
+`assets/custom/item_description_panel.png` for the live description strip.
+Every live label, icon, charge bar, chance, room tile, character portrait,
+metric, and collection count stays inside the parchment panels. Horizontal
+swipes cycle through map, stats, run info, and items. All dashboards keep the run timer,
 pickup counters, and two prepared positions for each active-item, pocket-item,
 and trinket category visible at once; a secondary position receives content
 only while a second item is actually held. Active items use a live segmented

@@ -103,7 +103,15 @@ VkExtent2D ChooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, u32 wi
     return extent;
 }
 
-VkCompositeAlphaFlagBitsKHR ChooseAlphaFlags(const VkSurfaceCapabilitiesKHR& capabilities) {
+VkCompositeAlphaFlagBitsKHR ChooseAlphaFlags(const VkSurfaceCapabilitiesKHR& capabilities,
+                                           bool transparent) {
+    if (transparent) {
+        for (const auto alpha : {VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+                                 VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+                                 VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR}) {
+            if (capabilities.supportedCompositeAlpha & alpha) return alpha;
+        }
+    }
     if (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR) {
         return VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     } else if (capabilities.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR) {
@@ -122,10 +130,11 @@ Swapchain::Swapchain(
     const Device& device_,
     Scheduler& scheduler_,
     u32 width_,
-    u32 height_)
+    u32 height_, bool transparent_)
     : surface(surface_)
     , device{device_}
     , scheduler{scheduler_}
+    , transparent{transparent_}
 {
     Create(surface, width_, height_);
 }
@@ -261,7 +270,7 @@ void Swapchain::CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities) {
     has_fifo_relaxed = std::find(present_modes.begin(), present_modes.end(),
                                  VK_PRESENT_MODE_FIFO_RELAXED_KHR) != present_modes.end();
 
-    const VkCompositeAlphaFlagBitsKHR alpha_flags{ChooseAlphaFlags(capabilities)};
+    const VkCompositeAlphaFlagBitsKHR alpha_flags{ChooseAlphaFlags(capabilities, transparent)};
     surface_format = ChooseSwapSurfaceFormat(formats);
     present_mode = ChooseSwapPresentMode(has_imm, has_mailbox, has_fifo_relaxed);
 

@@ -1,4 +1,4 @@
-package org.yuzu.yuzu_emu.activities
+package com.dualscreen.mods.plza
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -30,10 +30,17 @@ import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import org.yuzu.yuzu_emu.NativeLibrary
-import org.yuzu.yuzu_emu.utils.Log
+import com.dualscreen.companion.api.CompanionHost
+import com.dualscreen.companion.api.CompanionControllerTarget
 
-internal class PlzaCompanionView(context: Context) : View(context), PlzaControllerTarget {
+
+class PlzaCompanionView(context: Context, private val host: CompanionHost) : View(context), CompanionControllerTarget {
+    private val Log = PackageLog(host)
+    private class PackageLog(private val host: CompanionHost) {
+        fun info(message: String) = host.log(0, message)
+        fun warning(message: String) = host.log(1, message)
+        fun error(message: String) = host.log(2, message)
+    }
     private companion object {
         private const val DESIGN_WIDTH = 1240f
         private const val DESIGN_HEIGHT = 1080f
@@ -151,7 +158,8 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         val quantity: Int,
         val pocket: Int,
         val flags: Int,
-        val name: String
+        val name: String,
+        val nativeKind: Int
     )
 
     private data class QuestEntry(
@@ -286,6 +294,10 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
     private var lastItemActionTime = 0L
     private var itemActionMessage = ""
     private var itemActionMessageUntil = 0L
+    private var itemActionPending = false
+    private var itemActionQueuedAt = 0L
+    private var pendingNativeItem = 0
+    private var selectedBallId = 0
     private var pendingActionItem: ItemEntry? = null
     private var pendingActionOperation = 0
     private var pendingActionChoice = 0
@@ -346,7 +358,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
         if (poller != null) return
-        PlzaControllerBridge.attach(this)
+        host.attach(this)
         Log.info("[PLZA Companion] Bottom-screen view attached")
         assetExecutor = Executors.newSingleThreadExecutor { runnable ->
             Thread(
@@ -388,7 +400,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
     }
 
     override fun onDetachedFromWindow() {
-        PlzaControllerBridge.detach(this)
+        host.detach(this)
         controllerActive = false
         poller?.shutdownNow()
         poller = null
@@ -414,8 +426,9 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
     }
 
     private fun pollSnapshot() {
+        val sampledAt = SystemClock.uptimeMillis()
         snapshot.clear()
-        val bytesWritten = NativeLibrary.fillPlzaCompanionSnapshot(snapshot)
+        val bytesWritten = host.snapshot(snapshot)
         if (bytesWritten != SNAPSHOT_SIZE) {
             logSnapshotFailure("size=$bytesWritten expected=$SNAPSHOT_SIZE")
             return
@@ -434,6 +447,40 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         val questCount = snapshot.getInt(40).coerceIn(0, QUEST_CAPACITY)
         val markerCount = snapshot.getInt(44).coerceIn(0, 16)
         val pokedexEntryCount = snapshot.getInt(60).coerceIn(0, 256)
+        val actionProtocol = snapshot.getInt(3636) == 0x5A414954
+        val actionState = snapshot.getInt(3600)
+        val actionOperation = snapshot.getInt(3604)
+        val actionItem = snapshot.getInt(3608)
+        val actionResult = snapshot.getInt(3612)
+        val actionCompleted = snapshot.getLong(3616)
+        val actionRequest = snapshot.getLong(3628)
+        val nextSelectedBall = if (actionProtocol) snapshot.getInt(3624) else 0
+        // Process completion even if the inventory content hash didn't change.
+        // A sample begun before enqueue cannot acknowledge the new request.
+        post {
+            if (itemActionPending && sampledAt > itemActionQueuedAt && actionProtocol &&
+                actionItem == pendingNativeItem && actionRequest != 0L &&
+                actionRequest == actionCompleted && (actionState == 3 || actionState == 4)) {
+                itemActionPending = false
+                itemActionMessage = if (actionState == 3) {
+                    if (actionOperation == ITEM_ACTION_SELECT_FIELD_BALL) "BALL EQUIPPED" else "ITEM USED"
+                } else when (actionResult) {
+                    15 -> "THIS NATIVE ITEM HANDLER IS NOT AVAILABLE YET"
+                    21 -> "IT WOULD HAVE NO EFFECT ON THIS POKEMON"
+                    22 -> "PARTY CHANGED � SELECT THE POKEMON AGAIN"
+                    23 -> "ITEM CONSUMED � EFFECT NOT CONFIRMED; DO NOT RETRY"
+                    16 -> "GAME STATE CHANGED � TRY AGAIN"
+                    17 -> "FINISH THE CURRENT ACTION FIRST"
+                    18 -> "ITEM IS NO LONGER AVAILABLE"
+                    19 -> "BALL SELECTION CHANGED � NOT CONFIRMED"
+                    20 -> "GAME IS NOT UPDATING � ACTION CANCELLED"
+                    else -> "ITEM ACTION COULD NOT COMPLETE ($actionResult)"
+                }
+                itemActionMessageUntil = SystemClock.uptimeMillis() + 3_000L
+                Log.info("[PLZA-ITEM-ACTION] completed request=$actionRequest item=$actionItem state=$actionState result=$actionResult")
+                invalidate()
+            }
+        }
 
         fun hashRange(seed: Int, offset: Int, length: Int): Int {
             var result = seed
@@ -443,6 +490,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
         val partySectionHash = hashRange(partyCount, 64, partyCount * 48)
         var itemSectionHash = itemCount
+        itemSectionHash = hashRange(itemSectionHash, 3640, (itemCount + 1) / 2)
         repeat(itemCount) { index ->
             val offset = if (index < INLINE_ITEM_CAPACITY) {
                 INLINE_ITEM_OFFSET + index * 32
@@ -471,7 +519,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             snapshot.getInt(3568), snapshot.getInt(3572), snapshot.getInt(3576),
             snapshot.getInt(3580), snapshot.getInt(3584), snapshot.getInt(3588),
             snapshot.getInt(3592), snapshot.getInt(3596), partySectionHash,
-            itemSectionHash, questSectionHash, markerSectionHash, pokedexSectionHash
+            itemSectionHash, questSectionHash, markerSectionHash, pokedexSectionHash, nextSelectedBall
         ).forEach { contentHash = contentHash * 31 + it }
         if (contentHash == lastContentHash) return
 
@@ -509,7 +557,8 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                     snapshot.getShort(offset + 4).toInt() and 0xFFFF,
                     snapshot.get(offset + 6).toInt() and 0xFF,
                     snapshot.get(offset + 7).toInt() and 0xFF,
-                    itemNames[itemId] ?: repairLegacyUtf8(readCString(offset + 8, 24))
+                    itemNames[itemId] ?: repairLegacyUtf8(readCString(offset + 8, 24)),
+                    (snapshot.get(3640 + index / 2).toInt() ushr ((index and 1) * 4)) and 15
                 )
             }
         }
@@ -612,6 +661,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             party = nextParty
             lastPartyHash = partySectionHash
             items = nextItems
+            selectedBallId = nextSelectedBall
             lastItemsHash = itemSectionHash
             quests = nextQuests
             lastQuestHash = questSectionHash
@@ -656,7 +706,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadItemNames(): Map<Int, String> {
         return try {
-            context.assets.open("plza/item_names.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/item_names.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.mapNotNull { line ->
                     val fields = line.split('\t', limit = 2)
                     val id = fields.firstOrNull()?.toIntOrNull()
@@ -690,7 +740,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadQuestTexts(): Map<Int, QuestText> {
         return try {
-            context.assets.open("plza/quests.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/quests.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.mapNotNull { line ->
                     val fields = line.split('\t', limit = 4)
                     if (fields.size != 4) return@mapNotNull null
@@ -722,7 +772,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadQuestObjectives(): Map<Long, String> {
         return try {
-            context.assets.open("plza/quest_objectives.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/quest_objectives.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.mapNotNull { line ->
                     val fields = line.split('\t', limit = 4)
                     if (fields.size != 4) return@mapNotNull null
@@ -752,7 +802,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadQuestMaxPhases(): Map<Int, Int> {
         return try {
-            context.assets.open("plza/quest_objectives.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/quest_objectives.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 val maximums = HashMap<Int, Int>()
                 lines.forEach { line ->
                     val fields = line.split('\t', limit = 4)
@@ -785,7 +835,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadPokedexInfo(): List<PokedexInfo> {
         return try {
-            context.assets.open("plza/pokedex.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/pokedex.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.mapNotNull { line ->
                     val fields = line.split('\t', limit = 6)
                     val species = fields.firstOrNull()?.toIntOrNull()
@@ -807,7 +857,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun loadMapLocations(): List<MapLocation> {
         return try {
-            context.assets.open("plza/map_locations.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
+            host.openAsset("plza/map_locations.tsv").bufferedReader(Charsets.UTF_8).useLines { lines ->
                 lines.mapNotNull { line ->
                     val fields = line.split('\t', limit = 4)
                     val x = fields.getOrNull(1)?.toFloatOrNull()
@@ -940,7 +990,11 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         return when (item.pocket) {
             1 -> openPartyTarget(item, ITEM_ACTION_USE_ON_PARTY)
             2 -> executeItemAction(item, ITEM_ACTION_SELECT_FIELD_BALL, -1)
-            3 -> openPartyTarget(item, ITEM_ACTION_GIVE_TO_PARTY)
+            3 -> when (item.nativeKind) {
+                0 -> showItemActionMessage("WAITING FOR NATIVE ITEM DATA")
+                in 1..7 -> openPartyTarget(item, ITEM_ACTION_USE_ON_PARTY)
+                else -> openPartyTarget(item, ITEM_ACTION_GIVE_TO_PARTY)
+            }
             4 -> showItemActionMessage("THIS ITEM HAS NO FIELD ACTION")
             5 -> executeItemAction(item, ITEM_ACTION_USE_KEY_ITEM, -1)
             6 -> {
@@ -960,6 +1014,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun openPartyTarget(item: ItemEntry, operation: Int): Boolean {
         val partyCount = synchronized(frameLock) { party.size }
+        Log.info("[PLZA-ITEM-INPUT] target-dialog item=${item.id} operation=$operation partyCount=$partyCount")
         if (partyCount == 0) return showItemActionMessage("PARTY DATA IS NOT READY")
         pendingActionItem = item
         pendingActionOperation = operation
@@ -971,17 +1026,21 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
     }
 
     private fun executeItemAction(item: ItemEntry, operation: Int, partyTarget: Int): Boolean {
+        if (itemActionPending) return showItemActionMessage("AN ITEM ACTION IS ALREADY RUNNING")
         val now = SystemClock.uptimeMillis()
-        if (item.id == lastItemActionId && now - lastItemActionTime < 600L) return false
+        if (item.id == lastItemActionId && now - lastItemActionTime < 600L) {
+            Log.info("[PLZA-ITEM-INPUT] suppressed duplicate item=${item.id} elapsed=${now - lastItemActionTime}")
+            return false
+        }
         lastItemActionId = item.id
         lastItemActionTime = now
         Log.info(
             "[PLZA-ITEM-ACTION] dispatch operation=$operation item=${item.id} " +
                 "quantity=${item.quantity} pocket=${item.pocket} partyTarget=$partyTarget"
         )
-        val result = NativeLibrary.performPlzaCompanionItemAction(operation, item.id, partyTarget)
+        val result = host.action(operation, item.id, partyTarget)
         val message = when (result) {
-            ITEM_ACTION_QUEUED -> "ACTION QUEUED"
+            ITEM_ACTION_QUEUED -> "WAITING FOR NATIVE GAME CONFIRMATION"
             1 -> "GAME SESSION IS NOT RUNNING"
             2 -> "WRONG GAME IS ACTIVE"
             3 -> "GAME BUILD IS NOT SUPPORTED"
@@ -996,6 +1055,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             12 -> "THE GAME ITEM CONTEXT IS UNAVAILABLE"
             13 -> "NATIVE GAME-THREAD BRIDGE IS NOT READY"
             14 -> "AN ITEM ACTION IS ALREADY RUNNING"
+            15 -> "NATIVE ITEM ACTION IS STILL BEING TRACED"
             else -> "ITEM ACTION FAILED ($result)"
         }
         itemActionMessage = message
@@ -1003,6 +1063,9 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         pendingActionItem = null
         pendingActionChoices = intArrayOf()
         if (result == ITEM_ACTION_QUEUED) {
+            itemActionPending = true
+            itemActionQueuedAt = SystemClock.uptimeMillis()
+            pendingNativeItem = item.id
             Log.info("[PLZA-ITEM-ACTION] accepted operation=$operation item=${item.id} target=$partyTarget")
         } else {
             Log.warning(
@@ -1036,7 +1099,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                 inSampleSize = sampleSize.coerceAtLeast(1)
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
-            context.assets.open(path).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
+            host.openAsset(path).use { stream -> BitmapFactory.decodeStream(stream, null, options) }
         } catch (error: Exception) {
             Log.error("[PLZA Companion] Unable to load asset $path: ${error.message}")
             null
@@ -1085,7 +1148,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             pokemonIconCache[assetName]?.let { return it }
             if (assetName !in missingPokemonIcons) {
                 val bitmap = try {
-                    context.assets.open("plza/pokemon/$assetName").use { stream ->
+                    host.openAsset("plza/pokemon/$assetName").use { stream ->
                         BitmapFactory.decodeStream(stream)
                     }
                 } catch (_: Exception) {
@@ -1127,7 +1190,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         try {
             executor.execute {
                 val bytes = try {
-                    NativeLibrary.getDualScreenRomfsAsset(path)
+                    host.romfsAsset(path)
                 } catch (_: Throwable) {
                     null
                 }
@@ -1174,12 +1237,12 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         when {
             currentStatus == STATUS_UNSUPPORTED -> drawBlockingMessage(
                 canvas,
-                "UNSUPPORTED POKÉMON LEGENDS: Z-A BUILD",
+                "UNSUPPORTED POK�MON LEGENDS: Z-A BUILD",
                 "Install update v393216. This mod is locked to build B1F12FD919EAE86AB8A978317677E64BCE443D1F."
             )
             currentStatus < STATUS_WAITING_SAVE -> drawBlockingMessage(
                 canvas,
-                "WAITING FOR POKÉMON LEGENDS: Z-A",
+                "WAITING FOR POK�MON LEGENDS: Z-A",
                 "Start the game and load a save. The companion display will connect automatically."
             )
             else -> {
@@ -1445,8 +1508,8 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         canvas.restore()
         drawSectionTitle(canvas, "LUMIOSE CITY", 72f, 238f)
         if (!mapAvailable) drawEmptyState(canvas, "MAP DATA IS CONNECTING", "Load into Lumiose City to display the live map and markers.", 620f, 610f)
-        drawPill(canvas, "ZONE ${if (zoneId > 0) zoneId else "—"}", 72f, 966f, 178f)
-        drawPill(canvas, "×${String.format("%.1f", mapZoom)}", 1010f, 966f, 150f)
+        drawPill(canvas, "ZONE ${if (zoneId > 0) zoneId else "�"}", 72f, 966f, 178f)
+        drawPill(canvas, "�${String.format("%.1f", mapZoom)}", 1010f, 966f, 150f)
         val now = SystemClock.uptimeMillis()
         if (now - lastMapRenderLogAt >= 10_000L) {
             lastMapRenderLogAt = now
@@ -1564,12 +1627,12 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         }
         if (!available) {
             drawPanel(canvas, RectF(24f, 232f, 1216f, 1048f))
-            drawEmptyState(canvas, "TEAM DATA IS CONNECTING", "Your six active Pokémon will appear here after a save is loaded.", 620f, 612f)
+            drawEmptyState(canvas, "TEAM DATA IS CONNECTING", "Your six active Pok�mon will appear here after a save is loaded.", 620f, 612f)
             return
         }
         if (currentParty.isEmpty()) {
             drawPanel(canvas, RectF(24f, 232f, 1216f, 1048f))
-            drawEmptyState(canvas, "NO ACTIVE TEAM", "The live party block is connected, but it currently contains no Pokémon.", 620f, 612f)
+            drawEmptyState(canvas, "NO ACTIVE TEAM", "The live party block is connected, but it currently contains no Pok�mon.", 620f, 612f)
             return
         }
         repeat(6) { index ->
@@ -1654,6 +1717,10 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun drawItemCard(canvas: Canvas, rect: RectF, item: ItemEntry, selected: Boolean) {
         drawPanel(canvas, rect, selected)
+        if (item.id == selectedBallId && item.pocket == 2) {
+            drawText(canvas, "EQUIPPED", rect.right - 16f, rect.top + 28f, 17f,
+                Color.rgb(22, 166, 170), medium, Paint.Align.RIGHT)
+        }
         itemIcon(item.id)?.let { icon ->
             paint.alpha = 255
             paint.isFilterBitmap = true
@@ -1661,7 +1728,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             paint.isFilterBitmap = false
         }
         drawText(canvas, item.name.ifBlank { "UNKNOWN ITEM" }, rect.left + 26f, rect.bottom - 38f, 21f, Color.rgb(27, 52, 62), medium)
-        drawText(canvas, "×${item.quantity}", rect.right - 20f, rect.top + 78f, 27f, Color.rgb(22, 166, 170), medium, Paint.Align.RIGHT)
+        drawText(canvas, "�${item.quantity}", rect.right - 20f, rect.top + 78f, 27f, Color.rgb(22, 166, 170), medium, Paint.Align.RIGHT)
     }
 
     private fun drawItemActionOverlay(canvas: Canvas) {
@@ -1671,7 +1738,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         val dialog = RectF(180f, 170f, 1060f, 930f)
         drawPanel(canvas, dialog)
         drawText(canvas, item.name.ifBlank { "ITEM #${item.id}" }, 620f, 242f, 34f, Color.rgb(24, 48, 59), medium, Paint.Align.CENTER)
-        drawText(canvas, "×${item.quantity}", 620f, 282f, 23f, Color.rgb(22, 166, 170), medium, Paint.Align.CENTER)
+        drawText(canvas, "�${item.quantity}", 620f, 282f, 23f, Color.rgb(22, 166, 170), medium, Paint.Align.CENTER)
         itemIcon(item.id)?.let { icon ->
             paint.alpha = 255
             paint.isFilterBitmap = true
@@ -1731,9 +1798,9 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             mega = pokedexMega
             states = pokedexStates
         }
-        drawCompactMetric(canvas, "CAUGHT", if (available) caught.toString() else "—", 42f, 252f, 142f, Color.rgb(242, 74, 103))
-        drawCompactMetric(canvas, "SEEN", if (available) seen.toString() else "—", 194f, 252f, 142f, Color.rgb(22, 181, 185))
-        drawCompactMetric(canvas, "MEGA", if (available) mega.toString() else "—", 346f, 252f, 142f, Color.rgb(112, 83, 190))
+        drawCompactMetric(canvas, "CAUGHT", if (available) caught.toString() else "�", 42f, 252f, 142f, Color.rgb(242, 74, 103))
+        drawCompactMetric(canvas, "SEEN", if (available) seen.toString() else "�", 194f, 252f, 142f, Color.rgb(22, 181, 185))
+        drawCompactMetric(canvas, "MEGA", if (available) mega.toString() else "�", 346f, 252f, 142f, Color.rgb(112, 83, 190))
         if (pokedexInfo.isEmpty()) {
             drawEmptyState(canvas, "POKEDEX DATA UNAVAILABLE", "The native species catalog could not be loaded.", 620f, 620f)
             return
@@ -1795,7 +1862,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             drawText(canvas, "POKEDEX ENTRY", 586f, 822f, 19f, Color.rgb(22, 171, 175), medium)
             drawWrappedText(canvas, selected.description, 586f, 868f, 568f, 35f, 25f, Color.rgb(48, 74, 82), maxLines = 5)
         } else {
-            drawEmptyState(canvas, "NO DATA RECORDED", "Encounter this Pokémon to reveal its Pokedex entry.", 872f, 632f)
+            drawEmptyState(canvas, "NO DATA RECORDED", "Encounter this Pok�mon to reveal its Pokedex entry.", 872f, 632f)
         }
     }
 
@@ -1836,7 +1903,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
             val category = when (quest.type) { 0 -> "MAIN"; 1 -> "SIDE"; else -> "RESEARCH" }
             drawText(canvas, category, rect.left + 18f, rect.top + 27f, 15f, if (index == selectedQuest) Color.argb(210, 255, 255, 255) else Color.rgb(22, 169, 173), medium)
             val title = quest.title.ifBlank { "UNKNOWN QUEST" }
-            drawText(canvas, if (title.length > 31) title.take(30) + "…" else title, rect.left + 18f, rect.top + 66f, 23f, if (index == selectedQuest) Color.WHITE else Color.rgb(31, 57, 66), medium)
+            drawText(canvas, if (title.length > 31) title.take(30) + "�" else title, rect.left + 18f, rect.top + 66f, 23f, if (index == selectedQuest) Color.WHITE else Color.rgb(31, 57, 66), medium)
             drawText(canvas, "ACTIVE", rect.right - 16f, rect.top + 28f, 14f, if (index == selectedQuest) Color.WHITE else Color.rgb(103, 125, 131), medium, Paint.Align.RIGHT)
         }
         drawScrollIndicator(canvas, RectF(504f, 258f, 511f, 1000f), questScroll, currentQuests.size, 7)
@@ -2121,8 +2188,8 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
         val visibleLines = lines.take(maxLines).toMutableList()
         if (lines.size > maxLines && visibleLines.isNotEmpty()) {
             var last = visibleLines.last()
-            while (last.isNotEmpty() && paint.measureText("$last…") > width) last = last.dropLast(1)
-            visibleLines[visibleLines.lastIndex] = "$last…"
+            while (last.isNotEmpty() && paint.measureText("$last�") > width) last = last.dropLast(1)
+            visibleLines[visibleLines.lastIndex] = "$last�"
         }
         visibleLines.forEachIndexed { index, value ->
             canvas.drawText(value, if (align == Paint.Align.CENTER) x + width * .5f else x, y + index * lineHeight, paint)
@@ -2131,6 +2198,10 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
 
     private fun confirmPendingItemAction() {
         val item = pendingActionItem ?: return
+        Log.info(
+            "[PLZA-ITEM-INPUT] confirm item=${item.id} operation=$pendingActionOperation " +
+                "choice=$pendingActionChoice target=$pendingPartyTarget"
+        )
         if (pendingActionChoices.isNotEmpty()) {
             val operation = pendingActionChoices[pendingActionChoice.coerceIn(pendingActionChoices.indices)]
             openPartyTarget(item, operation)
@@ -2232,6 +2303,11 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                     val column = ((x - 342f) / 286f).toInt().coerceIn(0, 2)
                     val row = ((y - 254f) / 190f).toInt().coerceIn(0, 3)
                     pressedBagItem = bagScrollRow * 3 + row * 3 + column
+                    val item = synchronized(frameLock) { visibleItems().getOrNull(pressedBagItem) }
+                    Log.info(
+                        "[PLZA-ITEM-INPUT] down index=$pressedBagItem item=${item?.id} " +
+                            "selected=$selectedItem pocket=$selectedPocket x=$x y=$y"
+                    )
                 }
                 if (selectedTab == 5 && x in 382f..1187f && y in 250f..1013f) {
                     rewardDragging = true
@@ -2307,6 +2383,12 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                if (selectedTab == 2) {
+                    Log.info(
+                        "[PLZA-ITEM-INPUT] up pressed=$pressedBagItem dragged=$bagTouchMoved " +
+                            "scrollRow=$bagScrollRow x=$x y=$y"
+                    )
+                }
                 val tab = tabBounds.indexOfFirst { it.contains(x, y) }
                 if (tab >= 0 && tab == pressedTab) selectTab(tab)
                 if (pressedArrow < 0 && leftArrowBounds.contains(x, y)) cycleTab(-1)
@@ -2328,6 +2410,10 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                         val index = bagScrollRow * 3 + row * 3 + column
                         val visible = synchronized(frameLock) { visibleItems() }
                         if (index < visible.size && index == pressedBagItem) {
+                            Log.info(
+                                "[PLZA-ITEM-INPUT] tap item=${visible[index].id} index=$index " +
+                                    "route=${if (index == selectedItem) "activate" else "select-only"}"
+                            )
                             if (index == selectedItem) requestItemAction(visible[index])
                             else selectedItem = index
                         }
@@ -2377,6 +2463,7 @@ internal class PlzaCompanionView(context: Context) : View(context), PlzaControll
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                if (selectedTab == 2) Log.info("[PLZA-ITEM-INPUT] cancelled pressed=$pressedBagItem")
                 pressedTab = -1
                 pressedArrow = 0
                 mapDragging = false

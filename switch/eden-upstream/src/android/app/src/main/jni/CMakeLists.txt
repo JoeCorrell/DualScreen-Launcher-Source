@@ -13,10 +13,12 @@ add_library(yuzu-android SHARED
     botw_romfs_assets.h
     mk8d_companion.cpp
     mk8d_companion.h
-    plza_companion.cpp
-    plza_companion.h
+    external_companion_jni.cpp
     sshd_companion.cpp
     sshd_companion.h
+    smo_companion.cpp
+    smo_companion.h
+    smo_state_reader.h
     xcx_companion.cpp
     xcx_companion.h
     emu_window/emu_window.cpp

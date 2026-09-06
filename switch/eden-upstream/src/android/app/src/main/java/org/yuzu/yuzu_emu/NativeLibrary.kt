@@ -176,6 +176,9 @@ object NativeLibrary {
 
     external fun getBotwCompanionStatsSnapshot(): String
 
+    external fun getBotwHeldPreview(): String
+    external fun getBotwMapDiscovery(knownRegions: String): String
+
     external fun performBotwCompanionAction(action: Int, argument: Long): Boolean
 
     external fun getBotwRomfsTexture(path: String): ByteArray?
@@ -195,12 +198,25 @@ object NativeLibrary {
     external fun fillArkhamCompanionSnapshot(output: ByteBuffer): Int
 
     external fun fillPlzaCompanionSnapshot(output: ByteBuffer): Int
+    external fun loadExternalCompanion(path: String, title: Long, version: String): Boolean
+    external fun externalCompanionAsset(path: String): ByteArray?
+
+    external fun fillSmoCompanionSnapshotV1(output: ByteBuffer): Int
+    external fun fillSmoCompanionMoonsV1(output: ByteBuffer): Int
+    external fun fillSmoCompanionMarkersV1(output: ByteBuffer): Int
+    external fun fillSmoCompanionCollectionV1(output: ByteBuffer, kind: Int): Int
+    external fun queueSmoOutfit(kind: Int, name: String, generation: Long): Int
+    external fun pollSmoOutfit(ticket: Int): Int
 
     private external fun fillSshdCompanionSnapshotV4(output: ByteBuffer): Int
 
     private external fun copySshdCompanionMapImageV1(output: ByteBuffer): Int
 
+    external fun setSshdMapSurface(surface: android.view.Surface?, width: Int, height: Int)
+    external fun setSshdMapView(zoom: Float, panX: Float, panY: Float)
+
     private external fun performSshdCompanionActionV4(action: Int, argument: Int): Boolean
+    external fun getSshdBottleState(slot: Int, item: Int): Int
 
     fun fillSshdCompanionSnapshot(output: ByteBuffer): Int =
         fillSshdCompanionSnapshotV4(output)

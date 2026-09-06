@@ -2,7 +2,8 @@
 
 This document records the traced implementation for the `dualscreen` Android flavor. The primary
 display remains Eden's normal game surface. The presentation display hosts an independent Android
-view and does not create another Vulkan renderer, camera, or game framebuffer.
+view. The live native map uses a dedicated GPU target and presentation surface on
+Eden's existing Vulkan device and scheduler, without creating another game camera.
 
 ## Supported game build
 
@@ -25,7 +26,7 @@ system structure were compared with [`zeldaret/ss`](https://github.com/zeldaret/
 The dual-screen loader recognizes the complete 1.0.1 NSO fingerprint: Build ID, all three segment
 locations and sizes, and BSS size. It refuses to patch any other executable. For the verified
 build it reserves a private 4 KiB read/write mailbox and a separate 4 KiB executable bridge page.
-A five-instruction island in the executable's original zero-filled `.text`/`.rodata` alignment gap
+A 64-byte island in the executable's original zero-filled `.text`/`.rodata` alignment gap
 at `main+0x105C950` reaches that bridge without changing the original segment layout.
 
 The payload is called from the verified `dStage` render callback prologue at `main+0xE2391C`.
@@ -34,7 +35,10 @@ link register has been saved and before any conditional return. The overwritten 
 #0x60` instruction is replayed, all payload scratch registers and vector registers are preserved,
 and the game continues through the original callback.
 
-The payload owns only the live-map request/completion handshake. It initializes the versioned map
+The payload owns the live-map request/completion handshake and a native GUI callback.
+It initializes the required map resources and picture binding without entering the
+interactive map state; a separate gate excludes the initializer's camera/input side effects.
+It initializes the versioned map
 mailbox on every stage-render callback, applies a host request to the active `dStage` renderer, and
 publishes completed texture metadata under a seqlock. The compact UI snapshot is read directly from
 the verified game globals while Eden's system-access lock is held.
@@ -76,10 +80,9 @@ Breath of the Wild palette.
 
 The layout provides:
 
-- horizontal Inventory, Pouch, Atlas, and Fi tabs matching the reference proportions;
+- horizontal Inventory, Map, Combat, and Progress tabs;
 - a live vitals panel for hearts, stamina, rupees, seeds, arrows, and bombs;
 - a reference-style inventory grid, item detail pane, equipment slots, and Link portrait;
-- Inventory, Adventure Pouch, Survey Atlas, and Fi pages;
 - touch tabs, horizontal swipe page changes, category selection, and item inspection;
 - a short eased page transition and clear selected, empty, and unavailable states;
 - optional controller navigation, enabled only with the controller MODE button so gameplay input
@@ -91,12 +94,20 @@ geometry; stretching it caused the dark and transparent bands seen in the first 
 
 ## Current-region atlas
 
+**Runtime status (2026-09-04): the user confirms the reported map issues are fixed in Lanayru Desert.**
+The game supplies terrain, parchment, compass, labels, markers and Link's icon. The tested
+release cold-loads the native map and corrects transparency blending and presentation during
+an unfinished map pass. Cross-area acceptance remains outstanding. See
+[the rendering investigation](SshdMapRenderingInvestigation.md) for evidence and limitations.
+
 The atlas has no manual map carousel or stage-to-image lookup. The reverse-engineered flow matches
 the game's `dLytMapCapture` implementation: STIF supplies the area/room classification and localized
 map title, `dLytMapGlobal` supplies the active floor and map transform, and the active `dStage`
 `MapRelated` renderer draws the visible rooms and discovery state into its existing `CpuTexture`.
-The companion requests that same render on the game thread and converts the completed GX RGB5A3 or
-RGBA8 texture to the Android bitmap.
+The companion requests that render on the game thread and resolves its NVN cache identity.
+The complete native map UI draws into a separate native render target. Eden presents the
+resident GPU image directly to the bottom-screen surface using its existing Vulkan device
+and scheduler; no CPU map bitmap, frame capture or GPU download is involved.
 
 For the supported 1.0.1 executable, the live `dLytMapGlobal` and `dLytMapCapture` objects are
 `0xF358` bytes apart in their shared owner allocation. The capture bridge derives the latter from
@@ -106,8 +117,8 @@ offsets `0xA0` and `0xA8`. This avoids retaining an actor pointer across UI life
 The image header carries the capture's stage name, floor, dimensions, texture format, and request
 sequence. The Android view accepts it only when the stage and lifecycle still match the current
 snapshot, clears stale images during transitions, and immediately requests the next native frame.
-Consequently interiors, dungeons, overworld regions, floor changes, reloads, and save changes follow
-the game's own map selection without maintaining a second map database.
+These checks reject stale metadata, but do not prove correct texture ownership, initialization,
+GPU completion, native marker rendering, or map switching.
 
 ## Link player render
 
@@ -148,12 +159,29 @@ match use a generated text monogram; they are not assigned guessed artwork.
 
 ## Integrity boundaries
 
-The current guest-state bridge is read-only. Touch and controller input navigate the companion but do not
-mutate guest inventory or equipment. Guest-state actions will remain disabled until the relevant
-game-thread mutation functions and ownership rules are traced and safely invoked. Likewise, the
-atlas does not invent a player marker.
+Inventory snapshots are read-only. Validated actions select owned B-wheel items, pouch slots and
+dowsing targets; shields use the native pending model-update request. Tap a grid item to inspect
+it, then tap it again or its action button to equip/use it. The four portrait-side slots act on
+the first tap: shield and B-item slots equip the selected compatible item or cycle carried/owned
+choices, the selected-item slot activates the grid selection, and dowsing cycles native targets.
 
-These omissions are intentional safeguards, not recreated approximations.
+Potion use selects its real pouch slot and sends the normal R input to ready the bottle. A bounded
+state check waits for native BINHOLD (animation 441, held item 12) before sending A. Held item 13
+is the empty catch bottle recognized by `isUsingBottle`, not a filled potion. Native potion
+animations 435–437 and shield recovery 442 confirm use. The game owns effects, quantities and
+animations; the companion never writes health or decrements a bottle. Stage/session changes,
+leaving Inventory, hiding/detaching the view, or a timeout cancel queued input and release buttons.
+Other bottles can be readied; passive pouch items remain selections. These new actions require
+runtime validation in the release under test.
+
+The map invokes
+verified native game-thread initialization/render functions and updates the native map transform
+for gestures. Its player marker is generated by the game's own controller and projection.
+
+Each native map initialization also invalidates the companion's layout owner, even when the game
+reuses the same MapMain and stage addresses. This ensures area/dungeon transitions rebind the
+native map picture and finish its noninteractive appearance animation. The bridge regression
+covers this reused-owner case; runtime transition coverage is recorded in the investigation.
 
 ## Local build
 
@@ -164,4 +192,7 @@ cd src/android
 
 The APK is written to
 `src/android/app/build/outputs/apk/dualscreen/relWithDebInfo/app-dualscreen-relWithDebInfo.apk`.
-Device installation and runtime testing are left to the user.
+The integrated launcher release is built from the workspace root with
+`:launcher:assembleRelease`, after rebuilding and stripping the native library into
+`switch/eden-runtime/src/main/jniLibs/arm64-v8a/`. The September 4 release was installed
+and tested through ADB on `100.83.63.70:46665`; see the investigation for its artifact and scope.

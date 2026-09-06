@@ -18,12 +18,13 @@
 
 namespace Vulkan {
 
-BlitScreen::BlitScreen(Tegra::MaxwellDeviceMemoryManager& device_memory_, const Device& device_, MemoryAllocator& memory_allocator_, PresentManager& present_manager_, Scheduler& scheduler_, const PresentFilters& filters_)
+BlitScreen::BlitScreen(Tegra::MaxwellDeviceMemoryManager& device_memory_, const Device& device_, MemoryAllocator& memory_allocator_, PresentManager& present_manager_, Scheduler& scheduler_, const PresentFilters& filters_, bool transparent_)
     : device_memory{device_memory_}
     , memory_allocator{memory_allocator_}
     , present_manager{present_manager_}
     , scheduler{scheduler_}
     , filters{filters_}
+    , transparent{transparent_}
     , image_count{1}
     , image_index{0}
     , swapchain_view_format{VK_FORMAT_B8G8R8A8_UNORM}
@@ -145,7 +146,8 @@ void BlitScreen::DrawToFrame(const Device& device, RasterizerVulkan& rasterizer,
         }
     }
 
-    window_adapt->Draw(device, rasterizer, scheduler, image_index, layers, framebuffers, layout, frame);
+    window_adapt->Draw(device, rasterizer, scheduler, image_index, layers, framebuffers, layout, frame,
+                       transparent);
 
     if (++image_index >= image_count) {
         image_index = 0;

@@ -14,6 +14,7 @@
 #include "video_core/control/channel_state_cache.h"
 #include "video_core/engines/maxwell_dma.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/framebuffer_config.h"
 #include "video_core/rasterizer_interface.h"
 #include "video_core/renderer_vulkan/blit_image.h"
 #include "video_core/renderer_vulkan/vk_buffer_cache.h"
@@ -142,6 +143,11 @@ public:
                                                             VAddr framebuffer_addr,
                                                             u32 pixel_stride);
 
+    void ProbeCompanionTexture(u64 expected_program_id, GPUVAddr address, u32 width, u32 height);
+    std::optional<Tegra::FramebufferConfig> ResolveCompanionFramebuffer(
+        u64 expected_program_id, GPUVAddr address, u32 width, u32 height,
+        bool native_ui, bool& in_progress);
+
 private:
     static constexpr const u64 NEEDS_D24[] = {
         0x01006A800016E000ULL, // SSBU
@@ -229,6 +235,10 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    GPUVAddr companion_diagnostic_address{};
+    GPUVAddr companion_alpha_address{};
+    u64 companion_alpha_program{};
+    u32 companion_diagnostic_presents{}, companion_diagnostic_draws{}, companion_diagnostic_clears{};
 };
 
 } // namespace Vulkan

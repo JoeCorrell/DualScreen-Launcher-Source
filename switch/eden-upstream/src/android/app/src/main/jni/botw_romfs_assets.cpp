@@ -34,6 +34,7 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/filesystem/romfs_controller.h"
 #include "jni/native.h"
+#include "jni/smo_state_reader.h"
 #include "video_core/textures/astc.h"
 #include "video_core/textures/decoders.h"
 
@@ -42,7 +43,7 @@ namespace {
 
 constexpr u64 BotwTitleId = 0x01007EF00011E000ULL;
 constexpr u64 Mk8dTitleId = 0x0100152000022000ULL;
-constexpr u64 PlzaTitleId = 0x0100F43008C44000ULL;
+
 constexpr u64 SshdTitleId = 0x01002DA013484000ULL;
 constexpr u64 XcxTitleId = 0x0100453019AA8000ULL;
 constexpr std::size_t MaxSourceSize = 4 * 1024 * 1024;
@@ -62,10 +63,15 @@ std::vector<u8> botw_map_cache;
 std::unordered_map<std::string, std::vector<u8>> mk8d_character_cache;
 std::unordered_map<std::string, std::vector<u8>> mk8d_item_cache;
 std::unordered_map<std::string, std::vector<u8>> mk8d_common_cache;
-std::unordered_map<std::string, std::vector<u8>> plza_texture_cache;
+
 std::unordered_map<std::string, std::vector<u8>> sshd_asset_cache;
 std::unordered_map<std::string, std::shared_ptr<std::vector<u8>>> sshd_archive_cache;
 std::unordered_map<std::string, std::vector<u8>> xcx_asset_cache;
+std::unordered_map<std::string, std::vector<u8>> smo_asset_cache;
+std::optional<std::vector<u8>> smo_map_archive;
+std::unordered_map<std::string, std::vector<u8>> smo_icon_archives;
+std::unordered_map<std::string, std::vector<u8>> smo_icon_cache;
+std::optional<std::vector<u8>> smo_stage_messages;
 std::shared_ptr<std::vector<u8>> xcx_common_bdat;
 std::shared_ptr<std::vector<u8>> xcx_message_bdat;
 std::shared_ptr<std::vector<u8>> mk8d_character_archive;
@@ -89,15 +95,7 @@ FileSys::VirtualFile xcx_archive_store;
 bool xcx_archive_loaded{};
 std::chrono::steady_clock::time_point xcx_archive_retry_after{};
 
-struct TrinityPackRange {
-    u64 offset;
-    u64 size;
-};
 
-std::unordered_map<std::string, TrinityPackRange> plza_trinity_index;
-FileSys::VirtualFile plza_trinity_store;
-bool plza_trinity_loaded{};
-std::chrono::steady_clock::time_point plza_trinity_retry_after{};
 
 struct FormatInfo {
     u32 block_width;
@@ -1342,237 +1340,13 @@ std::vector<u8> LoadSshdAsset(const FileSys::VirtualDir& root,
     return result;
 }
 
-u64 TrinityHash(std::string_view value) {
-    u64 hash = 0xCBF29CE484222645ULL;
-    for (const u8 byte : value) {
-        hash ^= byte;
-        hash *= 0x100000001B3ULL;
-    }
-    return hash;
-}
 
-bool LoadPlzaTrinityIndex(const FileSys::VirtualDir& root) {
-    if (plza_trinity_loaded) {
-        return plza_trinity_store != nullptr;
-    }
-    if (std::chrono::steady_clock::now() < plza_trinity_retry_after) {
-        return false;
-    }
-    plza_trinity_index.clear();
-    plza_trinity_store.reset();
-    const auto descriptor = ReadRomfsFile(root, "/arc/data.trpfd", 16 * 1024 * 1024);
-    const auto store = root ? root->GetFileRelative("/arc/data.trpfs") : nullptr;
-    if (!descriptor || !store || store->GetSize() < 0x40 || descriptor->size() < 0x40) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
 
-    bool valid{};
-    const u32 descriptor_root = ReadU32(*descriptor, 0, &valid);
-    if (!valid || descriptor_root < 4 || descriptor_root + 4 > descriptor->size()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const u32 vtable_distance = ReadU32(*descriptor, descriptor_root, &valid);
-    if (!valid || vtable_distance > descriptor_root) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const std::size_t descriptor_vtable = descriptor_root - vtable_distance;
-    if (descriptor_vtable + 8 > descriptor->size()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const u16 vtable_size = static_cast<u16>((*descriptor)[descriptor_vtable]) |
-                            static_cast<u16>((*descriptor)[descriptor_vtable + 1] << 8);
-    const u16 names_offset = static_cast<u16>((*descriptor)[descriptor_vtable + 6]) |
-                             static_cast<u16>((*descriptor)[descriptor_vtable + 7] << 8);
-    if (vtable_size < 8 || descriptor_vtable + vtable_size > descriptor->size() ||
-        names_offset == 0 || descriptor_root + names_offset + 4 > descriptor->size()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const std::size_t names_pointer = descriptor_root + names_offset;
-    const u32 descriptor_relative = ReadU32(*descriptor, names_pointer, &valid);
-    if (!valid || descriptor_relative > descriptor->size() - names_pointer) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const std::size_t descriptor_table = names_pointer + descriptor_relative;
-    const u32 descriptor_count = ReadU32(*descriptor, descriptor_table, &valid);
-    if (!valid || descriptor_count == 0 || descriptor_count > 100000 ||
-        descriptor_table + 4 + static_cast<u64>(descriptor_count) * 4 > descriptor->size()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    std::vector<std::pair<std::string, u64>> names;
-    names.reserve(descriptor_count);
-    for (u32 index = 0; index < descriptor_count; ++index) {
-        const std::size_t pointer = descriptor_table + 4 + static_cast<std::size_t>(index) * 4;
-        const u32 relative = ReadU32(*descriptor, pointer, &valid);
-        if (!valid || relative > descriptor->size() - pointer) {
-            continue;
-        }
-        const std::size_t entry = pointer + relative;
-        const u32 length = ReadU32(*descriptor, entry, &valid);
-        if (!valid || length == 0 || length > 1024 || entry + 4 + length > descriptor->size()) {
-            continue;
-        }
-        std::string name(reinterpret_cast<const char*>(descriptor->data() + entry + 4), length);
-        names.emplace_back(name, TrinityHash(name));
-    }
 
-    const auto store_header = store->ReadBytes(16, 0);
-    if (store_header.size() != 16 ||
-        !HasMagic(store_header, std::string_view{"ONEPACK\0", 8})) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const u64 map_offset = ReadU64(store_header, 8, &valid);
-    if (!valid || map_offset > store->GetSize() || store->GetSize() - map_offset < 36) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const auto count_source = store->ReadBytes(4, static_cast<std::size_t>(map_offset + 28));
-    const u32 pack_count = ReadU32(count_source, 0, &valid);
-    if (!valid || pack_count == 0 || pack_count > 100000) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const u64 offsets_position = map_offset + 32;
-    const u64 hashes_count_position = offsets_position + static_cast<u64>(pack_count) * 8 + 4;
-    if (hashes_count_position + 4 > store->GetSize()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const auto offset_source = store->ReadBytes(static_cast<std::size_t>(pack_count) * 8,
-                                                static_cast<std::size_t>(offsets_position));
-    const auto hash_count_source =
-        store->ReadBytes(4, static_cast<std::size_t>(hashes_count_position));
-    const u32 hash_count = ReadU32(hash_count_source, 0, &valid);
-    if (!valid || hash_count != pack_count || offset_source.size() != pack_count * 8ULL) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const u64 hashes_position = hashes_count_position + 4;
-    if (hashes_position + static_cast<u64>(hash_count) * 8 > store->GetSize()) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    const auto hash_source = store->ReadBytes(static_cast<std::size_t>(hash_count) * 8,
-                                              static_cast<std::size_t>(hashes_position));
-    if (hash_source.size() != hash_count * 8ULL) {
-        plza_trinity_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-        return false;
-    }
-    std::unordered_map<u64, u64> offsets;
-    std::vector<u64> ordered_offsets;
-    offsets.reserve(pack_count);
-    ordered_offsets.reserve(pack_count);
-    for (u32 index = 0; index < pack_count; ++index) {
-        const u64 offset = ReadU64(offset_source, static_cast<std::size_t>(index) * 8);
-        const u64 hash = ReadU64(hash_source, static_cast<std::size_t>(index) * 8);
-        if (offset < store->GetSize()) {
-            offsets.emplace(hash, offset);
-            ordered_offsets.push_back(offset);
-        }
-    }
-    std::sort(ordered_offsets.begin(), ordered_offsets.end());
-    ordered_offsets.erase(std::unique(ordered_offsets.begin(), ordered_offsets.end()),
-                          ordered_offsets.end());
-    plza_trinity_index.reserve(names.size());
-    for (const auto& [name, hash] : names) {
-        const auto found = offsets.find(hash);
-        if (found == offsets.end()) {
-            continue;
-        }
-        const auto next = std::upper_bound(ordered_offsets.begin(), ordered_offsets.end(),
-                                           found->second);
-        const u64 end = next == ordered_offsets.end() ? store->GetSize() : *next;
-        if (end > found->second) {
-            plza_trinity_index.emplace(name,
-                                       TrinityPackRange{found->second, end - found->second});
-        }
-    }
-    plza_trinity_store = store;
-    plza_trinity_loaded = true;
-    plza_trinity_retry_after = {};
-    return true;
-}
 
-std::vector<u8> LoadPlzaTrinityPack(const FileSys::VirtualDir& root,
-                                    std::string_view pack_name) {
-    if (!LoadPlzaTrinityIndex(root)) {
-        return {};
-    }
-    const auto found = plza_trinity_index.find(std::string(pack_name));
-    if (found == plza_trinity_index.end() || found->second.size == 0 ||
-        found->second.size > MaxArchiveSize) {
-        return {};
-    }
-    return plza_trinity_store->ReadBytes(static_cast<std::size_t>(found->second.size),
-                                         static_cast<std::size_t>(found->second.offset));
-}
 
-std::vector<u8> LoadPlzaTexture(const FileSys::VirtualDir& root,
-                                std::string_view logical_path) {
-    const auto cached = plza_texture_cache.find(std::string(logical_path));
-    if (cached != plza_texture_cache.end()) {
-        return cached->second;
-    }
-    static constexpr std::array<std::pair<std::string_view, std::string_view>, 5> UiPacks{{
-        {"plza/ui/bag.png", "arc/uidatabagbag_top_00_eng.arc.trpak"},
-        {"plza/ui/map.png", "arc/uidatamapmap_info_00_eng.arc.trpak"},
-        {"plza/ui/team.png", "arc/uidatastatusstatus_top_00_eng.arc.trpak"},
-        {"plza/ui/pokedex.png", "arc/uidatapokedexpokedex_top.arc.trpak"},
-        {"plza/ui/quests.png", "arc/uidataquest_infoquest_info_order_00_eng.arc.trpak"},
-    }};
-    std::string pack_name;
-    std::string texture_name;
-    if (const auto found = std::find_if(UiPacks.begin(), UiPacks.end(), [&](const auto& entry) {
-            return entry.first == logical_path;
-        }); found != UiPacks.end()) {
-        pack_name = found->second;
-    }
-    if (const auto pokemon = LogicalComponent(logical_path, "plza/pokemon/", ".png")) {
-        const auto valid_digit = [&](std::size_t index) {
-            return index < pokemon->size() &&
-                   std::isdigit(static_cast<unsigned char>((*pokemon)[index])) != 0;
-        };
-        const bool valid_name = pokemon->size() == 17 && pokemon->starts_with("pm") &&
-                                (*pokemon)[6] == '_' && (*pokemon)[9] == '_' &&
-                                (*pokemon)[12] == '_' && (*pokemon)[15] == '_' &&
-                                valid_digit(2) && valid_digit(3) && valid_digit(4) &&
-                                valid_digit(5) && valid_digit(7) && valid_digit(8) &&
-                                valid_digit(10) && valid_digit(11) && valid_digit(13) &&
-                                valid_digit(14) && valid_digit(16);
-        if (valid_name && LoadPlzaTrinityIndex(root)) {
-            texture_name = *pokemon;
-            const std::string species = pokemon->substr(0, 6);
-            const std::string model = pokemon->substr(0, 12);
-            const std::string prefix = "arc/ik_pokemondata" + species + model + "icon" +
-                                       pokemon->substr(0, 16);
-            const auto found = std::find_if(
-                plza_trinity_index.begin(), plza_trinity_index.end(), [&](const auto& entry) {
-                    return entry.first.starts_with(prefix) &&
-                           entry.first.ends_with(".bntx.trpak");
-                });
-            if (found != plza_trinity_index.end()) {
-                pack_name = found->first;
-            }
-        }
-    }
-    if (pack_name.empty()) {
-        return {};
-    }
-    const auto pack = LoadPlzaTrinityPack(root, pack_name);
-    auto png = pack.empty() ? std::vector<u8>{}
-                            : DecodeTexturePng(pack, texture_name, texture_name.empty());
-    if (!png.empty()) {
-        plza_texture_cache.emplace(std::string(logical_path), png);
-    }
-    return png;
-}
+
+
 
 std::optional<std::vector<u8>> LoadNestedArchive(const FileSys::VirtualDir& root,
                                                  std::string_view outer_path,
@@ -1603,7 +1377,7 @@ std::vector<u8> LoadBotwStock(const FileSys::VirtualDir& root, std::string_view 
 }
 
 std::vector<u8> LoadBotwCommon(const FileSys::VirtualDir& root, std::string_view logical_path) {
-    static constexpr std::array<std::pair<std::string_view, std::string_view>, 48> Textures{{
+    static constexpr std::array<std::pair<std::string_view, std::string_view>, 54> Textures{{
         {"botw/ui/categories/Nt_PauseIconL_00_s.png", "Nt_PauseIconL_00^s"},
         {"botw/ui/categories/Nt_PauseIconL_01_s.png", "Nt_PauseIconL_01^s"},
         {"botw/ui/categories/Nt_PauseIconL_02_s.png", "Nt_PauseIconL_02^s"},
@@ -1652,6 +1426,12 @@ std::vector<u8> LoadBotwCommon(const FileSys::VirtualDir& root, std::string_view
         {"botw/ui/map/guardian.png", "Nt_MapIconGuardian_00^t"},
         {"botw/ui/map/challenge.png", "Nt_MapChallengeIcon_00^s"},
         {"botw/ui/map/player.png", "Nt_MapPlayerIconNew_00^s"},
+        {"botw/ui/map/stamps.png", "Nt_MapStampIconMarge_00^f"},
+        {"botw/ui/map/pin_red.png", "Nt_MapMapPinIcon1_00^s"},
+        {"botw/ui/map/pin_blue.png", "Nt_MapMapPinIcon2_00^s"},
+        {"botw/ui/map/pin_yellow.png", "Nt_MapMapPinIcon3_00^s"},
+        {"botw/ui/map/pin_green.png", "Nt_MapMapPinIcon4_00^s"},
+        {"botw/ui/map/pin_purple.png", "Nt_MapMapPinIcon5_00^s"},
     }};
     const auto cached = botw_common_cache.find(std::string(logical_path));
     if (cached != botw_common_cache.end()) {
@@ -2737,16 +2517,102 @@ std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_pa
             return {};
         }
         title_id = session.System().GetApplicationProcessProgramID();
-        if (title_id != BotwTitleId && title_id != Mk8dTitleId && title_id != PlzaTitleId &&
-            title_id != SshdTitleId && title_id != XcxTitleId) {
+        if (title_id != BotwTitleId && title_id != Mk8dTitleId &&
+            title_id != SshdTitleId && title_id != XcxTitleId && title_id != SmoCompanion::TitleId) {
             return {};
         }
+        if (title_id == SmoCompanion::TitleId &&
+            session.System().GetApplicationProcessBuildID() != SmoCompanion::BuildId) return {};
         root = GetRomfsRoot(session, title_id);
     }
     if (!root) {
         return {};
     }
     std::scoped_lock lock(asset_mutex);
+    if (title_id == SmoCompanion::TitleId) {
+        if (const auto stage = LogicalComponent(logical_path, "smo/stage/", ".msbt")) {
+            if (!smo_stage_messages) {
+                const auto source = ReadRomfsFile(root,
+                    "/LocalizedData/USen/MessageData/StageMessage.szs", MaxArchiveSize);
+                if (!source) return {};
+                smo_stage_messages = DecompressYaz0(*source);
+            }
+            if (!smo_stage_messages) return {};
+            auto file = ExtractSarcFile(*smo_stage_messages, *stage + ".msbt");
+            return file && file->size() <= 512 * 1024 ? std::move(*file) : std::vector<u8>{};
+        }
+        if (logical_path == "smo/messages/StageName.msbt" ||
+            logical_path == "smo/messages/ItemCloth.msbt" ||
+            logical_path == "smo/messages/ItemCap.msbt" ||
+            logical_path == "smo/messages/ItemGift.msbt" ||
+            logical_path == "smo/messages/ItemSticker.msbt" ||
+            logical_path == "smo/messages/HackList.msbt" ||
+            logical_path == "smo/messages/CollectBgmList.msbt") {
+            const auto cached = smo_asset_cache.find(std::string(logical_path));
+            if (cached != smo_asset_cache.end()) return cached->second;
+            const auto source = ReadRomfsFile(root,
+                "/LocalizedData/USen/MessageData/SystemMessage.szs", MaxArchiveSize);
+            if (!source) return {};
+            const auto archive = DecompressYaz0(*source);
+            if (!archive) return {};
+            const auto name = LogicalComponent(logical_path, "smo/messages/", ".msbt");
+            if (!name) return {};
+            auto message = ExtractSarcFile(*archive, *name + ".msbt");
+            if (!message || message->size() > 512 * 1024) return {};
+            smo_asset_cache.emplace(std::string(logical_path), *message);
+            return *message;
+        }
+        // Extract each small static icon archive once, on the UI asset worker.
+        // Bounded PNG cache is independent of the kingdom-map cache.
+        for (const auto& [prefix, archive_name] :
+             std::array<std::pair<std::string_view, std::string_view>, 4>{{
+                 {"smo/icons/clothes/", "TextureClothes"},
+                 {"smo/icons/souvenirs/", "TextureSouvenir"},
+                 {"smo/icons/stickers/", "TextureSticker"},
+                 {"smo/icons/captures/", "HackListTexture"}}}) {
+            const auto icon = LogicalComponent(logical_path, prefix, ".png");
+            if (!icon) continue;
+            const auto key = std::string(logical_path);
+            const auto cached = smo_icon_cache.find(key);
+            if (cached != smo_icon_cache.end()) return cached->second;
+            const auto archive_key = std::string(archive_name);
+            auto it = smo_icon_archives.find(archive_key);
+            if (it == smo_icon_archives.end()) {
+                const auto source = ReadRomfsFile(root, "/ObjectData/" + archive_key + ".szs", 16 * 1024 * 1024);
+                if (!source) return {};
+                const auto archive = DecompressYaz0(*source);
+                if (!archive) return {};
+                const auto bfres = ExtractSarcFile(*archive, archive_key + ".bfres");
+                if (!bfres || bfres->size() > 16 * 1024 * 1024) return {};
+                it = smo_icon_archives.emplace(archive_key, *bfres).first;
+            }
+            auto png = DecodeTexturePng(it->second, *icon);
+            if (!png.empty()) {
+                if (smo_icon_cache.size() >= 48) smo_icon_cache.clear();
+                smo_icon_cache.emplace(key, png);
+            }
+            return png;
+        }
+        const auto texture = LogicalComponent(logical_path, "smo/maps/", ".png");
+        if (!texture) return {};
+        const auto cached = smo_asset_cache.find(std::string(logical_path));
+        if (cached != smo_asset_cache.end()) return cached->second;
+        if (!smo_map_archive) {
+            const auto source = ReadRomfsFile(root, "/ObjectData/Texture2dMap.szs", MaxArchiveSize);
+            if (!source) return {};
+            const auto archive = DecompressYaz0(*source);
+            if (!archive) return {};
+            smo_map_archive = ExtractSarcFile(*archive, "Texture2dMap.bfres");
+        }
+        if (!smo_map_archive) return {};
+        auto png = DecodeTexturePng(*smo_map_archive, *texture);
+        if (!png.empty()) {
+            // Bounded decoded cache; the UI also releases its prior kingdom bitmap.
+            if (smo_asset_cache.size() >= 3) smo_asset_cache.clear();
+            smo_asset_cache.emplace(std::string(logical_path), png);
+        }
+        return png;
+    }
     if (title_id == BotwTitleId) {
         if (logical_path == "botw/ui/hyrule_map.png") {
             if (botw_map_cache.empty()) {
@@ -2792,9 +2658,7 @@ std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_pa
         }
         return LoadMk8dCommon(root, logical_path);
     }
-    if (title_id == PlzaTitleId) {
-        return LoadPlzaTexture(root, logical_path);
-    }
+
     if (title_id == SshdTitleId) {
         return LoadSshdAsset(root, logical_path);
     }
@@ -2811,14 +2675,35 @@ std::string GetRevision(EmulationSession& session) {
     }
     auto& system = session.System();
     const u64 title_id = system.GetApplicationProcessProgramID();
-    if (title_id != BotwTitleId && title_id != Mk8dTitleId && title_id != PlzaTitleId &&
-        title_id != SshdTitleId && title_id != XcxTitleId) {
+    if (title_id != BotwTitleId && title_id != Mk8dTitleId &&
+        title_id != SshdTitleId && title_id != XcxTitleId && title_id != SmoCompanion::TitleId) {
         return {};
     }
     const FileSys::PatchManager patch_manager{
         title_id, system.GetFileSystemController(), system.GetContentProvider()};
     const auto version = patch_manager.GetGameVersion();
     return std::to_string(title_id) + "-" + (version ? std::to_string(*version) : "base");
+}
+
+uint64_t ExternalFileSize(EmulationSession& session, const char* path) {
+    if (!path || !session.IsRunning()) return 0;
+    const std::string_view name(path);
+    if (name.size() > 512 || !name.starts_with("/") || name.find("..") != name.npos ||
+        name.find('\\') != name.npos) return 0;
+    const auto root = GetRomfsRoot(session, session.System().GetApplicationProcessProgramID());
+    const auto file = root ? root->GetFileRelative(std::string(name)) : nullptr;
+    return file ? file->GetSize() : 0;
+}
+size_t ExternalReadFile(EmulationSession& session, const char* path, uint64_t offset, void* out, size_t size) {
+    const auto length = ExternalFileSize(session, path);
+    if (!out || !length || offset > length || size > length - offset || size > MaxArchiveSize) return 0;
+    const auto root = GetRomfsRoot(session, session.System().GetApplicationProcessProgramID());
+    const auto file = root ? root->GetFileRelative(path) : nullptr;
+    return file ? file->Read(static_cast<u8*>(out), size, offset) : 0;
+}
+std::vector<u8> ExternalDecodeTexture(std::span<const u8> source, std::string_view name, bool first) {
+    if (source.size() > MaxArchiveSize || name.size() > 512) return {};
+    return DecodeTexturePng(source, name, first);
 }
 
 void Reset() {
@@ -2830,10 +2715,14 @@ void Reset() {
     mk8d_character_cache.clear();
     mk8d_item_cache.clear();
     mk8d_common_cache.clear();
-    plza_texture_cache.clear();
     sshd_asset_cache.clear();
     sshd_archive_cache.clear();
     xcx_asset_cache.clear();
+    smo_asset_cache.clear();
+    smo_map_archive.reset();
+    smo_icon_archives.clear();
+    smo_icon_cache.clear();
+    smo_stage_messages.reset();
     xcx_common_bdat.reset();
     xcx_message_bdat.reset();
     mk8d_character_archive.reset();
@@ -2845,10 +2734,6 @@ void Reset() {
     mk8d_character_failed = false;
     mk8d_item_failed = false;
     mk8d_common_loaded = false;
-    plza_trinity_index.clear();
-    plza_trinity_store.reset();
-    plza_trinity_loaded = false;
-    plza_trinity_retry_after = {};
     xcx_archive_index.clear();
     xcx_archive_store.reset();
     xcx_archive_loaded = false;

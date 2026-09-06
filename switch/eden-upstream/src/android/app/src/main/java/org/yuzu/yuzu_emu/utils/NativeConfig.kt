@@ -193,6 +193,8 @@ object NativeConfig {
     @Synchronized
     external fun getSaveDir(): String
     @Synchronized
+    external fun getLoadDir(): String
+    @Synchronized
     external fun getDefaultSaveDir(): String
     @Synchronized
     external fun setSaveDir(path: String)

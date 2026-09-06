@@ -548,6 +548,11 @@ void Java_org_yuzu_yuzu_1emu_utils_NativeConfig_saveControlPlayerValues(JNIEnv* 
     }
 }
 
+jstring Java_org_yuzu_yuzu_1emu_utils_NativeConfig_getLoadDir(JNIEnv* env, jobject obj) {
+    return Common::Android::ToJString(env,
+        Common::FS::GetEdenPathString(Common::FS::EdenPath::LoadDir));
+}
+
 jstring Java_org_yuzu_yuzu_1emu_utils_NativeConfig_getSaveDir(JNIEnv* env, jobject obj) {
     return Common::Android::ToJString(env,
         Common::FS::GetEdenPathString(Common::FS::EdenPath::SaveDir));

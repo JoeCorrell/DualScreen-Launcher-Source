@@ -32,7 +32,7 @@ data class SupportedGame(
     val executableCandidates: List<String>,
     /** Optional vendor configuration launcher; Play never uses this path. */
     val configurationLauncherCandidates: List<String> = emptyList(),
-    /** Save root relative to Wine's drive_c/users/xuser profile. */
+    /** Save root relative to Wine's drive_c/users/xuser profile; blank disables save management until verified. */
     val saveDirectory: String,
     /** Flat-save games may safely unwrap one arbitrary ZIP wrapper directory. */
     val stripSingleSaveArchiveRoot: Boolean = false,
@@ -77,6 +77,25 @@ object GameCatalog {
                 ),
             ),
             windowHints = listOf("skyrim", "skyrimse"),
+        ),
+        SupportedGame(
+            id = "assassins-creed-ii",
+            title = "Assassin's Creed II",
+            storageName = "Assassins Creed II",
+            summary = "Animus companion development build. Live integration is in progress.",
+            requiredBuild = "PC 32-bit executable (verified SHA256 23a73e5f2d03)",
+            executableCandidates = listOf("AssassinsCreedIIGame.exe"),
+            // AC II distributions store saves through different Ubisoft backends.
+            // Preserve the existing prefix's saves until this build's path is verified.
+            saveDirectory = "",
+            requiredFiles = listOf("AssassinsCreedIIGame.exe", "DataPC.forge", "DataPC_extra.forge"),
+            fileRules = listOf(FileRule(
+                path = "AssassinsCreedIIGame.exe",
+                bytes = 34_693_768L,
+                sha256 = "23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92",
+            )),
+            nativeDllOverrides = mapOf("dinput8" to "native,builtin"),
+            windowHints = listOf("assassinscreediigame", "assassin's creed 2", "scimitarenginewindowclass"),
         ),
         SupportedGame(
             id = "fallout3",

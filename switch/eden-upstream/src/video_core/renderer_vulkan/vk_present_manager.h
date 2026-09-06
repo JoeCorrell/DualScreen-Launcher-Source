@@ -7,6 +7,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <atomic>
 #include <mutex>
 #include <boost/container/deque.hpp>
 
@@ -46,11 +47,13 @@ public:
                    MemoryAllocator& memory_allocator,
                    Scheduler& scheduler,
                    Swapchain& swapchain,
-                   vk::SurfaceKHR& surface);
+                   vk::SurfaceKHR& surface,
+                   bool auxiliary = false);
     ~PresentManager();
 
     /// Returns the last used presentation frame
     Frame* GetRenderFrame();
+    Frame* TryGetRenderFrame();
 
     /// Pushes a frame for presentation
     void Present(Frame* frame);
@@ -97,6 +100,8 @@ private:
     bool blit_supported;
     bool storage_supported;
     bool use_present_thread;
+    const bool auxiliary;
+    std::atomic<bool> surface_lost{false};
     std::size_t image_count{};
 };
 

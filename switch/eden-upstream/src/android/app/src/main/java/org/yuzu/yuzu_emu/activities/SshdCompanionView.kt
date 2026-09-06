@@ -40,7 +40,9 @@ import org.yuzu.yuzu_emu.utils.Log
 internal class SshdCompanionView(
     context: Context,
     private val onPlayerVisibilityChanged: (Boolean) -> Unit = {},
-    private val onPlayerModelChanged: (Int) -> Unit = {}
+    private val onPlayerModelChanged: (Int) -> Unit = {},
+    private val onMapVisibilityChanged: (Boolean) -> Unit = {},
+    private val onMapAspectChanged: (Float) -> Unit = {}
 ) : View(context), SshdControllerTarget {
     private companion object {
         private const val DESIGN_WIDTH = 1240f
@@ -50,7 +52,7 @@ internal class SshdCompanionView(
         private const val SNAPSHOT_MAGIC = 0x44485353
         private const val MAP_IMAGE_MAGIC = 0x504D5353
         private const val MAP_IMAGE_HEADER_SIZE = 36
-        private const val MAP_IMAGE_VERSION = 1
+        private const val MAP_IMAGE_VERSION = 3
         private const val MAP_IMAGE_PIXEL_FORMAT_RGBA8888 = 1
         private const val MAX_MAP_IMAGE_BYTES = MAP_IMAGE_HEADER_SIZE + 2048 * 2048 * 4
         private const val MAP_IMAGE_WAIT_POLL_INTERVAL_MS = 180L
@@ -427,10 +429,12 @@ internal class SshdCompanionView(
         Shader.TileMode.CLAMP
     )
     private val snapshotBuffer = ByteBuffer.allocateDirect(SNAPSHOT_SIZE).order(ByteOrder.LITTLE_ENDIAN)
-    private var mapImageBuffer = ByteBuffer.allocateDirect(4 * 1024 * 1024 + MAP_IMAGE_HEADER_SIZE)
+    private var mapImageBuffer = ByteBuffer.allocateDirect(MAP_IMAGE_HEADER_SIZE)
         .order(ByteOrder.LITTLE_ENDIAN)
     private val mapBitmapLock = Any()
-    private var mapBitmap: Bitmap? = null
+    @Volatile private var mapGpuAvailable = false
+    @Volatile private var mapGpuReady = false
+    @Volatile private var mapDisplayAspect = 1f
     private var mapBitmapSequence = 0L
     private var mapBitmapStage = ""
     private var mapBitmapFloor = Int.MIN_VALUE
@@ -445,15 +449,23 @@ internal class SshdCompanionView(
     private var mapLastTouchX = 0f
     private var mapLastTouchY = 0f
     private var mapLastPinchDistance = 0f
+    private val completedQuestBounds = RectF(32f, 500f, 490f, 1048f)
+    private var completedQuestScroll = 0f
+    private var completedQuestScrollMax = 0f
+    private var completedQuestTouchCaptured = false
+    private var completedQuestLastY = 0f
     private val tabBounds = Array(Page.entries.size) { index ->
-        val left = 12f + index * 306f
-        RectF(left, 12f, left + 298f, 82f)
+        val gap = 8f
+        val tabWidth = (DESIGN_WIDTH - 24f - gap * (Page.entries.size - 1)) / Page.entries.size
+        val left = 12f + index * (tabWidth + gap)
+        RectF(left, 12f, left + tabWidth, 82f)
     }
     private val categoryBounds = Array(5) { index ->
         RectF(32f + index * 131f, 106f, 155f + index * 131f, 166f)
     }
-    private val inventoryPreviousBounds = RectF(588f, 670f, 634f, 696f)
-    private val inventoryNextBounds = RectF(642f, 670f, 688f, 696f)
+    private val inventoryPreviousBounds = RectF(588f, 620f, 634f, 646f)
+    private val inventoryNextBounds = RectF(642f, 620f, 688f, 646f)
+    private val inventoryDetailBounds = RectF(32f, 654f, 694f, 1000f)
     private val inventoryStatusBounds = RectF(742f, 108f, 1208f, 324f)
     private val shieldEquipmentBounds = RectF(1054f, 360f, 1208f, 514f)
     private val bItemEquipmentBounds = RectF(1054f, 522f, 1208f, 676f)
@@ -488,6 +500,8 @@ internal class SshdCompanionView(
     private var pageChangedAt = 0L
     private var actionFeedback = ""
     private var actionFeedbackAt = 0L
+    private var itemInputGeneration = 0
+    private var itemInputPending = false
     private val combatPath = mutableListOf<CombatPoint>()
     private var combatTouchCaptured = false
     private var combatInputGeneration = 0
@@ -553,8 +567,10 @@ internal class SshdCompanionView(
 
     override fun onDetachedFromWindow() {
         SshdControllerBridge.detach(this)
+        cancelItemInput()
         releaseCombatControls()
         setPlayerVisible(false)
+        onMapVisibilityChanged(false)
         playerOutfit = -1
         poller?.shutdownNow()
         poller = null
@@ -581,7 +597,10 @@ internal class SshdCompanionView(
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         super.onWindowVisibilityChanged(visibility)
-        if (visibility != VISIBLE) releaseCombatControls()
+        if (visibility != VISIBLE) {
+            releaseCombatControls()
+            cancelItemInput()
+        }
     }
 
     private fun loadAssets() {
@@ -802,7 +821,7 @@ internal class SshdCompanionView(
         if (next.status != ACTIVE_STATUS || next.currentHealth == 0 ||
             next.lifecycleEpoch != previousLifecycleEpoch
         ) {
-            post { releaseCombatControls() }
+            post { releaseCombatControls(); cancelItemInput() }
         }
         post {
             if (lifecycleChanged) {
@@ -830,8 +849,8 @@ internal class SshdCompanionView(
 
     private fun clearMapImage(status: String) {
         synchronized(mapBitmapLock) {
-            mapBitmap?.recycle()
-            mapBitmap = null
+            mapGpuAvailable = false
+            mapGpuReady = false
             mapBitmapSequence = 0L
             mapBitmapStage = ""
             mapBitmapFloor = Int.MIN_VALUE
@@ -843,85 +862,46 @@ internal class SshdCompanionView(
     private fun pollMapImage(frame: Snapshot) {
         if (page != Page.Map || frame.status != ACTIVE_STATUS || frame.stage.isBlank()) return
         val now = SystemClock.uptimeMillis()
-        val pollInterval = synchronized(mapBitmapLock) {
-            if (mapBitmap == null) MAP_IMAGE_WAIT_POLL_INTERVAL_MS else MAP_IMAGE_READY_POLL_INTERVAL_MS
-        }
-        if (now - lastMapImagePollAt < pollInterval) return
+        if (now - lastMapImagePollAt < SNAPSHOT_INTERVAL_MS) return
         lastMapImagePollAt = now
-
         mapImageBuffer.clear()
-        var result = NativeLibrary.copySshdCompanionMapImage(mapImageBuffer)
-        if (result < -5) {
-            val required = -result
-            if (required !in MAP_IMAGE_HEADER_SIZE..MAX_MAP_IMAGE_BYTES) {
-                synchronized(mapBitmapLock) {
-                    mapCaptureStatus = "The game returned an invalid map texture size"
-                }
-                return
-            }
-            mapImageBuffer = ByteBuffer.allocateDirect(required).order(ByteOrder.LITTLE_ENDIAN)
-            mapImageBuffer.clear()
-            result = NativeLibrary.copySshdCompanionMapImage(mapImageBuffer)
-        }
-        if (result <= 0) {
-            if (result < 0) {
-                val status = when (result) {
-                    -2 -> "Waiting for Skyward Sword HD's active map"
-                    -3 -> "Waiting for the game-thread map renderer"
-                    -4 -> "The active map uses an unsupported native texture format"
-                    -5 -> "The live map texture is not readable yet"
-                    else -> "The live map capture is not ready"
-                }
-                synchronized(mapBitmapLock) { mapCaptureStatus = status }
-                postInvalidateOnAnimation()
-            }
-            return
-        }
-        if (result < MAP_IMAGE_HEADER_SIZE || result > mapImageBuffer.capacity() ||
-            mapImageBuffer.getInt(0) != MAP_IMAGE_MAGIC ||
-            mapImageBuffer.u16(4) != MAP_IMAGE_VERSION ||
-            mapImageBuffer.u16(6) != MAP_IMAGE_HEADER_SIZE
+        val result = NativeLibrary.copySshdCompanionMapImage(mapImageBuffer)
+        // A busy metadata seqlock is not a destroyed GPU resource. Keep the
+        // last frame for this same stage/epoch while the writer completes.
+        if (result == -6) return
+        if (result != MAP_IMAGE_HEADER_SIZE || mapImageBuffer.getInt(0) != MAP_IMAGE_MAGIC ||
+            mapImageBuffer.u16(4) != MAP_IMAGE_VERSION || mapImageBuffer.u16(6) != MAP_IMAGE_HEADER_SIZE
         ) {
-            synchronized(mapBitmapLock) { mapCaptureStatus = "Rejected a malformed live map frame" }
+            clearMapImage(when (result) {
+                -2 -> "Waiting for the current area"
+                -5 -> "Waiting for the game's local map initialization"
+                else -> "Waiting for the game map renderer"
+            })
+            post { updateMapPresentation(); invalidate() }
             return
         }
-        val sequence = mapImageBuffer.getInt(8).toLong() and 0xFFFFFFFFL
-        val width = mapImageBuffer.u16(12)
-        val height = mapImageBuffer.u16(14)
-        val rowStride = mapImageBuffer.getInt(16)
-        val pixelFormat = mapImageBuffer.getInt(20)
-        val floor = mapImageBuffer.get(25).toInt()
         val stage = mapImageBuffer.ascii(28, 8)
-        val expectedSize = MAP_IMAGE_HEADER_SIZE.toLong() + width.toLong() * height * 4L
-        if (sequence == 0L || width !in 1..2048 || height !in 1..2048 ||
-            rowStride != width * 4 || pixelFormat != MAP_IMAGE_PIXEL_FORMAT_RGBA8888 ||
-            expectedSize != result.toLong() || stage != frame.stage ||
-            frame.lifecycleEpoch != snapshot.lifecycleEpoch
+        val nativeAspect = mapImageBuffer.getFloat(16)
+        if (stage != frame.stage || frame.lifecycleEpoch != snapshot.lifecycleEpoch ||
+            !nativeAspect.isFinite() || nativeAspect <= 0f ||
+            mapImageBuffer.u16(12) == 0 || mapImageBuffer.u16(14) == 0
         ) {
-            synchronized(mapBitmapLock) {
-                mapCaptureStatus = "Discarded a stale or invalid map frame"
-            }
+            clearMapImage("Waiting for the new area's map")
+            post { updateMapPresentation(); invalidate() }
             return
         }
-
-        val pixels = mapImageBuffer.duplicate().order(ByteOrder.LITTLE_ENDIAN).apply {
-            position(MAP_IMAGE_HEADER_SIZE)
-            limit(result)
-        }.slice()
         synchronized(mapBitmapLock) {
-            if (mapBitmap == null || mapBitmap?.width != width || mapBitmap?.height != height) {
-                mapBitmap?.recycle()
-                mapBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            }
-            pixels.rewind()
-            mapBitmap?.copyPixelsFromBuffer(pixels)
-            mapBitmapSequence = sequence
+            mapGpuAvailable = true
+            mapDisplayAspect = nativeAspect
+            mapGpuReady = mapImageBuffer.u16(26) and 1 != 0
             mapBitmapStage = stage
-            mapBitmapFloor = floor
+            mapBitmapFloor = mapImageBuffer.get(25).toInt()
             mapBitmapLifecycleEpoch = frame.lifecycleEpoch
-            mapCaptureStatus = "Live game map synchronized"
+            mapCaptureStatus = if (mapGpuReady) "Game map texture connected" else "Connecting the game map texture"
         }
-        postInvalidateOnAnimation()
+        // Resource readiness changes independently of the inventory snapshot
+        // hash. Publish visibility here, including the first cold map frame.
+        post { updateMapPresentation(); invalidate() }
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -995,59 +975,19 @@ internal class SshdCompanionView(
             linePaint.color = if (active) COLOR_GOLD else Color.rgb(128, 93, 48)
             linePaint.strokeWidth = if (active) 3f else 1f
             canvas.drawRoundRect(bounds, 4f, 4f, linePaint)
-            drawTabGlyph(canvas, index, bounds, active)
+            paint.textSize = 28f
+            paint.typeface = bold
+            val baseline = bounds.centerY() - (paint.ascent() + paint.descent()) * .5f
             drawText(
                 canvas,
                 PAGE_TITLES[index],
-                bounds.left + 82f,
-                bounds.centerY() + 10f,
+                bounds.centerX(),
+                baseline,
                 28f,
                 true,
+                Paint.Align.CENTER,
                 color = if (active) Color.rgb(248, 231, 187) else COLOR_TEXT
             )
-        }
-    }
-
-    private fun drawTabGlyph(canvas: Canvas, index: Int, bounds: RectF, active: Boolean) {
-        val left = bounds.left + 38f
-        val top = bounds.top + 19f
-        linePaint.color = if (active) Color.rgb(248, 231, 187) else COLOR_BORDER
-        linePaint.strokeWidth = if (active) 2.5f else 2f
-        when (index) {
-            0 -> {
-                for (row in 0..1) {
-                    for (column in 0..1) {
-                        val x = left + column * 13f
-                        val y = top + row * 13f
-                        canvas.drawRoundRect(RectF(x, y, x + 9f, y + 9f), 2f, 2f, linePaint)
-                    }
-                }
-            }
-            1 -> {
-                canvas.drawLine(left, top + 6f, left + 8f, top + 1f, linePaint)
-                canvas.drawLine(left + 8f, top + 1f, left + 18f, top + 7f, linePaint)
-                canvas.drawLine(left + 18f, top + 7f, left + 28f, top + 2f, linePaint)
-                canvas.drawLine(left, top + 6f, left, top + 28f, linePaint)
-                canvas.drawLine(left + 9f, top + 3f, left + 9f, top + 25f, linePaint)
-                canvas.drawLine(left + 19f, top + 8f, left + 19f, top + 28f, linePaint)
-                canvas.drawLine(left + 28f, top + 2f, left + 28f, top + 24f, linePaint)
-            }
-            2 -> {
-                canvas.drawLine(left, top + 25f, left + 28f, top - 1f, linePaint)
-                canvas.drawLine(left + 8f, top + 28f, left + 28f, top + 8f, linePaint)
-                canvas.drawLine(left + 1f, top + 18f, left + 10f, top + 27f, linePaint)
-            }
-            else -> {
-                val icon = assets.fiIcon
-                if (icon != null) {
-                    drawBitmapFit(
-                        canvas,
-                        icon,
-                        RectF(left - 1f, top - 3f, left + 31f, top + 29f),
-                        if (active) 255 else 120
-                    )
-                }
-            }
         }
     }
 
@@ -1111,9 +1051,9 @@ internal class SshdCompanionView(
             val row = index / INVENTORY_GRID_COLUMNS
             val bounds = RectF(
                 32f + column * 132f,
-                178f + row * 122f,
+                178f + row * 109.5f,
                 156f + column * 132f,
-                292f + row * 122f
+                279.5f + row * 109.5f
             )
             if (category == 0) {
                 drawPackedSlot(
@@ -1149,12 +1089,12 @@ internal class SshdCompanionView(
         if (items.size > INVENTORY_PAGE_SIZE) {
             val page = pageOffset / INVENTORY_PAGE_SIZE + 1
             val pages = (items.size + INVENTORY_PAGE_SIZE - 1) / INVENTORY_PAGE_SIZE
-            drawText(canvas, "$page / $pages", 564f, 690f, 14f, true, Paint.Align.RIGHT, COLOR_TEXT_SECONDARY)
+            drawText(canvas, "$page / $pages", 564f, 640f, 14f, true, Paint.Align.RIGHT, COLOR_TEXT_SECONDARY)
             drawPagerButton(canvas, inventoryPreviousBounds, "<", pageOffset > 0)
             drawPagerButton(canvas, inventoryNextBounds, ">", pageOffset + INVENTORY_PAGE_SIZE < items.size)
         }
         val selected = items.getOrNull(selectedIndex)?.takeIf { it in 0 until ITEM_COUNT }
-        drawDetail(canvas, RectF(32f, 704f, 694f, 1050f), selected)
+        drawDetail(canvas, inventoryDetailBounds, selected)
         drawStatus(
             canvas,
             inventoryStatusBounds,
@@ -1291,128 +1231,27 @@ internal class SshdCompanionView(
         constrainMapView()
     }
 
-    private fun mapDestination(bitmap: Bitmap, mapRect: RectF): RectF {
-        val inner = RectF(mapRect.left + 5f, mapRect.top + 5f, mapRect.right - 5f, mapRect.bottom - 5f)
-        val fit = max(inner.width() / bitmap.width, inner.height() / bitmap.height)
-        val width = bitmap.width * fit * mapViewScale
-        val height = bitmap.height * fit * mapViewScale
-        val centerX = inner.centerX() + mapViewOffsetX
-        val centerY = inner.centerY() + mapViewOffsetY
-        return RectF(centerX - width * .5f, centerY - height * .5f, centerX + width * .5f, centerY + height * .5f)
-    }
-
-    private fun activeMapKey(stage: String = snapshot.stage): String {
-        val normalized = stage.trim().uppercase()
-        if (normalized.length < 2 || normalized[0] !in charArrayOf('F', 'D', 'B', 'S')) {
-            return "world"
-        }
-        return when (normalized[1]) {
-            '1', '4' -> "faron"
-            '2' -> "eldin"
-            '3' -> "lanayru"
-            else -> "world"
-        }
-    }
-
-    private fun activeMapName(key: String): String = when (key) {
-        "faron" -> "Faron Woods"
-        "eldin" -> "Eldin Volcano"
-        "lanayru" -> "Lanayru Desert"
-        else -> "The Sky"
-    }
-
-    private fun markerScreenPoint(marker: MapMarker, destination: RectF, bitmap: Bitmap): Pair<Float, Float> {
-        // Icon01 commands use NW4R centered pane coordinates. A small number
-        // of map modes publish texture-local coordinates, so accept that exact
-        // range as a fallback without inventing world-to-map projection data.
-        return if (abs(marker.x) <= bitmap.width * .75f && abs(marker.y) <= bitmap.height * .75f) {
-            Pair(
-                destination.centerX() + marker.x * destination.width() / bitmap.width,
-                destination.centerY() - marker.y * destination.height() / bitmap.height
+    private fun publishMapView() {
+        val imageHeight = min(780f, 1206f / mapDisplayAspect)
+        val imageWidth = imageHeight * mapDisplayAspect
+        if (imageWidth > 0f && imageHeight > 0f) {
+            NativeLibrary.setSshdMapView(
+                mapViewScale, mapViewOffsetX / imageWidth, mapViewOffsetY / imageHeight
             )
-        } else {
-            Pair(
-                destination.left + marker.x / bitmap.width * destination.width(),
-                destination.top + marker.y / bitmap.height * destination.height()
-            )
-        }
-    }
-
-    private fun drawLiveMapMarkers(canvas: Canvas, destination: RectF, bitmap: Bitmap) {
-        if (!hasCapability(CAPABILITY_MAP_MARKER_STATE)) return
-        snapshot.mapMarkers.forEach { marker ->
-            val (x, y) = markerScreenPoint(marker, destination, bitmap)
-            if (!mapContentBounds.contains(x, y)) return@forEach
-            val playerMarker = marker.paneType == 5 || marker.paneType == 6
-            val radius = if (playerMarker) 13f else 9f
-            val color = when (marker.paneType) {
-                0, 14 -> COLOR_GOLD // treasure
-                3 -> COLOR_GREEN // save statue
-                7, 17 -> Color.WHITE // start/door key
-                8, 18 -> COLOR_RED // sword/target
-                11, 21 -> COLOR_PRIMARY_LIGHT // goddess cube/crest
-                19 -> Color.rgb(131, 194, 74) // bug
-                5, 6 -> Color.rgb(238, 191, 65) // player
-                else -> Color.rgb(235, 218, 171)
-            }
-            paint.color = Color.argb(225, 46, 34, 19)
-            canvas.drawCircle(x, y, radius + 4f, paint)
-            paint.color = color
-            canvas.drawCircle(x, y, radius, paint)
-            linePaint.color = Color.rgb(55, 38, 20)
-            linePaint.strokeWidth = 2f
-            canvas.drawCircle(x, y, radius, linePaint)
-            if (playerMarker) {
-                val heading = snapshot.playerHeadingRadians.takeIf { it.isFinite() }
-                    ?: (marker.commandRotation * (Math.PI / 32768.0)).toFloat()
-                val dx = kotlin.math.cos(heading) * 20f
-                val dy = -kotlin.math.sin(heading) * 20f
-                linePaint.color = Color.WHITE
-                linePaint.strokeWidth = 4f
-                canvas.drawLine(x, y, x + dx, y + dy, linePaint)
-            } else {
-                val glyph = when (marker.paneType) {
-                    0, 14 -> "T"
-                    3 -> "S"
-                    8 -> "!"
-                    11 -> "C"
-                    17 -> "K"
-                    18 -> "!"
-                    19 -> "B"
-                    else -> "•"
-                }
-                drawText(canvas, glyph, x, y + 5f, 12f, true, Paint.Align.CENTER, Color.rgb(46, 31, 17))
-            }
         }
     }
 
     private fun drawMap(canvas: Canvas) {
         val mapRect = mapContentBounds
-        paint.color = Color.rgb(67, 49, 28)
+        paint.color = Color.rgb(233, 215, 153)
         canvas.drawRoundRect(mapRect, 8f, 8f, paint)
-        val drewLiveMap = synchronized(mapBitmapLock) {
-            val bitmap = mapBitmap
-            if (bitmap != null && !bitmap.isRecycled && mapBitmapStage == snapshot.stage &&
-                mapBitmapLifecycleEpoch == snapshot.lifecycleEpoch
-            ) {
-                val destination = mapDestination(bitmap, mapRect)
-                canvas.save()
-                canvas.clipRect(mapRect.left + 5f, mapRect.top + 5f, mapRect.right - 5f, mapRect.bottom - 5f)
-                paint.alpha = 255
-                canvas.drawBitmap(bitmap, null, destination, paint)
-                drawLiveMapMarkers(canvas, destination, bitmap)
-                canvas.restore()
-                true
-            } else {
-                false
-            }
-        }
-        val mapKey = activeMapKey()
+        val drewLiveMap = mapGpuReady && mapBitmapStage == snapshot.stage &&
+            mapBitmapLifecycleEpoch == snapshot.lifecycleEpoch
         if (!drewLiveMap) {
             val captureStatus = synchronized(mapBitmapLock) { mapCaptureStatus }
             drawText(
                 canvas,
-                "LOADING ${activeMapName(mapKey).uppercase()} MAP",
+                "LOADING LOCAL MAP",
                 mapRect.centerX(),
                 mapRect.centerY() - 26f,
                 25f,
@@ -1432,18 +1271,6 @@ internal class SshdCompanionView(
         linePaint.color = COLOR_GOLD
         linePaint.strokeWidth = 3f
         canvas.drawRoundRect(mapRect, 8f, 8f, linePaint)
-        paint.color = Color.argb(220, 74, 46, 20)
-        canvas.drawRoundRect(RectF(30f, 110f, 390f, 176f), 6f, 6f, paint)
-        drawText(canvas, activeMapName(mapKey).uppercase(), 50f, 139f, 20f, true, color = Color.rgb(249, 229, 177))
-        drawText(
-            canvas,
-            if (drewLiveMap) "LIVE LOCAL MAP" else "SYNCHRONIZING LOCAL MAP",
-            50f,
-            162f,
-            12f,
-            true,
-            color = COLOR_PRIMARY_LIGHT
-        )
     }
 
     private fun drawCombat(canvas: Canvas) {
@@ -1635,6 +1462,8 @@ internal class SshdCompanionView(
             Paint.Align.RIGHT,
             COLOR_TEXT_SECONDARY
         )
+        completedQuestScrollMax = (completedQuests.size * 108f - 12f - completedQuestBounds.height()).coerceAtLeast(0f)
+        completedQuestScroll = completedQuestScroll.coerceIn(0f, completedQuestScrollMax)
         if (completedQuests.isEmpty()) {
             drawWrappedText(
                 canvas,
@@ -1649,8 +1478,11 @@ internal class SshdCompanionView(
                 COLOR_TEXT_SECONDARY
             )
         } else {
-            completedQuests.take(5).forEachIndexed { index, (id, text) ->
-                val top = 500f + index * 108f
+            canvas.save()
+            canvas.clipRect(completedQuestBounds)
+            completedQuests.forEachIndexed { index, (id, text) ->
+                val top = completedQuestBounds.top + index * 108f - completedQuestScroll
+                if (top + 96f < completedQuestBounds.top || top > completedQuestBounds.bottom) return@forEachIndexed
                 panel(canvas, RectF(32f, top, 490f, top + 96f), 24)
                 paint.color = COLOR_GREEN
                 canvas.drawCircle(56f, top + 30f, 13f, paint)
@@ -1672,6 +1504,14 @@ internal class SshdCompanionView(
                     2,
                     COLOR_TEXT_SECONDARY
                 )
+            }
+            canvas.restore()
+            if (completedQuestScrollMax > 0f) {
+                val track = completedQuestBounds.height()
+                val thumb = (track * track / (track + completedQuestScrollMax)).coerceAtLeast(32f)
+                val top = completedQuestBounds.top + (track - thumb) * completedQuestScroll / completedQuestScrollMax
+                paint.color = COLOR_PRIMARY
+                canvas.drawRoundRect(RectF(498f, top, 502f, top + thumb), 2f, 2f, paint)
             }
         }
 
@@ -1789,14 +1629,14 @@ internal class SshdCompanionView(
         val flagsAvailable = hasCapability(CAPABILITY_FLAG_STATE)
         val purse = assets.purse
         if (purse != null) {
-            drawBitmapFit(canvas, purse, RectF(bounds.left + 14f, resourceY - 19f, bounds.left + 34f, resourceY + 3f))
+            drawBitmapFit(canvas, purse, RectF(bounds.left + 14f, resourceY - 30f, bounds.left + 46f, resourceY + 6f))
         }
         drawText(
             canvas,
             if (flagsAvailable) snapshot.rupees.toString() else "--",
-            bounds.left + if (purse != null) 40f else 16f,
+            bounds.left + if (purse != null) 56f else 16f,
             resourceY,
-            17f,
+            27f,
             true
         )
         drawText(
@@ -1989,7 +1829,8 @@ internal class SshdCompanionView(
                     if (compact) {
                         RectF(bounds.left + 9f, bounds.top + 6f, bounds.right - 9f, bounds.bottom - 16f)
                     } else {
-                        RectF(bounds.left + 12f, bounds.top + 8f, bounds.right - 12f, bounds.bottom - 25f)
+                        RectF(bounds.left + 12f, bounds.top + 8f, bounds.right - 12f,
+                            bounds.bottom - if (id in 0x74..0x7D) 34f else 25f)
                     }
                 )
             }
@@ -1998,7 +1839,7 @@ internal class SshdCompanionView(
                     canvas,
                     itemName(id),
                     bounds.centerX(),
-                    bounds.bottom - 7f,
+                    bounds.bottom - if (id in 0x74..0x7D) 16f else 7f,
                     bounds.width() - 10f,
                     12f,
                     true,
@@ -2010,7 +1851,7 @@ internal class SshdCompanionView(
                 val durability = packed ushr 16 and 0xFF
                 val maximum = SHIELD_MAX_DURABILITY[id - 0x74]
                 val ratio = (durability.toFloat() / maximum.toFloat()).coerceIn(0f, 1f)
-                val bar = RectF(bounds.left + 9f, bounds.bottom - 22f, bounds.right - 9f, bounds.bottom - 17f)
+                val bar = RectF(bounds.left + 9f, bounds.bottom - 10f, bounds.right - 9f, bounds.bottom - 5f)
                 paint.color = Color.rgb(135, 106, 66)
                 canvas.drawRoundRect(bar, 3f, 3f, paint)
                 if (ratio > 0f) {
@@ -2359,7 +2200,9 @@ internal class SshdCompanionView(
     private fun selectionActionLabel(itemId: Int): String = when (page) {
         Page.Inventory -> when {
             category == 0 && itemId in 0x74..0x7D -> "A  Equip shield"
-            category == 0 -> "A  Select pouch slot"
+            category == 0 && isPotion(itemId) -> "Use potion"
+            category == 0 && isBottle(itemId) -> "Ready bottle"
+            category == 0 -> "Select pouch slot"
             bWheelSlotForItem(itemId) != null -> "A  Equip B item"
             itemId in 0x74..0x7D && pouchSlotForItem(itemId) != null -> "A  Equip shield"
             else -> "Inspect only"
@@ -2379,6 +2222,7 @@ internal class SshdCompanionView(
 
     private fun activateSelection(): Boolean {
         if (snapshot.status != ACTIVE_STATUS) return false
+        if (itemInputPending) return showActionFeedback("An item action is already in progress")
         val request = when (page) {
             Page.Inventory -> {
                 if (category == 0) {
@@ -2387,6 +2231,7 @@ internal class SshdCompanionView(
                     if (item !in 0 until ITEM_COUNT) {
                         return showActionFeedback("That pouch slot is empty")
                     }
+                    if (isBottle(item)) return usePouchBottle(selectedIndex, item)
                     val pouchRequest = if (item in 0x74..0x7D) {
                         Triple(ACTION_EQUIP_SHIELD, selectedIndex, "Shield request applied: ${itemName(item)}")
                     } else {
@@ -2431,17 +2276,27 @@ internal class SshdCompanionView(
             InventoryFocus.Grid, InventoryFocus.Selected ->
                 if (activateSelection()) true else showActionFeedback("No item action is available")
             InventoryFocus.Shield -> {
-                val slot = snapshot.shieldPouchSlot
-                if (slot !in snapshot.pouch.indices || equippedShieldId() == null) {
-                    showActionFeedback("No shield is equipped")
+                val selectedItem = inventoryItems().getOrNull(selectedIndex)
+                val shields = snapshot.pouch.indices.filter {
+                    packedItemId(snapshot.pouch[it]) in 0x74..0x7D
+                }
+                val selectedSlot = selectedItem?.takeIf { it in 0x74..0x7D }?.let(::pouchSlotForItem)
+                val slot = selectedSlot ?: shields.firstOrNull { it > snapshot.shieldPouchSlot }
+                    ?: shields.firstOrNull()
+                if (slot == null) {
+                    showActionFeedback("No shield is in the pouch")
                 } else {
                     val applied = NativeLibrary.performSshdCompanionAction(ACTION_EQUIP_SHIELD, slot)
-                    showActionFeedback(if (applied) "Shield request applied" else "Shield action unavailable")
+                    showActionFeedback(if (applied) "Equipped ${itemName(packedItemId(snapshot.pouch[slot]))}" else "Shield action unavailable")
                 }
             }
             InventoryFocus.BItem -> {
-                val item = equippedBItemId()
-                val slot = item?.let(::bWheelSlotForItem)
+                val selectedSlot = inventoryItems().getOrNull(selectedIndex)?.let(::bWheelSlotForItem)
+                val ownedSlots = (0 until ITEM_COUNT).filter { isItemOwned(snapshot, it) }
+                    .mapNotNull(::bWheelSlotForItem).distinct().sorted()
+                val currentSlot = equippedBItemId()?.let(::bWheelSlotForItem) ?: -1
+                val slot = selectedSlot ?: ownedSlots.firstOrNull { it > currentSlot }
+                    ?: ownedSlots.firstOrNull()
                 if (slot == null) {
                     showActionFeedback("No B item is equipped")
                 } else {
@@ -2476,6 +2331,88 @@ internal class SshdCompanionView(
         return true
     }
 
+    private fun isPotion(item: Int): Boolean = item in setOf(
+        65, 66, 78, 79, 80, 81, 83, 84, 85, 86, 87, 126, 127, 194
+    )
+
+    private fun isBottle(item: Int): Boolean = isPotion(item) || item in setOf(36, 54, 55, 74, 88, 153)
+
+    private fun cancelItemInput() {
+        itemInputGeneration++
+        if (!itemInputPending) return
+        itemInputPending = false
+        setCombatButton(NativeButton.R, false)
+        setCombatButton(NativeButton.A, false)
+    }
+
+    private fun usePouchBottle(slot: Int, item: Int): Boolean {
+        if (itemInputPending) return showActionFeedback("An item action is already in progress")
+        // Start with a stowed bottle so a previously held, different bottle cannot
+        // accidentally be consumed after changing the pouch selection.
+        if (NativeLibrary.getSshdBottleState(slot, item) != 0) {
+            return showActionFeedback("Put away the held item before using this bottle")
+        }
+        if (!NativeLibrary.performSshdCompanionAction(ACTION_SELECT_POUCH, slot)) {
+            return showActionFeedback("This bottle is unavailable in the current game state")
+        }
+        val stage = snapshot.stage
+        val epoch = snapshot.lifecycleEpoch
+        val generation = ++itemInputGeneration
+        val deadline = SystemClock.uptimeMillis() + 5000L
+        itemInputPending = true
+        setCombatButton(NativeButton.R, true)
+        showActionFeedback("Readying ${itemName(item)}")
+        Log.info("[SSHD Item] Ready slot=$slot item=$item stage=$stage")
+        postDelayed({
+            if (generation == itemInputGeneration) setCombatButton(NativeButton.R, false)
+        }, 160L)
+        var lastState = -2
+        var useSent = false
+        val check = object : Runnable {
+            override fun run() {
+                if (generation != itemInputGeneration) return
+                if (!isAttachedToWindow || page != Page.Inventory || snapshot.status != ACTIVE_STATUS ||
+                    snapshot.currentHealth == 0 || snapshot.stage != stage || snapshot.lifecycleEpoch != epoch
+                ) {
+                    cancelItemInput()
+                    return
+                }
+                val state = NativeLibrary.getSshdBottleState(slot, item)
+                if (state != lastState) {
+                    Log.info("[SSHD Item] slot=$slot item=$item state=$state useSent=$useSent")
+                    lastState = state
+                }
+                if (state == 3 && useSent) {
+                    cancelItemInput()
+                    showActionFeedback("Using ${itemName(item)}")
+                    return
+                }
+                if (state == 2 && !useSent) {
+                    if (!isPotion(item)) {
+                        cancelItemInput()
+                        showActionFeedback("${itemName(item)} is ready")
+                        return
+                    }
+                    // Only the game's stable BINHOLD pose permits the A press.
+                    // The native game owns the animation, effects and quantity.
+                    useSent = true
+                    setCombatButton(NativeButton.A, true)
+                    postDelayed({
+                        if (generation == itemInputGeneration) setCombatButton(NativeButton.A, false)
+                    }, 160L)
+                }
+                if (state < 0 || SystemClock.uptimeMillis() >= deadline) {
+                    cancelItemInput()
+                    showActionFeedback("The game could not use this item here")
+                    return
+                }
+                postDelayed(this, 100L)
+            }
+        }
+        postDelayed(check, 200L)
+        return true
+    }
+
     private fun Int.displayByte(): String = if (this == 0xFF) "—" else toString()
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -2491,6 +2428,10 @@ internal class SshdCompanionView(
             MotionEvent.ACTION_DOWN -> {
                 downX = x
                 downY = y
+                if (page == Page.Progress && completedQuestBounds.contains(x, y)) {
+                    completedQuestTouchCaptured = true
+                    completedQuestLastY = y
+                }
                 if (page == Page.Map && mapContentBounds.contains(x, y)) {
                     mapTouchCaptured = true
                     mapTouchMoved = false
@@ -2520,6 +2461,13 @@ internal class SshdCompanionView(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (completedQuestTouchCaptured) {
+                    completedQuestScroll = (completedQuestScroll + completedQuestLastY - y)
+                        .coerceIn(0f, completedQuestScrollMax)
+                    completedQuestLastY = y
+                    invalidate()
+                    return true
+                }
                 if (mapTouchCaptured) {
                     if (event.pointerCount >= 2) {
                         val distance = pointDistance(
@@ -2541,6 +2489,7 @@ internal class SshdCompanionView(
                         mapLastTouchX = x
                         mapLastTouchY = y
                     }
+                    publishMapView()
                     invalidate()
                     return true
                 }
@@ -2600,6 +2549,7 @@ internal class SshdCompanionView(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                completedQuestTouchCaptured = false
                 mapTouchCaptured = false
                 mapTouchMoved = false
                 mapLastPinchDistance = 0f
@@ -2611,6 +2561,10 @@ internal class SshdCompanionView(
             }
             MotionEvent.ACTION_UP -> {
                 performClick()
+                if (completedQuestTouchCaptured) {
+                    completedQuestTouchCaptured = false
+                    return true
+                }
                 if (mapTouchCaptured) {
                     mapTouchCaptured = false
                     mapLastPinchDistance = 0f
@@ -3053,14 +3007,16 @@ internal class SshdCompanionView(
             else -> null
         }
         if (focusTarget != null) {
-            if (inventoryFocus == focusTarget) activateFocusedSelection() else inventoryFocus = focusTarget
+            inventoryFocus = focusTarget
+            if (itemInputPending) showActionFeedback("An item action is already in progress")
+            else activateFocusedSelection()
             return
         }
         val items = inventoryItems()
         val pageOffset = inventoryPageOffset(items.size)
         val selectedItem = items.getOrNull(selectedIndex)
         if (selectedItem != null && selectionHasNativeAction(selectedItem) &&
-            detailActionBounds(RectF(32f, 704f, 694f, 1050f)).contains(x, y)
+            detailActionBounds(inventoryDetailBounds).contains(x, y)
         ) {
             inventoryFocus = InventoryFocus.Grid
             activateSelection()
@@ -3076,9 +3032,9 @@ internal class SshdCompanionView(
             selectedIndex = pageOffset + INVENTORY_PAGE_SIZE
             return
         }
-        if (x !in 32f..684f || y !in 178f..658f) return
+        if (x !in 32f..684f || y !in 178f..608f) return
         val column = ((x - 32f) / 132f).toInt().coerceIn(0, INVENTORY_GRID_COLUMNS - 1)
-        val row = ((y - 178f) / 122f).toInt().coerceIn(0, INVENTORY_GRID_ROWS - 1)
+        val row = ((y - 178f) / 109.5f).toInt().coerceIn(0, INVENTORY_GRID_ROWS - 1)
         val index = pageOffset + row * INVENTORY_GRID_COLUMNS + column
         if (index < items.size) {
             inventoryFocus = InventoryFocus.Grid
@@ -3239,6 +3195,7 @@ internal class SshdCompanionView(
 
     private fun changePage(next: Page) {
         if (page == next) return
+        cancelItemInput()
         if (page == Page.Combat || next == Page.Combat) releaseCombatControls()
         page = next
         selectedIndex = 0
@@ -3258,7 +3215,13 @@ internal class SshdCompanionView(
             playerOutfit = outfit
             onPlayerModelChanged(outfit)
         }
+        updateMapPresentation()
         setPlayerVisible(page == Page.Inventory && outfit != null)
+    }
+
+    private fun updateMapPresentation() {
+        onMapAspectChanged(mapDisplayAspect)
+        onMapVisibilityChanged(page == Page.Map && snapshot.status == ACTIVE_STATUS && mapGpuAvailable)
     }
 
     private fun setPlayerVisible(visible: Boolean) {

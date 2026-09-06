@@ -16,6 +16,8 @@ constexpr int32_t kCheckpointIndex = 4;
 
 void TestNativeSavePassesThrough() {
   CheckpointGate gate;
+  assert(!gate.RequiresInterception(false));
+  assert(gate.RequiresInterception(true));
   assert(gate.Intercept(kManager, kManagerIndex, kCheckpointIndex, false,
                         false) ==
          CheckpointInterceptResult::kRunOriginal);
@@ -27,6 +29,7 @@ void TestMappedSaveRestoresAndReplaysExactlyOnce() {
   assert(gate.Intercept(kManager, kManagerIndex, kCheckpointIndex, true,
                         true) == CheckpointInterceptResult::kDeferred);
   assert(gate.pending());
+  assert(gate.RequiresInterception(false));
 
   // Further native requests cannot bypass the retained save while the graph
   // is being restored, even if the mapping has already become empty.
@@ -42,6 +45,7 @@ void TestMappedSaveRestoresAndReplaysExactlyOnce() {
   assert(!gate.ConsumeNativeRestoreRequest(&request));
 
   assert(gate.MarkNativeGraphVerified(false, true));
+  assert(gate.RequiresInterception(false));
   assert(gate.BeginReplay(&request));
   assert(!gate.BeginReplay(&request));
   assert(gate.Intercept(kManager, kManagerIndex, kCheckpointIndex, false,
@@ -53,6 +57,7 @@ void TestMappedSaveRestoresAndReplaysExactlyOnce() {
                         false) == CheckpointInterceptResult::kSuppressed);
   assert(gate.CompleteReplay(kManager, kManagerIndex, true));
   assert(!gate.pending());
+  assert(!gate.RequiresInterception(false));
 
   // The retained request cannot be replayed a second time.
   assert(!gate.BeginReplay(&request));
@@ -66,6 +71,7 @@ void TestInvalidMappingFailsClosed() {
   assert(gate.Intercept(kManager, kManagerIndex, kCheckpointIndex, true,
                         false) == CheckpointInterceptResult::kFailedClosed);
   assert(gate.failed_closed());
+  assert(gate.RequiresInterception(false));
   DeferredCheckpointRequest request;
   assert(!gate.ConsumeNativeRestoreRequest(&request));
   assert(gate.Intercept(kManager, kManagerIndex, kCheckpointIndex, false,

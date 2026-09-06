@@ -89,6 +89,7 @@ internal fun LauncherScreen(
         mutableStateOf<Pair<SwitchGameDefinition, SwitchContentKind>?>(null)
     }
     var pendingSwitchMod by remember { mutableStateOf<SwitchGameDefinition?>(null) }
+    var switchModSelection by remember { mutableStateOf<Pair<SwitchGameDefinition, android.net.Uri>?>(null) }
     var pendingSwitchSaveImport by remember { mutableStateOf<SwitchGameDefinition?>(null) }
     var pendingSwitchSaveExport by remember { mutableStateOf<SwitchGameDefinition?>(null) }
     var page by remember { mutableStateOf<LauncherPage>(LauncherPage.PcGames) }
@@ -136,7 +137,7 @@ internal fun LauncherScreen(
     val switchModPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         val game = pendingSwitchMod
         pendingSwitchMod = null
-        if (game != null && uri != null) model.installSwitchMod(game, uri)
+        if (game != null && uri != null) switchModSelection = game to uri
     }
     val switchSaveImportPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val game = pendingSwitchSaveImport
@@ -200,6 +201,18 @@ internal fun LauncherScreen(
         LauncherPage.PcDriverDownloader,
         LauncherPage.SwitchGlobalSettings,
         -> LauncherNavItem.SETTINGS
+    }
+
+    switchModSelection?.let { (game, uri) ->
+        SwitchModSelectionDialog(
+            selectionKey = "${game.id}:$uri",
+            loader = { model.discoverSwitchMods(game, uri) },
+            onDismiss = { switchModSelection = null },
+            onInstall = { selected ->
+                switchModSelection = null
+                model.installSwitchMods(game, uri, selected)
+            },
+        )
     }
 
     Surface(
@@ -432,6 +445,7 @@ internal fun LauncherScreen(
                                 arrayOf("application/zip", "application/x-zip-compressed"),
                             )
                         },
+                        onSwitchGpuDriver = model::selectSwitchGlobalGpuDriver,
                         onOpenSwitchDriverDownloader = {
                             page = LauncherPage.SwitchDriverDownloader()
                         },

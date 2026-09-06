@@ -121,7 +121,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
                                MemoryAllocator& memory_allocator_,
                                Scheduler& scheduler_,
                                Swapchain& swapchain_,
-                               vk::SurfaceKHR& surface_)
+                               vk::SurfaceKHR& surface_, bool auxiliary_)
     : instance{instance_}
     , render_window{render_window_}
     , device{device_}
@@ -131,7 +131,8 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , surface{surface_}
     , blit_supported{CanBlitToSwapchain(device.GetPhysical(), swapchain.GetImageViewFormat())}
     , storage_supported{CanStoreToFrame(device.GetPhysical(), swapchain.GetImageFormat())}
-    , use_present_thread{Settings::values.async_presentation.GetValue()}
+    , use_present_thread{auxiliary_ || Settings::values.async_presentation.GetValue()}
+    , auxiliary{auxiliary_}
 {
     SetImageCount();
 
@@ -168,7 +169,25 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     }
 }
 
-PresentManager::~PresentManager() = default;
+PresentManager::~PresentManager() {
+    // Stop before destroying state read by the presentation thread, including
+    // the auxiliary surface-lost flag declared after the jthread member.
+    if (present_thread.joinable()) {
+        present_thread.request_stop();
+        frame_cv.notify_all();
+        present_thread.join();
+    }
+}
+
+Frame* PresentManager::TryGetRenderFrame() {
+    std::scoped_lock lock{free_mutex};
+    if (surface_lost.load(std::memory_order_acquire) || free_queue.empty()) return nullptr;
+    Frame* frame = free_queue.front();
+    if (frame->present_done.GetStatus() != VK_SUCCESS) return nullptr;
+    free_queue.pop_front();
+    frame->present_done.Reset();
+    return frame;
+}
 
 Frame* PresentManager::GetRenderFrame() {
 
@@ -370,6 +389,7 @@ void PresentManager::SetImageCount() {
 }
 
 void PresentManager::CopyToSwapchain(Frame* frame) {
+    if (surface_lost.load(std::memory_order_acquire)) return;
     bool requires_recreation = false;
 
     while (true) {
@@ -387,6 +407,15 @@ void PresentManager::CopyToSwapchain(Frame* frame) {
         } catch (const vk::Exception& except) {
             if (except.GetResult() != VK_ERROR_SURFACE_LOST_KHR) {
                 throw;
+            }
+
+            if (auxiliary) {
+                // An Android TextureView can disappear while a present is in
+                // flight. Retire this auxiliary surface instead of repeatedly
+                // recreating an abandoned queue. Its owner drains presentation
+                // and GPU work before teardown.
+                surface_lost.store(true, std::memory_order_release);
+                return;
             }
 
             requires_recreation = true;

@@ -18,6 +18,7 @@ fun gradleBuildConfigString(name: String): String =
         .replace("\"", "\\\"")
 
 val remotelyManagedPayloads = listOf(
+    "assassins-creed-ii",
     "dead-island-de",
     "deus-ex-hrdc",
     "fallout3",
@@ -25,16 +26,31 @@ val remotelyManagedPayloads = listOf(
     "grim-dawn",
     "skyrim-se",
     "stardew-valley",
-    "transformers-wfc",
     "valheim",
 )
 val filteredLauncherAssets = layout.buildDirectory.dir("generated/filteredLauncherAssets")
+// Release-only overlay keeps a verified published WFC payload separate from
+// ongoing native-script work in the shared source/package directories.
+val wfcReleaseAssetsDirectory = providers.gradleProperty("wfcReleaseAssetsDir")
 val prepareFilteredLauncherAssets by tasks.registering(Sync::class) {
     from(layout.projectDirectory.dir("src/main/assets")) {
         remotelyManagedPayloads.forEach { gameId ->
             exclude("mods/$gameId/payload/**")
         }
         exclude("mods/switch/**/payload/**")
+        // Ship the rebuilt WFC mod and skin with the APK. Only its unchanged,
+        // large prerequisite installers continue to come from the payload pack.
+        if (wfcReleaseAssetsDirectory.isPresent) {
+            exclude("mods/transformers-wfc/**")
+        } else {
+            exclude("mods/transformers-wfc/payload/prerequisites/**")
+        }
+    }
+    wfcReleaseAssetsDirectory.orNull?.let { directory ->
+        from(directory) {
+            into("mods/transformers-wfc")
+            exclude("payload/prerequisites/**")
+        }
     }
     into(filteredLauncherAssets)
 }
@@ -44,8 +60,8 @@ android {
 
     defaultConfig {
         applicationId = "com.dualscreen.launcher"
-        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 27
-        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.15"
+        versionCode = providers.gradleProperty("launcherVersionCode").orNull?.toIntOrNull() ?: 29
+        versionName = providers.gradleProperty("launcherVersionName").orNull ?: "1.6.17"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk { abiFilters += "arm64-v8a" }
         // Both values are safe to ship: the URL identifies the service and the
@@ -102,9 +118,8 @@ android {
     androidResources { noCompress += listOf("tzst", "zst", "tgz", "so", "dat", "dll") }
     // AndroidSourceDirectorySet's exclude filter is not applied by AGP's asset
     // merger. Stage a filtered tree instead, otherwise stale native payloads
-    // (including WFC's redistributables) silently ship inside every APK and can
-    // override the signed first-boot pack. Isaac is intentionally not in this
-    // list, so its native DLL, Lua loader, and assets ship with this release.
+    // silently ship inside every APK. Isaac and WFC intentionally bundle their
+    // current native mods and assets; WFC's redistributables remain remote.
     sourceSets["main"].assets.setSrcDirs(listOf(filteredLauncherAssets.get().asFile))
     packaging { jniLibs { useLegacyPackaging = true } }
 }

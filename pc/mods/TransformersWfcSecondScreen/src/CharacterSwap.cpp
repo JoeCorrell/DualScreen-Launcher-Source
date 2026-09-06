@@ -73,6 +73,7 @@ CharacterSwapSubmitResult CharacterSwapTransaction::Submit(
   capture_ = {};
   applied_count_ = 0;
   has_capture_ = false;
+  rollback_graph_gate_pending_ = false;
   transaction_started_at_millis_ = now_millis;
   last_accepted_at_millis_ = now_millis;
   has_last_accepted_time_ = true;
@@ -85,6 +86,17 @@ CharacterSwapSubmitResult CharacterSwapTransaction::Submit(
 CharacterSwapStatus CharacterSwapTransaction::Tick(
     uint64_t now_millis) noexcept {
   if (!in_progress()) {
+    return status_;
+  }
+  current_tick_millis_ = now_millis;
+  if (status_.phase == CharacterSwapPhase::kRollback) {
+    // Rollback receives its own bounded quiescence interval. Do not restart
+    // rollback (or pop more ownership mutations) on a timed-out forward clock.
+    if (now_millis < rollback_started_at_millis_ ||
+        now_millis - rollback_started_at_millis_ > config_.maximum_transaction_millis)
+      FinishRollback(true);
+    else
+      ContinueRollback();
     return status_;
   }
   if (now_millis < transaction_started_at_millis_) {
@@ -247,8 +259,25 @@ void CharacterSwapTransaction::FailAndRollback(
   status_.failed_mutation = failed_mutation;
   status_.rollback_complete = true;
   status_.rollback_failure_count = 0;
+  rollback_started_at_millis_ = current_tick_millis_;
+  rollback_graph_gate_pending_ = false;
+  ContinueRollback();
+}
 
+void CharacterSwapTransaction::ContinueRollback() noexcept {
   while (applied_count_ != 0) {
+    if (rollback_graph_gate_pending_) {
+      const auto ready = operations_->PrepareRollbackGraph(request_, capture_);
+      if (ready == CharacterSwapPreflight::kWait) {
+        status_.rollback_complete = false;
+        return;
+      }
+      if (ready != CharacterSwapPreflight::kReady) {
+        FinishRollback(true);
+        return;
+      }
+      rollback_graph_gate_pending_ = false;
+    }
     const CharacterSwapMutation mutation = applied_[--applied_count_];
     if (!operations_->RevertMutation(mutation, request_, &capture_)) {
       status_.rollback_complete = false;
@@ -257,8 +286,19 @@ void CharacterSwapTransaction::FailAndRollback(
         ++status_.rollback_failure_count;
       }
     }
+    status_.applied_mutation_count = static_cast<uint8_t>(applied_count_);
+    if (mutation == CharacterSwapMutation::kReleaseTransitionGuards)
+      rollback_graph_gate_pending_ = true;
   }
-  status_.applied_mutation_count = 0;
+  FinishRollback();
+}
+
+void CharacterSwapTransaction::FinishRollback(bool abandon_pending) noexcept {
+  const auto cause = status_.failure;
+  if (abandon_pending && status_.rollback_failure_count < std::numeric_limits<uint8_t>::max())
+    ++status_.rollback_failure_count;
+  status_.rollback_complete = !abandon_pending && applied_count_ == 0 &&
+                              status_.rollback_failure_count == 0;
   if (!status_.rollback_complete) {
     status_.failure = CharacterSwapFailure::kRollbackFailed;
   }
@@ -398,6 +438,9 @@ void CharacterSwapTransaction::ClearCurrent() noexcept {
   applied_count_ = 0;
   has_capture_ = false;
   transaction_started_at_millis_ = 0;
+  current_tick_millis_ = 0;
+  rollback_started_at_millis_ = 0;
+  rollback_graph_gate_pending_ = false;
 }
 
 }  // namespace wfcds

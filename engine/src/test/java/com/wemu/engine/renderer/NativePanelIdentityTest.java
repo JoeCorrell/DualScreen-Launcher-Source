@@ -7,6 +7,18 @@ import org.junit.Test;
 
 public class NativePanelIdentityTest {
     @Test
+    public void ac2ClaimsOnlyThePrivateAnimusWindow() {
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel("Ac2SecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isAssassinsCreedII(
+                "assassinscreediigame.exe", "Assassin's Creed II Dual-Screen Animus"));
+        assertFalse(NativePanelIdentity.isEarlyClaimPanel(
+                "assassinscreediigame.exe", "Assassin's Creed II"));
+        assertFalse(NativePanelIdentity.isAssassinsCreedII("Ac2SecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isAssassinsCreedII(
+                "", "Assassin's Creed II Dual-Screen Animus Settings"));
+    }
+
+    @Test
     public void grimDawnClassAndTitleAreRecognizedExactly() {
         assertTrue(NativePanelIdentity.isGrimDawn(
                 "GrimDawnSecondScreenPanel", ""));

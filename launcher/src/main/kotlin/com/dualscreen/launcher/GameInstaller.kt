@@ -89,6 +89,9 @@ class GameInstaller(
                     val source = File(installed.hostDirectory).canonicalFile
                     val target = preset.gameDirectory(container, game).canonicalFile
                     if (!source.isDirectory || source == target) return@forEach
+                    // Imported external game folders already have a stable public path.
+                    // Only migrate the old app-private container installations here.
+                    if (!source.path.startsWith(container.rootDir.canonicalPath + File.separator)) return@forEach
                     target.parentFile?.listFiles()
                         ?.filter { stale ->
                             stale.name.startsWith(".Game-migrating-") &&
@@ -202,6 +205,7 @@ class GameInstaller(
         installLock.withLock {
             val result = runCatching {
                 var installed = registry.get(game.id) ?: return@runCatching null
+                OnDemandGamePayloads.ensure(context, game.id)
                 if (preset.requiresDedicatedContainer(game)) {
                     installed = ensureDedicatedContainer(game, installed)
                 }
@@ -288,6 +292,7 @@ class GameInstaller(
         allowUntestedVersion: Boolean,
     ): InstalledGame {
         begin(game)
+        OnDemandGamePayloads.ensure(context, game.id)
         val installStartedAt = SystemClock.elapsedRealtime()
         val setupStartedAt = installStartedAt
         val container = preset.prepare(game) { stage, local, detail ->
