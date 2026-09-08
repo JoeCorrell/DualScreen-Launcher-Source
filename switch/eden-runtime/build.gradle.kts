@@ -23,6 +23,7 @@ val filteredDualScreenAssets = layout.buildDirectory.dir("generated/filteredDual
 val prepareFilteredDualScreenAssets by tasks.registering(Sync::class) {
     from("../eden-upstream/src/android/app/src/dualscreen/assets") {
         exclude("plza/**")
+        exclude("botw/**")
     }
     into(filteredDualScreenAssets)
 }
@@ -103,7 +104,8 @@ android {
         // BOTW models are generated from the builder's own RomFS and must not live in source
         // control. Supplying -PbotwPlayerAssetsDir packages Link plus every armor model so clean
         // installs can render equipped armor; external caches can still override these assets.
-        assets.srcDir(generatedBotwPlayerAssets)
+        // BOTW's generated models now belong to its independently signed .dsmod.
+        // Keep the generation/validation tasks for the package builder, not APK assets.
         assets.srcDir(generatedSmoPlayerAssets)
     }
 
@@ -253,6 +255,7 @@ tasks.matching { it.name == "preReleaseBuild" }.configureEach {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     api(project(":switch:companion-api"))
     implementation("com.google.android.filament:filament-android:1.75.0")
     implementation("com.google.android.filament:gltfio-android:1.75.0")

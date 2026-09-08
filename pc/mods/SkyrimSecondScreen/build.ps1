@@ -4,6 +4,7 @@ param(
     [string] $Skse = "C:\Users\Shadow\AppData\Local\Temp\skse64_2_00_20_extract\skse64_2_00_20",
     [string] $Adb = "C:\Users\Shadow\AppData\Local\Android\Sdk\platform-tools\adb.exe",
     [string] $Device,
+    [string] $DependencyRoot = "",
     [string] $RemoteGame = "/storage/emulated/0/Download/TESVSKYRIMSESteamRIP.com/The Elder Scrolls V Skyrim - Special Edition",
     [switch] $Install,
     [switch] $Clean
@@ -15,8 +16,10 @@ $src = Join-Path $root "src"
 $out = Join-Path $root "build"
 $shared = Join-Path (Split-Path $root -Parent) "DeadIslandSecondScreen\src"
 $workspace = Split-Path (Split-Path (Split-Path $root -Parent) -Parent) -Parent
-$assetRaster = Join-Path $workspace "artifacts\skyrim-interface-assets\raster"
-$nifly = Join-Path $workspace "artifacts\nifly"
+if (-not $DependencyRoot) { $DependencyRoot = Join-Path $workspace "artifacts" }
+$DependencyRoot = (Resolve-Path -LiteralPath $DependencyRoot).Path
+$assetRaster = Join-Path $DependencyRoot "skyrim-interface-assets\raster"
+$nifly = Join-Path $DependencyRoot "nifly"
 
 if ($Clean) {
     if (Test-Path -LiteralPath $out) { Remove-Item -LiteralPath $out -Recurse -Force }
@@ -149,9 +152,9 @@ $ErrorActionPreference = "Continue"
 if ($LASTEXITCODE -ne 0) { $ErrorActionPreference = "Stop"; throw "DXGI proxy build failed" }
 
 $pluginArgs = $common + @(
-    "-I../../../artifacts/nifly/include", "-I../../../artifacts/nifly/external",
+    "-I$nifly/include", "-I$nifly/external",
     "-shared", "-o", "build\SkyrimDualScreen.dll", "src\SkyrimPlugin.cpp",
-    "src\CustomPlayerPreview.cpp", "..\..\..\artifacts\nifly\build-mingw\src\libnifly.a",
+    "src\CustomPlayerPreview.cpp", (Join-Path $nifly "build-mingw\src\libnifly.a"),
     "-Wl,--dynamicbase", "-Wl,--nxcompat", "-Wl,--kill-at", "-luser32",
     "-ld3d11", "-ldxgi", "-ld3dcompiler_47"
 )

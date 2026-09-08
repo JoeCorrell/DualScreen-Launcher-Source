@@ -364,6 +364,8 @@ public final class SecondScreenOutput {
          */
         if (isDeusExPanel() || isSkyrimPanel() || isGrimDawnPanel()
                 || NativePanelIdentity.isAssassinsCreedII(guestWindowClassName, guestWindowTitle)
+                || NativePanelIdentity.isDishonored(guestWindowClassName, guestWindowTitle)
+                || NativePanelIdentity.isCrysis3(guestWindowClassName, guestWindowTitle)
                 || isTransformersWfcPanelWindow(guestWindowClassName, guestWindowTitle)
                 || isStardewValleyPanelWindow(guestWindowClassName, guestWindowTitle)) return true;
 

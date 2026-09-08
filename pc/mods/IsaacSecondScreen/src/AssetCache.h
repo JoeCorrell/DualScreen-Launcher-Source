@@ -23,6 +23,7 @@ bool DrawAssetFit(HDC dc, const std::string& relative_path,
 bool DrawAssetRegion(HDC dc, const std::string& relative_path,
                      const RECT& source_bounds, const RECT& destination,
                      bool smooth = false);
-bool DrawSprite(HDC dc, const SpriteFrame* frame, const RECT& bounds);
+bool DrawSpriteColor(HDC dc, const SpriteFrame* frame, const RECT& bounds, float red, float green, float blue, float alpha);
+bool DrawSprite(HDC dc, const SpriteFrame* frame, const RECT& bounds, bool red_room = false);
 
 }  // namespace isaacds

@@ -7,6 +7,14 @@ import org.junit.Test;
 
 public class NativePanelIdentityTest {
     @Test
+    public void crysisClaimsOnlyItsExactPrivatePanel() {
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel("Crysis3SecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isCrysis3("", "Crysis 3 Dual-Screen Tactical Interface"));
+        assertFalse(NativePanelIdentity.isEarlyClaimPanel("Crysis3.exe", "Crysis 3"));
+        assertFalse(NativePanelIdentity.isCrysis3("Crysis3SecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isCrysis3("", "Crysis 3 Dual-Screen Tactical Interface Settings"));
+    }
+    @Test
     public void ac2ClaimsOnlyThePrivateAnimusWindow() {
         assertTrue(NativePanelIdentity.isEarlyClaimPanel("Ac2SecondScreenPanel", ""));
         assertTrue(NativePanelIdentity.isAssassinsCreedII(
@@ -105,6 +113,15 @@ public class NativePanelIdentityTest {
                 "explorer.exe", 1240, 1080, 1240, 1080));
         assertFalse(NativePanelIdentity.isTransformersWfcLowerPanelFallback(
                 "twfc.exe", 0, 0, 0, 0));
+    }
+
+    @Test
+    public void dishonoredClaimsOnlyItsPrivatePanel() {
+        assertTrue(NativePanelIdentity.isEarlyClaimPanel("DishonoredSecondScreenPanel", ""));
+        assertTrue(NativePanelIdentity.isDishonored("", "  DISHONORED DUAL-SCREEN JOURNAL  "));
+        assertFalse(NativePanelIdentity.isEarlyClaimPanel("Dishonored.exe", "Dishonored"));
+        assertFalse(NativePanelIdentity.isDishonored("DishonoredSecondScreenPanelDebug", ""));
+        assertFalse(NativePanelIdentity.isDishonored("", "Dishonored Dual-Screen Journal Settings"));
     }
 
     @Test

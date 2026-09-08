@@ -3,6 +3,98 @@ UnrealObjectCloneArray clone_journal;
 std::array<void*,64> clone_pool{};
 void* clone_source=nullptr;
 unsigned clone_fault=0;
+UnrealObjectCloneProperty scalar_clone_journal;
+void* scalar_owner=nullptr;
+void* scalar_field=nullptr;
+unsigned scalar_fault=0,scalar_clone_calls=0;
+void* WFCDS_UNREAL_EXEC_CALL CloneScalarTestObject(void* source,void*,void* outer,uint32_t name) {
+  assert(source==clone_source && outer==scalar_owner && name==0);
+  assert(!UnrealObjectCloningReady());
+  UnrealObjectCloneProperty nested;
+  assert(!UnrealBeginObjectCloneProperty(outer,L"OwnerAnimator",source,&nested));
+  ++scalar_clone_calls;
+  void* result=clone_pool[0];
+  Put(result,0x14,uint32_t{21 | (UnrealObjectIndex(outer)<<12)});
+  barrier_slot=reinterpret_cast<void**>(static_cast<uint8_t*>(outer)+0x120);
+  if(scalar_fault==1)return nullptr;
+  if(scalar_fault==2)return source;
+  if(scalar_fault==3)Put(result,0x14,uint32_t{21});
+  if(scalar_fault==4)Put(result,0x14,uint32_t{20 | (UnrealObjectIndex(outer)<<12)});
+  if(scalar_fault==5)*barrier_slot=clone_pool[1];
+  if(scalar_fault==6)Put(outer,0x18,UnrealObjectIndex(outer)+1);
+  if(scalar_fault==7)Put(scalar_field,0x40,classes[20]);
+  return result;
+}
+DWORD WINAPI WrongScalarCloneThread(void*) {
+  UnrealObjectCloneProperty nested;
+  assert(!UnrealBeginObjectCloneProperty(scalar_owner,L"OwnerAnimator",clone_source,&nested));
+  assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,false));
+  assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,true));
+  return 0;
+}
+void TestScalarObjectClones(void* owner) {
+  scalar_owner=owner;scalar_field=MakeObject(L"OwnerAnimator",13,classes[20]);
+  Put(scalar_field,0x30,uint32_t{1 | (4<<10) | (0x120<<20)});
+  Put(scalar_field,0x40,classes[21]);
+  Link(classes[20],scalar_field);ClearWorldReflectionCaches();
+  auto** slot=reinterpret_cast<void**>(static_cast<uint8_t*>(owner)+0x120);
+  g_clone_object=&CloneScalarTestObject;
+  for(unsigned pass=0;pass<2000;++pass) {
+    assert(!*slot && !scalar_clone_journal.pending);
+    const auto before_calls=scalar_clone_calls;
+    assert(UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+    assert(scalar_clone_calls==before_calls+1 && *slot==clone_pool[0] && scalar_clone_journal.pending);
+    assert(UnrealObjectClonePropertyPending(scalar_clone_journal));
+    assert(!UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+    UnrealObjectCloneProperty duplicate;
+    assert(!UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&duplicate));
+    // Copying the journal must not duplicate the right to remove its GC root.
+    auto copied=scalar_clone_journal;
+    assert(!UnrealObjectClonePropertyPending(copied));
+    assert(!UnrealFinishObjectCloneProperty(&copied,false));
+    assert(!UnrealFinishObjectCloneProperty(&copied,true));
+    assert(scalar_clone_calls==before_calls+1 && *slot==clone_pool[0]);
+    const bool commit=(pass&1)!=0;
+    assert(UnrealFinishObjectCloneProperty(&scalar_clone_journal,commit));
+    assert(!scalar_clone_journal.pending && *slot==(commit ? clone_pool[0]:nullptr));
+    assert(!UnrealObjectClonePropertyPending(scalar_clone_journal));
+    assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,true));
+    assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,false));
+    if(commit)assert(UnrealWriteObjectPropertyExpected(owner,L"OwnerAnimator",clone_pool[0],nullptr));
+  }
+  const auto owner_index=UnrealObjectIndex(owner);
+  for(scalar_fault=1;scalar_fault<=7;++scalar_fault) {
+    assert(!UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+    assert(!scalar_clone_journal.pending);
+    assert(*slot==(scalar_fault==5 ? clone_pool[1]:nullptr));
+    // Fixture resets injected native callback mutations, never production recovery.
+    *slot=nullptr;Put(owner,0x18,owner_index);Put(scalar_field,0x40,classes[21]);ClearWorldReflectionCaches();
+  }
+  scalar_fault=0;
+  assert(UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+  HANDLE thread=CreateThread(nullptr,0,WrongScalarCloneThread,nullptr,0,nullptr);
+  assert(thread && WaitForSingleObject(thread,10000)==WAIT_OBJECT_0);CloseHandle(thread);
+  const auto clone_index=UnrealObjectIndex(clone_pool[0]);
+  Put(clone_pool[0],0x18,clone_index+1);
+  assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,false) && scalar_clone_journal.pending);
+  Put(clone_pool[0],0x18,clone_index);
+  *slot=clone_pool[1];
+  assert(!UnrealFinishObjectCloneProperty(&scalar_clone_journal,false) && scalar_clone_journal.pending);
+  *slot=clone_pool[0];
+  assert(UnrealFinishObjectCloneProperty(&scalar_clone_journal,false) && !*slot);
+  const auto before_calls=scalar_clone_calls;
+  Put(scalar_field,0x40,classes[20]);ClearWorldReflectionCaches();
+  assert(!UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+  Put(scalar_field,0x40,classes[21]);
+  Put(scalar_field,0x30,uint32_t{2 | (4<<10) | (0x120<<20)});ClearWorldReflectionCaches();
+  assert(!UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+  assert(scalar_clone_calls==before_calls);
+  Put(scalar_field,0x30,uint32_t{1 | (4<<10) | (0x120<<20)});ClearWorldReflectionCaches();
+  // A template derived from the property's declared type is supported too.
+  Put(classes[21],0x28,classes[5]);Put(scalar_field,0x40,classes[5]);ClearWorldReflectionCaches();
+  assert(UnrealBeginObjectCloneProperty(owner,L"OwnerAnimator",clone_source,&scalar_clone_journal));
+  assert(UnrealFinishObjectCloneProperty(&scalar_clone_journal,false));
+}
 void* WFCDS_UNREAL_EXEC_CALL CloneTestObject(void* source,void*,void* outer,uint32_t name) {
   assert(source==clone_source && outer==clone_journal.owner && name==0);
   assert(!UnrealObjectCloningReady());
@@ -100,13 +192,28 @@ void TestObjectClones(const char* exe) {
     const int count=(pass&1) ? 64:5;
     assert(UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",count,&clone_journal));
     assert(!UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",count,&clone_journal));
+    // The staged array has count zero here. A second transaction must not
+    // mistake its backing block for an unused original allocation.
+    UnrealObjectCloneArray duplicate;
+    const auto staged=*header;
+    assert(!UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",count,&duplicate));
+    assert(!std::memcmp(header,&staged,sizeof(staged)) && live_allocations==1);
+    auto copied=clone_journal;
+    void* copied_result=nullptr;
+    assert(!UnrealAppendObjectClone(&copied,clone_source,&copied_result) && !copied_result);
+    assert(!UnrealFinishObjectCloneArray(&copied,false));
     for (int n=0;n<count;++n) {
       void* result=nullptr;
       assert(UnrealAppendObjectClone(&clone_journal,clone_source,&result) && result==clone_pool[n]);
       assert(header->count==n+1 && CloneArrayMatches(clone_journal));
     }
+    copied=clone_journal;
+    assert(!UnrealFinishObjectCloneArray(&copied,true));
+    assert(!UnrealFinishObjectCloneArray(&copied,false));
     assert(UnrealFinishObjectCloneArray(&clone_journal,(pass&1)!=0));
     assert(!clone_journal.pending);
+    assert(!UnrealFinishObjectCloneArray(&copied,true));
+    assert(!UnrealFinishObjectCloneArray(&copied,false));
     if (pass&1) { assert(header->count==count);g_array_resize_allocation(header,nullptr,count,0,4);*header={}; }
     assert(!header->data && live_allocations==0);
   }
@@ -116,7 +223,12 @@ void TestObjectClones(const char* exe) {
     const auto fault=clone_fault;clone_fault=0;void* result=nullptr;
     assert(UnrealAppendObjectClone(&clone_journal,clone_source,&result));clone_fault=fault;
     assert(!UnrealAppendObjectClone(&clone_journal,clone_source,&result) && !result);
-    if (fault==6) { assert(!UnrealFinishObjectCloneArray(&clone_journal,false));*header=clone_journal.staged; }
+    if (fault==6) {
+      assert(!UnrealFinishObjectCloneArray(&clone_journal,false));
+      UnrealObjectCloneArray recovery_conflict;
+      assert(!UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",2,&recovery_conflict));
+      *header=clone_journal.staged;
+    }
     assert(UnrealFinishObjectCloneArray(&clone_journal,false) && !header->data && live_allocations==0);
   }
   clone_fault=0;fail_resize_after=0;
@@ -132,7 +244,12 @@ void TestObjectClones(const char* exe) {
   assert(UnrealFinishObjectCloneArray(&clone_journal,false) && header->data==old && live_allocations==1);
   assert(UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",1,&clone_journal));
   void* result=nullptr;assert(UnrealAppendObjectClone(&clone_journal,clone_source,&result));
+  auto stale_commit=clone_journal;
   assert(UnrealFinishObjectCloneArray(&clone_journal,true) && header->data!=old && live_allocations==1);
+  // Original backing storage was non-null and has just been freed. The copy
+  // still matches the committed live array, but must not free original twice.
+  assert(!UnrealFinishObjectCloneArray(&stale_commit,true) && live_allocations==1);
+  assert(!UnrealFinishObjectCloneArray(&stale_commit,false) && header->count==1);
   assert(!UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",1,&clone_journal));
   g_array_resize_allocation(header,nullptr,header->count,0,4);*header={};assert(!live_allocations);
   g_clone_object=nullptr;assert(!UnrealObjectCloningReady());g_clone_object=&CloneTestObject;
@@ -152,5 +269,6 @@ void TestObjectClones(const char* exe) {
   Put(inner,0x14,uint32_t{10});ClearWorldReflectionCaches();
   assert(!UnrealBeginObjectCloneArray(owner,L"HeatProperties",L"Modifiers",5,&clone_journal));
   Put(inner,0x14,uint32_t{13});ClearWorldReflectionCaches();
+  TestScalarObjectClones(owner);
 }
 }

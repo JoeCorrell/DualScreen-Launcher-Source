@@ -71,8 +71,8 @@ std::optional<std::string> ReadCString(Core::Memory::Memory& m,VAddr p) {
 std::string JsonString(const std::string& s) { return '"'+s+'"'; }
 // The runner extracts these exact production decoders, not mock implementations.
 #include "botw_test_getters.inc"
-#include "../../src/android/app/src/main/jni/botw_held_preview.inc"
-#include "../../src/android/app/src/main/jni/botw_map_discovery.inc"
+#include "../../../mods/botw/native/botw_held_preview.inc"
+#include "../../../mods/botw/native/botw_map_discovery.inc"
 }
 int main() {
     EmulationSession s;

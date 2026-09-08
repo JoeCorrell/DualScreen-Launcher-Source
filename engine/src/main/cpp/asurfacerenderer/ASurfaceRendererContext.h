@@ -72,13 +72,9 @@ public:
                                  AHardwareBuffer* buffer1,
                                  AHardwareBuffer* buffer2);
 
-    void beginTransaction();
-    void applyTransaction();
-    void updateWindow(int64_t contentId,
-                      bool    visible,
-                      int     zOrder,
-                      int srcL, int srcT, int srcR, int srcB,
-                      int dstL, int dstT, int dstR, int dstB);
+    // Packed rows: XID, visibility, Z, source LTRB, destination LTRB.
+    // A complete scene owns one transaction for the duration of this call.
+    void updateWindows(const int32_t* rows, size_t count);
 
     void setSfCallbackTarget(JNIEnv* env, jobject rendererObj);
 
@@ -131,8 +127,6 @@ private:
     std::mutex windowScMutex;
     std::unordered_map<int64_t, void*>                windowScMap;
     std::unordered_map<int64_t, ConvertedBufferSlot*> currentConvertedSlotMap;
-
-    void* currentTx = nullptr;
 
     // ---- Display geometry ---------------------------------------------------
     ANativeWindow* window;

@@ -101,9 +101,10 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 app.installer.ensureCurrentPayload(game)
             }
         }
-        app.switchBackend.synchronizePayloads()
+        val switchSync = app.switchBackend.synchronizePayloads()
         mutableInstalled.value = app.registry.all()
-        synchronizedPayloadVersion = ready.version
+        // A missing package or transient import failure must be retried on the next refresh.
+        if (switchSync.isSuccess) synchronizedPayloadVersion = ready.version
     }
 
     fun install(game: SupportedGame, archive: Uri) {

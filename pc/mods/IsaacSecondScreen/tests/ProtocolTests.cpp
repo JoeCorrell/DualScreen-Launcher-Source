@@ -5,6 +5,8 @@
 #include <string>
 
 #include "Protocol.h"
+#include "MapLayout.h"
+#include "HudLayout.h"
 
 namespace {
 
@@ -95,6 +97,47 @@ int main() {
 
   const std::string oversized(65508, 'A');
   assert(!isaacds::ApplyStatePacket(oversized.data(), oversized.size(), &state));
+
+  // A rejected restart packet must not clear a good snapshot.
+  assert(!Apply("DSI1\tM\t1\t0\tbroken", &state));
+  assert(state.last_sequence == untouched.last_sequence);
+  assert(state.run.seed == untouched.run.seed);
+
+  std::string counters="0";
+  for(int i=1;i<523;i++) counters+=",0";
+  std::string progress="DSI1\tP\t5\t46\t118,10;1,20;118,30\t" + std::string(642,'0') +
+      "\t" + std::string(46,'0') + "\t" + counters + "\t" + std::string(104,'0') + "\t0\t1\t7";
+  assert(Apply(progress,&state,&topic));
+  assert(topic==PacketTopic::kProgress && state.progress.received);
+  assert(state.progress.history.size()==3 && state.progress.history[0].id==118);
+  assert(state.progress.pickups[2].id==118 && state.progress.total_hits==7);
+  progress.replace(progress.find("118,10;1,20;118,30"),17,"118,30;1,20;118,10");
+  progress.replace(progress.find("\t5\t"),3,"\t6\t");
+  assert(!Apply(progress,&state));
+  assert(state.progress.total_hits==7 && state.last_sequence==5);
+
+  assert(Apply("DSI1\tD\t6\t47\t1\t1,RoomVisited,8,12,24,1,1,1,0.294118,0.294118,1",&state,&topic));
+  assert(topic==PacketTopic::kNativeMap && state.native_map.commands.size()==1);
+  assert(state.native_map.commands[0].frame==8);
+  assert(!Apply("DSI1\tD\t7\t48\t1\t1,RoomVisited,8,nan,24,1,1,1,1,1,1",&state));
+  assert(state.native_map.commands[0].x==12 && state.last_sequence==6);
+
+  isaacds::Room room;
+  room.grid=28; room.shape=9; room.type=7; room.display_flags=5; room.visited=4; room.flags=0;
+  assert(isaacds::MapRoomX(room)==1);
+  assert(!isaacds::MapRoomVisited(room));
+  assert(!isaacds::MapRoomBody(room,false));
+  assert(isaacds::MapRoomBody(room,true));
+  room.flags=1;
+  assert(isaacds::MapRoomBody(room,false));
+  room.flags=0;room.type=2;room.display_flags=3;
+  assert(isaacds::MapRoomLocked(room));
+  room.display_flags=7; assert(!isaacds::MapRoomLocked(room));
+  room.display_flags=2;room.type=7;assert(!isaacds::MapRoomLocked(room));
+  for(int shape=1;shape<=12;shape++) {
+    const auto size=isaacds::MapRoomSize(shape);
+    assert(size.first>=1 && size.first<=2 && size.second>=1 && size.second<=2);
+  }
 
   std::cout << "ProtocolTests passed\n";
   return 0;

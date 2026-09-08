@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 
 namespace wfcds {
 
@@ -15,7 +16,8 @@ struct InlineHook {
 
 bool InstallInlineHook(InlineHook* hook, void* target, void* replacement,
                        const uint8_t* expected, size_t stolen_bytes,
-                       void** original);
+                       void** original,
+                       std::initializer_list<size_t> relative_calls = {});
 bool RemoveInlineHook(InlineHook* hook);
 
 }  // namespace wfcds

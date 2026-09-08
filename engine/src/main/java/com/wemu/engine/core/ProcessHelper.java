@@ -117,6 +117,7 @@ public abstract class ProcessHelper {
     }
 
     private static native int nativeSetProcessAffinity(int pid, int mask);
+    private static native int nativeGetProcessAffinity(int pid);
 
     public static void suspendProcess(int pid) {
         Process.sendSignal(pid, SIGSTOP);
@@ -249,6 +250,17 @@ public abstract class ProcessHelper {
         return execArgv(argv, envp, workingDir, terminationCallback);
     }
 
+    /** Opt-in: set only the spawning thread's mask before fork/exec, then restore it. */
+    public static int execWithAffinity(String[] argv, String[] envp, File workingDir,
+            Callback<Integer> terminationCallback, int mask) {
+        return execArgv(argv, envp, workingDir, terminationCallback, mask);
+    }
+
+    public static int execWithAffinity(String command, String[] envp, File workingDir,
+            Callback<Integer> terminationCallback, int mask) {
+        return execArgv(splitCommand(command), envp, workingDir, terminationCallback, mask);
+    }
+
     public static int exec(String command, String[] envp, File workingDir, Callback<Integer> terminationCallback) {
         Log.d("ProcessHelper", "env: " + Arrays.toString(envp) + "\ncmd: " + command);
 
@@ -269,6 +281,11 @@ public abstract class ProcessHelper {
     }
 
     private static int execArgv(String[] argv, String[] envp, File workingDir, Callback<Integer> terminationCallback) {
+        return execArgv(argv, envp, workingDir, terminationCallback, 0);
+    }
+
+    private static int execArgv(String[] argv, String[] envp, File workingDir,
+            Callback<Integer> terminationCallback, int spawnMask) {
         EnvironmentManager.setEnvVars(envp);
 
         int pid = -1;
@@ -285,7 +302,17 @@ public abstract class ProcessHelper {
                 pb.redirectError(null_file);
                 pb.redirectOutput(null_file);
             }
-            process = pb.start();
+            // Pin before the child can create Wine descendants. Setting only
+            // its PID after pb.start() races with start.exe/explorer/winhandler.
+            // This opt-in touches the calling TID, not Android's whole process.
+            int callingTid = android.os.Process.myTid();
+            try (CpuAffinityScope affinity = CpuAffinityScope.open(spawnMask, new CpuAffinityScope.Scheduler() {
+                @Override public int get() { return nativeGetProcessAffinity(callingTid); }
+                @Override public int set(int mask) { return nativeSetProcessAffinity(callingTid, mask); }
+            }, ProcessHelper::emitDiagnostic)) {
+                affinity.configureEnvironment(pb.environment());
+                process = pb.start();
+            }
 
             /*
              * Android's runtime exposes a process id, but the android.jar used

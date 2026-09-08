@@ -30,6 +30,61 @@ function Read-FunctionMetadata([string]$Package, [string[]]$Names) {
 }
 
 $critical = @(
+    @{ Package='TransGame'; Name='TransGame.TnPawn.Transform'; Flags=[uint64]0x02020102; Params=@{TargetForm='ByteProperty'; TransformCompleteEvent='DelegateProperty'; ReturnValue='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPawn.StartVehicle'; Flags=[uint64]0x00040102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnCheckpointSaveData.AddSaveData'; Flags=[uint64]0x00840002; Params=@{PC='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnCheckpointSaveData.OnPopulateSaveData'; Flags=[uint64]0x04080002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.OnSetPawn'; Flags=[uint64]0x00040002; Params=@{aPawn='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiActionNavigate.TryTeleportToLastAnchor'; Flags=[uint64]0x00048002; Params=@{Destination='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnSpawnPointFinder.FindNearAnyPlayer'; Flags=[uint64]0x00020002; Params=@{ReturnValue='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnHudDataObserverNormalizedDownedHealth.CheckData'; Flags=[uint64]0x04020002; Params=@{PC='ObjectProperty'; Movie='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnLocalPlayerFinderOwner.FindLocalPlayers'; Flags=[uint64]0x04020002; Params=@{Owner='ObjectProperty'; ReturnValue='ArrayProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnConstrainRotationByActorCameraBehavior.SetActor'; Flags=[uint64]0x04020002; Params=@{A='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnLocationOffsetCameraBehavior.SetActor'; Flags=[uint64]0x04020002; Params=@{A='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnOrbitRotationCameraBehavior.SetActor'; Flags=[uint64]0x04020002; Params=@{A='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnFlyingFollowCameraBehavior.AdjustStickInputForVehicleUnderMouseControl'; Flags=[uint64]0x00440002; Params=@{DeltaTime='FloatProperty'; CI='StructProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerTargeting.SetMeleeAssistTarget'; Flags=[uint64]0x00040002; Params=@{NewTarget='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerTargeting.IsOwnerJumping'; Flags=[uint64]0x00020002; Params=@{ReturnValue='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerTargeting.GetAngleToTestTarget'; Flags=[uint64]0x04080002; Params=@{SelectedActor='ObjectProperty'; ReturnValue='FloatProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnFineAimManager.StartFineAim'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnFineAimManager.StopFineAim'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnFineAimManager.CheckSnipingOverheat'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnFineAimManager.NotifyTakeHit'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.AdjustStickInputForVehicleUnderMouseControl'; Flags=[uint64]0x00420002; Params=@{DeltaTime='FloatProperty'; StickX='FloatProperty'; StickY='FloatProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.ShouldRecordPlayerRecord'; Flags=[uint64]0x00020002; Params=@{ReturnValue='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.PlayerWalking.Melee'; Flags=[uint64]0x04020202; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.IsAbleToFire'; Flags=[uint64]0x02080002; Params=@{ReturnValue='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.AbortMelee'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnGame.Killed'; Flags=[uint64]0x04020002; Params=@{Killer='ObjectProperty'; KilledPlayer='ObjectProperty'; KilledPawn='ObjectProperty'; DamageType='ClassProperty'} },
+    @{ Package='Engine'; Name='Engine.GameInfo.Killed'; Flags=[uint64]0x02020002; Params=@{Killer='ObjectProperty'; KilledPlayer='ObjectProperty'; KilledPawn='ObjectProperty'; DamageType='ClassProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPawn.ClientStartDowned'; Flags=[uint64]0x02080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPawn.ClientStopDowned'; Flags=[uint64]0x02080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.ClientStartDowned'; Flags=[uint64]0x04080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.ClientStopDowned'; Flags=[uint64]0x04080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerPawn.ClientStartDowned'; Flags=[uint64]0x04080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerPawn.ClientStopDowned'; Flags=[uint64]0x04080102; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.StartDowned'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.StopDowned'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.StartDowned'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerController.StopDowned'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.GetTargetLocation'; Flags=[uint64]0x04028102; Params=@{RequestedBy='ObjectProperty'; bRequestAlternateLoc='BoolProperty'; ReturnValue='StructProperty'} },
+    @{ Package='Engine'; Name='Engine.Actor.GetTargetLocation'; Flags=[uint64]0x4002028500; Params=@{RequestedBy='ObjectProperty'; bRequestAlternateLoc='BoolProperty'; ReturnValue='StructProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.GetAdjustedAimFor'; Flags=[uint64]0x04020102; Params=@{W='ObjectProperty'; StartFireLoc='StructProperty'; ReturnValue='StructProperty'} },
+    @{ Package='Engine'; Name='Engine.Pawn.GetAdjustedAimFor'; Flags=[uint64]0x02020102; Params=@{W='ObjectProperty'; StartFireLoc='StructProperty'; ReturnValue='StructProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.HasSameKillTarget'; Flags=[uint64]0x00020002; Params=@{OtherAiPawn='ObjectProperty'; ReturnValue='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.GetKillTarget'; Flags=[uint64]0x00020002; Params=@{ReturnValue='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnWeapon.DropFrom'; Flags=[uint64]0x04020002; Params=@{StartLocation='StructProperty'; StartVelocity='StructProperty'; StartRotation='StructProperty'; ReturnValue='ObjectProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnWeapon.SetupAmmoForDefaultPlayerPickup'; Flags=[uint64]0x00020002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.HandleFlashBangDamage'; Flags=[uint64]0x00040002; Params=@{InstigatedBy='ObjectProperty'; HitLocation='StructProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiPawn.OnBlockDamage'; Flags=[uint64]0x04020002; Params=@{PreDamage='FloatProperty'; PostDamage='FloatProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPawn.OnBlockDamage'; Flags=[uint64]0x02020002; Params=@{PreDamage='FloatProperty'; PostDamage='FloatProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.OnBlockDamage'; Flags=[uint64]0x00020002; Params=@{PreDamage='FloatProperty'; PostDamage='FloatProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.set_IsAiBuddy'; Flags=[uint64]0x800020102; Params=@{Value='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnAiController.RefreshPawnWorldState'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnWeapon.GivenTo'; Flags=[uint64]0x04020002; Params=@{ThisPawn='ObjectProperty'; bDoNotActivate='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnWeapon.OnPreServerFire'; Flags=[uint64]0x00040002; Params=@{} },
+    @{ Package='TransGame'; Name='TransGame.TnPawn.ExposeSelf'; Flags=[uint64]0x00020002; Params=@{ExposeCloak='BoolProperty'; ExposeDisguise='BoolProperty'} },
+    @{ Package='TransGame'; Name='TransGame.TnPlayerReplicationInfo.set_CurrentCharacter'; Flags=[uint64]0x800020102; Params=@{Value='StructProperty'} },
     @{ Package='Core'; Name='Core.Object.Clone'; Flags=[uint64]0x00020400; Params=@{InOuter='ObjectProperty'; InName='NameProperty'; ReturnValue='ObjectProperty'} },
     @{ Package='TransGame'; Name='TransGame.TnCharacterScriptBinding.SelectCharacter'; Flags=[uint64]0x00024002; Params=@{CharacterName='StrProperty'; Ignored='IntProperty'} },
     @{ Package='TransGame'; Name='TransGame.TnAiWeaponShooter.IsFiring'; Flags=[uint64]0x02020000; Params=@{ReturnValue='BoolProperty'} },
@@ -71,45 +126,289 @@ foreach ($packageName in @('TransGame', 'Engine', 'HM_Engine', 'Core')) {
     }
 }
 
-# Verify every existing role-adapter cast against the actual decompiled opcode,
-# not a second hand-maintained list of offsets. This never patches the package.
+# The last cooked cast was replaced by a tested shipping-code adapter.
+# Reject reintroduction anywhere in the adapter, not merely a hand-picked list.
 $source = Get-Content -LiteralPath (Join-Path $projectRoot 'src/CharacterRoleAdapter.cpp') -Raw
-$start = $source.IndexOf('const std::array<CastPatchSpec')
-$end = $source.IndexOf('bool metadata_valid', $start)
-$section = $source.Substring($start, $end - $start)
-$casts = [regex]::Matches($section, 'L"([^"\r\n]+)"\s*,\s*L"([^"\r\n]+)"\s*,\s*(kCurrentPawnCastOpcodeOffset|0x[0-9A-Fa-f]+u)')
-if ($casts.Count -ne 20) { throw 'Update the audit when the role-adapter cast set changes.' }
-$filters = @($casts | ForEach-Object { $_.Groups[1].Value + '.' + $_.Groups[2].Value })
-$oldCastDump = $env:WFC_DUMP_CASTS
-try {
-    $env:WFC_DUMP_CASTS = '1'
-    $lines = & $Dumper (Join-Path $PackageDirectory 'TransGame.xxx') @filters
-    if ($LASTEXITCODE -ne 0) { throw 'Cast decompilation failed' }
-} finally {
-    if ($null -eq $oldCastDump) { Remove-Item Env:\WFC_DUMP_CASTS }
-    else { $env:WFC_DUMP_CASTS = $oldCastDump }
+if ($source -match 'Unreal(?:Install|Validate|Restore)ScriptObjectOperand|CastPatchSpec|kDynamicCastOpcode') {
+    throw 'A cooked cast dependency was reintroduced; shipping gameplay needs native adapters.'
 }
-$observed = @{}
-$owner = ''
-foreach ($line in $lines) {
-    $exportMatch = [regex]::Match($line, "^// OBJECT Function'([^']+)'")
-    if ($exportMatch.Success) { $owner = $exportMatch.Groups[1].Value }
-    $castMatch = [regex]::Match($line, "^// CAST position=0x([0-9A-F]+).*opcode=0x2E class=Class'TransGame.TnPlayerPawn'")
-    if ($castMatch.Success) {
-        $observed[$owner + ':' + [Convert]::ToUInt32($castMatch.Groups[1].Value, 16)] = $true
-    }
+if ($source -match 'kRespawnDied|RespawnDiedHook|g_respawn_died_controller_offset') {
+    throw 'The inlined respawn path must use NativeGameDeath, not a stripped Died executor.'
 }
-foreach ($cast in $casts) {
-    $name = $cast.Groups[1].Value + '.' + $cast.Groups[2].Value
-    $offset = if ($cast.Groups[3].Value -eq 'kCurrentPawnCastOpcodeOffset') { 6 }
-              else { [Convert]::ToUInt32($cast.Groups[3].Value.TrimEnd('u').Substring(2), 16) }
-    if (-not $observed.ContainsKey($name + ':' + $offset)) { throw "Cast mismatch: ${name}:$offset" }
+if ($source -match 'kPlayerPawnTransform|kPawnStartVehicle|PlayerPawnTransformHook|PawnStartVehicleHook') {
+    throw 'Transform/StartVehicle must use their shipping native entry guards, not stripped executors.'
 }
-Write-Host "Verified $($critical.Count) critical cooked call signatures and $($casts.Count) role-adapter cast sites."
+foreach ($required in @(
+    'ValidateNativeGameDeath\(native_image\)',
+    '!InstallNativeGameDeath\(native_image, GetCurrentThreadId\(\), &CaptureNativeDeath, &ValidateNativeDeath, &NotifyNativePlayerDeath\)',
+    '!RemoveNativeGameDeath\(\)')) {
+    if ($source -notmatch $required) { throw "Native death adapter lifecycle dependency missing: $required" }
+}
+foreach ($required in @(
+    'ValidateNativePawnTransform\(native_image\)',
+    '!InstallNativePawnTransform\(native_image, GetCurrentThreadId\(\)\)',
+    '!RemoveNativePawnTransform\(\)',
+    'NativePawnTransformDispatchSupported\(native_image, original_player_pawn\)',
+    'NativePawnTransformDispatchSupported\(native_image, ai_pawn_instance\)',
+    'PublishNativePawnTransformGuard\(mapping.value.ai_controlled_player_pawn\)')) {
+    if ($source -notmatch $required) { throw "Native transformation guard lifecycle dependency missing: $required" }
+}
+Write-Host "Verified $($critical.Count) critical cooked call signatures and no role-adapter cooked cast dependencies."
 
 # Behavioral contracts, not just names/offsets. These are the native semantics
 # the custom campaign adapter must preserve; no game/device writes are made.
 $behavior = @(
+    @{ Name='TnCheckpointSaveData.OnPopulateSaveData'; Patterns=@(
+        'DataVersion = ClassVersion', 'SavedPlayers.Length = 0',
+        "AllControllers\(Class'TransGame.TnPlayerController', PC\)", 'AddSaveData\(PC\)') },
+    @{ Name='TnCheckpointSaveData.AddSaveData'; Patterns=@(
+        'P = TnPlayerPawn\(PC.Pawn\)', 'PRI = TnPlayerReplicationInfo\(PC.PlayerReplicationInfo\)',
+        'SaveData.CharacterName = PC.get_SelectedCharacter\(\).CharacterName',
+        'P._SegmentedHealth.GetSingleSegmentHealth\(\), P.GetHealth\(\)',
+        'SaveData.AbilityResource = P.AbilityManager.GetResource\(\)',
+        'SaveData.VehicleWeaponReserveAmmos.AddItem\(GetTotalAmmo\(W\)\)',
+        'SaveData.WeaponReserveAmmos.AddItem\(GetTotalAmmo\(W\)\)',
+        'MoveWeaponToFront\(SaveData.WeaponTypes, SaveData.WeaponReserveAmmos, W\)',
+        'SavedPlayers.AddItem\(SaveData\)') },
+    @{ Name='TnCheckpointSaveData.TnCheckpointPlayerData'; Patterns=@(
+        'Health=-1.0000000', 'AbilityResource=0.0000000', 'array<string> WeaponTypes',
+        'array<int> WeaponReserveAmmos', 'array<string> VehicleWeaponTypes',
+        'array<int> VehicleWeaponReserveAmmos'); Absent=@('Magazine', 'Cooldown', 'Buffs') },
+    @{ Name='TnCheckpointSaveData.FindSaveData'; Patterns=@(
+        'DataVersion, ClassVersion', 'PlayerName = PRI.PlayerName',
+        "SavedPlayers.Find\('PlayerName', PlayerName\)",
+        'PRI._CurrentCharacter.CharacterName',
+        'SavedPlayers\[I\].CharacterName, PRI._CurrentCharacter.CharacterName',
+        'SaveData = SavedPlayers\[I\]') },
+    @{ Name='TnCheckpointSaveData.OnDisseminateSaveData'; Patterns=@(
+        "AllControllers\(Class'TransGame.TnPlayerController', PC\)",
+        '(?s)FindSaveData\(PC, SaveData\).*PC.SelectCharacter\(SaveData.CharacterName, 1\)',
+        'PC._CheckpointOverrideCharacterData = CreateCharacterData\(PC, SaveData\)',
+        'PC._CheckpointOverrideCharacterData = EmptyCharacterData') },
+    @{ Name='TnCheckpointSaveData.CreateCharacterData'; Patterns=@(
+        'Data.Health = SaveData.Health', 'Data.AbilityResource = SaveData.AbilityResource',
+        'Data.WeaponReserveAmmos = SaveData.WeaponReserveAmmos',
+        'Data.VehicleWeaponReserveAmmos = SaveData.VehicleWeaponReserveAmmos',
+        "FindObject\(SaveData.WeaponTypes\[I\], Class'Core.Class'\)",
+        "FindObject\(SaveData.VehicleWeaponTypes\[I\], Class'Core.Class'\)",
+        'Data.WeaponTypes.AddItem\(WeaponClass\)',
+        'Data.VehicleWeaponTypes.AddItem\(WeaponClass\)'); Absent=@('Magazine', 'Cooldown', 'Buffs') },
+    @{ Name='TnPawn.Transform'; Patterns=@(
+        '_TransformingEnabled', 'TnInventoryManager\(InvManager\).DropHeavyWeapons\(\)',
+        '(?s)_TargetForm = TargetForm;\s*_CurrentCharacterCompressed.StartingForm = TargetForm;\s*_TransformCompleteEvent = TransformCompleteEvent;',
+        'MoveToSafeTransformationLocation\(TargetForm\)', 'OnTransformationChanged\(\)', 'return get_IsTransforming\(\)') },
+    @{ Name='TnPawn.StartVehicle'; Patterns=@(
+        '_VehicleForm, none', '_TargetForm = 1', '_CollisionController.SetCollisionMode\(4\)',
+        'StartForm\(_VehicleForm\)', '_VehicleForm._FxAllowed = true', "'InVehicleForm'") },
+    @{ Package='HM_Engine'; Name='CheckpointManager.SetActiveCheckpoint'; Patterns=@(
+        '(?s)ActiveCheckpointPathName = PathName\(NewCheckpoint\);\s*GenerateCheckpointData\(NewCheckpoint\);.*Game.NotifyCheckpointSet\(NewCheckpoint\)') },
+    @{ Package='HM_Engine'; Name='CheckpointManager.OnStartingFromCheckpoint'; Patterns=@(
+        '(?s)GenerateCheckpointData\(StartCheckpoint\);\s*StartCheckpoint.ProcessActions\(\);\s*NotifyCheckpointGameStart\(StartCheckpoint\)') },
+    @{ Package='HM_Engine'; Name='CheckpointManager.PreSaveGenerateCheckpointData'; Patterns=@(
+        '(?s)SaveData = CreateSaveData\(\);\s*SaveData.PopulateSaveData\(\);\s*return SaveData') },
+    @{ Package='HM_Engine'; Name='CheckpointManager.SaveActiveCheckpoint'; Patterns=@(
+        'GetOrCreateCheckpointDataWriter\(\).SaveData\(GetFilenameForCheckpoint\(CheckpointIndex\), CheckpointData, Description, WriteDataCompleteCallback');
+        Absent=@('GenerateCheckpointData\(', 'PopulateSaveData\(') },
+    @{ Name='TnPlayerController.ResetHud'; Patterns=@('myHUD = Spawn\(HUDClass, self\)',
+        'ContextualCommander.ClearAllContextualCommands\(\)', 'myHUD.Reset\(\)', 'UIController.IsHidingHUD\(\)', 'PlayerPawn.SetHud\(TnHUD\(myHUD\)\)') },
+    @{ Name='TnPlayerPawn.SetHud'; Patterns=@('AbilityManager.SetHud\(NewHud\)', '_BuffManager.SetHud\(NewHud\)'); Absent=@('Spawn\(', 'Restart\(', 'Possess\(') },
+    @{ Name='TnPlayerController.RemoveStaleKillstreaks'; Patterns=@('CustomCharacterOptions.FindKillstreakProviderByKillstreak',
+        'Provider.SpecialtyRestriction, get_SelectedCharacter\(\).Specialty', 'AcquiredKillstreaks.Remove\(I, 1\)', 'UpdateCurrentKillstreakId\(\)') },
+    @{ Name='TnAiActionNavigate.TryTeleportToLastAnchor'; Patterns=@(
+        '_TransformerPawn.FindAnchorFailedTime, _TransformerPawn.WorldInfo.TimeSeconds', '_TransformerPawn.LastAnchor, none', '_TransformerPawn.CanAnchor\(\)',
+        'AllControllers\(Class''TransGame.TnPlayerController'', PC\)', 'PP = TnPlayerPawn\(PC.Pawn\)', 'PC.GetFOVAngle\(\)',
+        'PP.GetViewRotation\(\)', '_TransformerPawn.Teleport\(_TransformerPawn.LastAnchor.Location') },
+    @{ Name='TnSpawnPointFinder.FindNearAnyPlayer'; Patterns=@(
+        'AllControllers\(Class''TransGame.TnPlayerController'', PC\)', 'PP = TnPlayerPawn\(PC.Pawn\)', 'NP = FindFromAnchor\(PP\)', 'return NP') },
+    @{ Name='TnSpawnPointFinder.FindFromAnchor'; Patterns=@(
+        'P.GetService\(''TnAnchorService''\)', 'GetClosestUnoccupiedNavigationPointInFront\(P,', 'P.get_VehicleType\(\)',
+        '_MaximumPlayerAnchorAge', '_Validator.IsSafeSpawnLocation\(NP.Location, _DefaultCollisionRadius, _DefaultCollisionHeight\)') },
+    @{ Name='TnHudDataObserverNormalizedDownedHealth.CheckData'; Patterns=@(
+        'TransformerPawn = TnPlayerPawn\(PC.Pawn\)', 'TransformerPawn._IsDowned', 'CurrentValue = 1.0000000',
+        '__NFUN_175__\(1.0000000, __NFUN_172__\(TransformerPawn.Health, __NFUN_169__\(TransformerPawn.DownedHealth\)\)\)',
+        'ProcessNewValue\(Movie, CurrentValue\)') },
+    @{ Name='TnLocalPlayerFinderOwner.FindLocalPlayers'; Patterns=@(
+        'P = TnPlayerPawn\(Owner\)', 'P.Controller, none', 'Controllers\[0\] = TnPlayerController\(P.Controller\)', 'return Controllers') },
+    @{ Name='TnConstrainRotationByActorCameraBehavior.SetActor'; Patterns=@('Player = TnPlayerPawn\(A\)'); Absent=@('Spawn\(', 'Restart\(', 'Possess\(') },
+    @{ Name='TnLocationOffsetCameraBehavior.SetActor'; Patterns=@('Player = TnPlayerPawn\(A\)'); Absent=@('Spawn\(', 'Restart\(', 'Possess\(') },
+    @{ Name='TnOrbitRotationCameraBehavior.SetActor'; Patterns=@('Player = TnPlayerPawn\(A\)'); Absent=@('Spawn\(', 'Restart\(', 'Possess\(') },
+    @{ Name='TnFlyingFollowCameraBehavior.AdjustStickInputForVehicleUnderMouseControl'; Patterns=@(
+        'Player = TnPlayerPawn\(_Target\)', 'C = TnPlayerController\(Player.Controller\)',
+        'C.AdjustStickInputForVehicleUnderMouseControl\(DeltaTime, CI.RightStickInputX, CI.RightStickInputY\)') },
+    @{ Name='TnConstrainRotationByActorCameraBehavior.Update'; Patterns=@(
+        'Player, none', 'Player.Controller, none', 'PC = TnPlayerController\(Player.Controller\)', 'PC.GetConstrainedCameraRotation\(Result.OrbitRotation\)') },
+    @{ Name='TnOrbitRotationCameraBehavior.Reset'; Patterns=@(
+        'Result.OrbitRotation.Yaw = Player.Rotation.Yaw', 'Result.OrbitRotation.Pitch = 0', 'Result.OrbitRotation.Roll = 0') },
+    @{ Name='TnOrbitRotationCameraBehavior.IsHoveringOverTarget'; Patterns=@(
+        'C = TnPlayerController\(Player.Controller\)', 'C.ActiveTargeting.HasValidTarget\(\)') },
+    @{ Name='TnOrbitRotationCameraBehavior.UpdateCurrentLookSpeed'; Patterns=@(
+        'TargetLookSpeed.PitchRelativeToTargetActor', 'Player.Rotation.Pitch') },
+    @{ Name='TnOrbitRotationCameraBehavior.GetCurrentSpeedMultiplier'; Patterns=@(
+        'C = TnPlayerController\(Player.Controller\)', 'C.IsUnderMouseAndKeyboardControl\(\)', 'Player.get_IsInVehicleForm\(\)', 'C.get_PInput\(\)') },
+    @{ Name='TnOrbitRotationCameraBehavior.AdjustStickInputForMouseControl'; Patterns=@(
+        'Player.get_IsInVehicleForm\(\)', 'C = TnPlayerController\(Player.Controller\)', 'C.IsUnderMouseAndKeyboardControl\(\)',
+        'Player._VehicleForm.get_IsBoosting\(\)', 'C.AdjustStickInputForVehicleUnderMouseControl\(DeltaTime, CI.RightStickInputX, CI.RightStickInputY\)') },
+    @{ Name='TnLocationOffsetCameraBehavior.Update'; Patterns=@(
+        'UpdateTransition\(\)', 'GetTargetOrbitDistance\(\)', 'Result.OrbitLocationOffset.X', 'Result.OrbitLocationOffset.Y = HorizontalOffset',
+        'Result.OrbitLocationOffset.Z = VerticalOffset'); Absent=@('Player\.') },
+    @{ Name='TnPlayerTargeting.SetMeleeAssistTarget'; Patterns=@('TnPlayerPawn\(_TargetingOwner\)', 'NewTarget, PickedTargets\[3\].TargetActor', 'PickedTargets\[3\].TargetActor = NewTarget;') },
+    @{ Name='TnPlayerTargeting.IsOwnerJumping'; Patterns=@('OwnerPawn = TnPlayerPawn\(_TargetingOwner\)', 'return OwnerPawn.IsJumping\(\)', 'return false;') },
+    @{ Name='TnPlayerTargeting.GetAngleToTestTarget'; Patterns=@(
+        'Angle = super.GetAngleToTestTarget\(SelectedActor\)', 'IsOwnerJumping\(\).*JumpExpansionFactor.*Angle.*float\(25\)', '__NFUN_183__\(Angle, JumpExpansionFactor\)', 'return Angle;') },
+    @{ Name='TnPawn.IsJumping'; Patterns=@('return __NFUN_154__\(int\(Physics\), int\(2\)\)') },
+    @{ Name='TnFineAimManager.StartFineAim'; Patterns=@(
+        '(?s)bFineAiming = true;.*PP = TnPlayerPawn\(Owner\).*PP.StartFineAim\(\).*PP.SetSpeedMultiplier\(_GroundSpeedMultiplier, self\).*Owner.IsLocallyControlled\(\).*CanTargetSnap\(\).*TargetSnapTarget = PlayerTargeting.GetTargetSnapTarget\(\).*TargetSnapTimeoutRemaining = _TargetSnapTimeout;.*CameraStrategyManager.StartFineAim\(TargetSnapTarget\)') },
+    @{ Name='TnFineAimManager.StopFineAim'; Patterns=@(
+        '(?s)bFineAiming = false;.*PP = TnPlayerPawn\(Owner\).*PP.StopFineAim\(\).*PP.RemoveSpeedMultiplier\(self\).*Owner.IsLocallyControlled\(\).*CameraStrategyManager.StopFineAim\(\)') },
+    @{ Name='TnFineAimManager.CheckSnipingOverheat'; Patterns=@(
+        '(?s)bFineAiming.*PP = TnPlayerPawn\(Owner\).*CurrentWeapon = TnWeapon\(PP.Weapon\).*CurrentWeapon.HasFineAimScope.*CurrentWeapon.IsOverheating\(\).*StopFineAim\(\)') },
+    @{ Name='TnFineAimManager.NotifyTakeHit'; Patterns=@(
+        '(?s)bFineAiming.*PP = TnPlayerPawn\(Owner\).*CurrentWeapon = TnWeapon\(PP.Weapon\).*CurrentWeapon.HasFineAimScope.*PP.GetService\(''TnBuffService''\).*BuffService.AddSelfBuff\(Class''TransGame.TnBuffScrambleHudOnDamageWhenSnipingInFineAim'', 0\)') },
+    @{ Name='TnPlayerPawn.StartFineAim'; Patterns=@('TnWeapon\(Weapon\).StartFineAim\(\)'); Absent=@('_BoundController') },
+    @{ Name='TnPlayerPawn.StopFineAim'; Patterns=@('TnWeapon\(Weapon\).StopFineAim\(\)'); Absent=@('_BoundController') },
+    @{ Name='TnPlayerController.AdjustStickInputForVehicleUnderMouseControl'; Patterns=@(
+        '(?s)P = TnPlayerPawn\(Pawn\).*P._VehicleForm.*P.get_IsInVehicleForm\(\).*IsUnderMouseAndKeyboardControl\(\).*StickTimeAdjustment =.*StickX =.*StickTimeAdjustment.*StickY =.*StickTimeAdjustment') },
+    @{ Name='TnPlayerController.IsUnderMouseAndKeyboardControl'; Patterns=@('return _TnPlayerInput.IsUnderMouseAndKeyboardControl\(\)', 'return false;') },
+    @{ Name='TnPlayerController.ShouldRecordPlayerRecord'; Patterns=@(
+        '(?s)AsPlayer = TnPlayerPawn\(Pawn\).*IsDead\(\).*ActorBase = AsPlayer.GetActorBase\(\).*ActorBase.Physics.*int\(7\).*return false;.*return AsPlayer.ShouldRecordPlayerRecord\(\)') },
+    @{ Name='TnPawn.ShouldRecordPlayerRecord'; Patterns=@('return false;') },
+    @{ Name='TnPawn.InRobotForm.ShouldRecordPlayerRecord'; Patterns=@('return _RobotForm.get_IsOnTheGround\(\)') },
+    @{ Name='TnPawn.InVehicleForm.ShouldRecordPlayerRecord'; Patterns=@('get_VehicleType\(\).*int\(2\)', 'return true;', 'return _VehicleForm.get_IsOnTheGround\(\)') },
+    @{ Name='TnPlayerController.PlayerWalking.Melee'; Patterns=@(
+        '(?s)PlayerPawn = TnPlayerPawn\(Pawn\).*get_IsDownedOrReviving\(\).*_MeleeRequested = true;.*IsTimerActive\(''SpamMeleeTimer''\).*get_IsVehicleVisible\(\).*GetRobotService\(''TnMeleeService''\).*PlayerTargeting.GetMeleeAssistTarget\(\).*MeleeService.StartMeleeAttack\(\(\(ShouldStomp\(Victim\)\) \? 8 : 1\), Victim, MeleeComplete\).*_MeleeRequested = false;') },
+    @{ Name='TnPawn.get_IsDownedOrReviving'; Patterns=@('return __NFUN_132__\(_IsDowned, __NFUN_281__\(''RobotDowned''\)\)') },
+    @{ Name='TnPawn.get_IsVehicleVisible'; Patterns=@('return __NFUN_129__\(get_VehicleMeshComponent\(\).HiddenGame\)') },
+    @{ Name='TnPlayerTargeting.GetMeleeAssistTarget'; Patterns=@('return PickedTargets\[3\].TargetActor') },
+    @{ Name='TnPlayerController.IsAbleToFire'; Patterns=@(
+        '(?s)PlayerPawn = TnPlayerPawn\(Pawn\).*if\(__NFUN_114__\(PlayerPawn, none\)\).*return true;',
+        'ShieldService = TnShieldService\(PlayerPawn.GetService\(''TnShieldService''\)\)',
+        'AnimatorService = TnAnimatorService\(PlayerPawn.GetService\(''TnAnimatorService''\)\)',
+        'ShieldService.get_IsShieldActive\(\)', 'PlayerPawn.get_IsTransforming\(\)',
+        'AnimatorService.IsPlayingMaskedAnimation\(0\)', 'AnimatorService.IsPlayingMaskedAnimation\(1\)',
+        'CurrentWeapon.IsOverheating\(\)', '__NFUN_129__\(CurrentWeapon.IsAttached\(\)\)',
+        '(?s)if\(__NFUN_129__\(IsAllowedToFire\)\).*return false;.*return true;') },
+    @{ Name='TnGame.Killed'; Patterns=@(
+        '(?s)super\(GameInfo\).Killed\(Killer, KilledPlayer, KilledPawn, DamageType\).*KilledAsPlayer = TnPlayerPawn\(KilledPawn\).*RespawnHelper.Died\(KilledPlayer\).*KillerPC = TnPlayerController\(Killer\).*CheckForKillAchievements\(KillerPC, KilledPlayer, KilledPawn, DamageType\)',
+        '__NFUN_130__\(__NFUN_119__\(KilledAsPlayer, none\), __NFUN_119__\(RespawnHelper, none\)\)') },
+    @{ Package='Engine'; Name='GameInfo.Killed'; Patterns=@(
+        '(?s)ScoreKill\(Killer, KilledPlayer, DamageType\).*KilledPlayer.PlayerReplicationInfo.AddDeaths\(1\).*BroadcastDeathMessage\(Killer, KilledPlayer, DamageType\).*DiscardInventory\(KilledPawn, Killer\).*NotifyKilled\(Killer, KilledPlayer, KilledPawn, DamageType\)') },
+    @{ Package='Engine'; Name='Pawn.Died'; Patterns=@(
+        '(?s)Weapon.HolderDied\(\).*WorldInfo.Game.Killed\(Killer, Controller, self, DamageType\).*WorldInfo.Game.Killed\(Killer, Controller\(Owner\), self, DamageType\).*InvManager.OwnerEvent\(''Died''\).*PlayDying\(DamageType, HitLocation\)') },
+    @{ Name='TnRespawnHelper.Died'; Patterns=@('OnDeath\(C\)') },
+    @{ Name='TnPawn.ClientStartDowned'; Patterns=@(
+        '(?s)get_IsInteracting\(\).*UseableInteract.ForceEndUse\(\).*GetPRIToNotifyOfDowned\(\).*NotifyPRI.NotifyPlayerDowned\(self\).*NotifyAiTeammatesDowned\(\).*StateClientStartDowned\(\)',
+        'if\(__NFUN_119__\(NotifyPRI, none\)\)') },
+    @{ Name='TnPawn.ClientStopDowned'; Patterns=@(
+        '(?s)GetPRIToNotifyOfDowned\(\).*NotifyPRI.NotifyPlayerNotDowned\(self\).*NotifyAiTeammatesStopDowned\(\).*StateClientStopDowned\(\)',
+        'if\(__NFUN_119__\(NotifyPRI, none\)\)') },
+    @{ Name='TnAiPawn.ClientStartDowned'; Patterns=@(
+        '(?s)super.ClientStartDowned\(\).*if\(__NFUN_114__\(_BoundController, none\)\).*return;.*_BoundController.StartDowned\(\).*_BoundController.SetWorldStateBool\(Class''TransGame.TnAiWorldStateReviveTarget'', true, none\)') },
+    @{ Name='TnAiPawn.ClientStopDowned'; Patterns=@(
+        '(?s)super.ClientStopDowned\(\).*if\(__NFUN_114__\(_BoundController, none\)\).*return;.*_BoundController.StopDowned\(\)') },
+    @{ Name='TnPlayerPawn.ClientStartDowned'; Patterns=@(
+        '(?s)if\(__NFUN_119__\(Controller, none\)\).*TnPlayerController\(Controller\).StartDowned\(\).*super.ClientStartDowned\(\)') },
+    @{ Name='TnPlayerPawn.ClientStopDowned'; Patterns=@(
+        '(?s)if\(__NFUN_119__\(Controller, none\)\).*TnPlayerController\(Controller\).StopDowned\(\).*super.ClientStopDowned\(\)') },
+    @{ Name='TnAiController.StartDowned'; Patterns=@(
+        '(?s)_DialogManager.PlayDownedDialog\(\).*if\(AiWorldState.GetBoolValue\(Class''TransGame.TnAiWorldStateInteractedWith''\)\).*AiWorldState.SetBoolValue\(Class''TransGame.TnAiWorldStateInteractedWith'', false, none\)') },
+    @{ Name='TnAiController.StopDowned'; Patterns=@('_DialogManager.PlayRevivedDialog\(\)') },
+    @{ Name='TnPlayerController.StartDowned'; Patterns=@(
+        '(?s)ClearInputs\(\).*if\(__NFUN_154__\(int\(Role\), int\(ROLE_Authority\)\)\).*ForceEquipRobotWeapon\(\).*_DialogManager.PlayDownedDialog\(\).*if\(__NFUN_119__\(_CameraStrategyManager, none\)\).*_CameraStrategyManager.Downed\(\).*OnStartDowned\(\)') },
+    @{ Name='TnPlayerController.StopDowned'; Patterns=@(
+        '(?s)if\(__NFUN_154__\(int\(Role\), int\(ROLE_Authority\)\)\).*_DialogManager.PlayRevivedDialog\(\).*if\(__NFUN_119__\(_CameraStrategyManager, none\)\).*_CameraStrategyManager.StartForm\(TnPawn\(Pawn\).get_FormType\(\)\).*OnStopDowned\(\)') },
+    @{ Name='TnAiPawn.GetTargetLocation'; Patterns=@(
+        'return _BoundController.WeaponAimer.get_TargetLocation\(\)'); Absent=@('RequestedBy.Controller') },
+    @{ Name='TnAiPawn.GetAdjustedAimFor'; Patterns=@(
+        'if\(__NFUN_114__\(_BoundController, none\)\)', 'return rot\(0, 0, 0\)',
+        'return _BoundController.WeaponAimer.CalculateAdjustedAimFor\(StartFireLoc\)') },
+    @{ Package='Engine'; Name='Pawn.GetAdjustedAimFor'; Patterns=@(
+        '__NFUN_114__\(Controller, none\)', '__NFUN_150__\(int\(Role\), int\(ROLE_Authority\)\)',
+        'return GetBaseAimRotation\(\)', 'return Controller.GetAdjustedAimFor\(W, StartFireLoc\)') },
+    @{ Name='TnAiPawn.HasSameKillTarget'; Patterns=@(
+        'OtherAiPawnController = TnAiController\(OtherAiPawn.Controller\)',
+        'AiKillTarget = _BoundController.GetKillTarget\(\)',
+        'OtherAiKillTarget = OtherAiPawnController.GetKillTarget\(\)',
+        '__NFUN_114__\(AiKillTarget, none\)', '__NFUN_114__\(OtherAiKillTarget, none\)',
+        'return __NFUN_114__\(AiKillTarget, OtherAiKillTarget\)');
+        Absent=@('OtherAiPawnController, none') },
+    @{ Name='TnAiController.GetKillTarget'; Patterns=@(
+        'return AiWorldState.GetSubject\(Class''TransGame.TnAiWorldStateTargetIsDead''\)') },
+    @{ Name='TnWeapon.DropFrom'; Patterns=@(
+        'InstigatorIsPlayer = __NFUN_119__\(TnPlayerPawn\(Instigator\), none\)',
+        '(?s)InstigatorIsPlayer =.*OwnerAnimator.OnDrop\(\).*super\(Weapon\).DropFrom',
+        'TnWeaponMesh\(WM\).SetUnholstered\(\)', 'DP.SetImpactSound\(DropSound\)',
+        'DP.Inventory.SetHidden\(true\)', 'W.AmmoIncrease = 0',
+        '(?s)if\(InstigatorIsPlayer\).*W.AmmoClipCount = AmmoClipCount.*W.ReserveAmmoCount = ReserveAmmoCount.*else.*W.SetupAmmoForDefaultPlayerPickup\(\)',
+        'return DP'); Absent=@('Restart', 'SpawnDefaultInventory') },
+    @{ Name='TnWeapon.SetupAmmoForDefaultPlayerPickup'; Patterns=@(
+        'TnD = TnWeaponData\(PlayerData\)', 'if\(__NFUN_114__\(TnD, none\)\)',
+        'PickupAmount = TnD.DefaultPickupAmount',
+        'AmmoClipCount = Class''Core.Math''.static.__NFUN_249__\(PickupAmount, TnD.MaxAmmoClipCount\)',
+        'ReserveAmmoCount = Class''Core.Math''.static.__NFUN_251__\(__NFUN_147__\(PickupAmount, AmmoClipCount\), 0, TnD.MaxAmmoCount\)') },
+    @{ Name='TnAiPawn.HandleFlashBangDamage'; Patterns=@(
+        '_BoundController.get_AiType\(\)', 'int\(10\)',
+        'Died\(InstigatedBy, Class''TransGame.TnDamageTypeFlashBang'', HitLocation\)',
+        '_BoundController.AiWorldState.SetIntValue\(Class''TransGame.TnAiWorldStateReaction'', 5\)',
+        '_BoundController.RequestReplan\(1\)') },
+    @{ Name='TnAiPawn.OnBlockDamage'; Patterns=@(
+        '(?s)super.OnBlockDamage\(PreDamage, PostDamage\).*_BoundController.OnBlockDamage\(PreDamage, PostDamage\)') },
+    @{ Name='TnPawn.OnBlockDamage'; Patterns=@(
+        'HealthOnBlockBuff = _BuffManager.GetBuff\(Class''TransGame.TnBuffHealthOnBlock''\)',
+        'if\(__NFUN_119__\(HealthOnBlockBuff, none\)\)',
+        'HealthOnBlockBuff.OnActivate\(self, __NFUN_175__\(PreDamage, PostDamage\)\)'); Absent=@('_BoundController') },
+    @{ Name='TnAiController.OnBlockDamage'; Patterns=@(
+        'DamageSum = __NFUN_174__\(DamageSum, __NFUN_175__\(PreDamage, PostDamage\)\)') },
+    @{ Name='TnAiController.set_IsAiBuddy'; Patterns=@('get_TransformerPawn\(\)', 'get_TransformerPawn\(\)._IsAiBuddy = Value') },
+    @{ Name='TnAiController.get_IsAiBuddy'; Patterns=@('return get_TransformerPawn\(\)._IsAiBuddy', 'return false') },
+    @{ Name='TnAiController.RefreshPawnWorldState'; Patterns=@(
+        'AsTnWeapon = TnWeapon\(Pawn.Weapon\)',
+        'SetWorldStateClass\(Class''TransGame.TnAiWorldStateCurrentWeapon'', AsTnWeapon.__NFUN_400__\(\)\)',
+        'SetWorldStateBool\(Class''TransGame.TnAiWorldStateWeaponOverheated'', AsTnWeapon.IsOverheating\(\)\)',
+        'SetWorldStateBool\(Class''TransGame.TnAiWorldStateWeaponOverheated'', false\)',
+        'SetWorldStateClass\(Class''TransGame.TnAiWorldStateCurrentWeapon'', Class''TransGame.TnWeapon''\)',
+        'get_TransformerPawn\(\).get_IsInRobotForm\(\)', '\? 0 : 1');
+        Absent=@('SetPawn', 'Restart', 'RequestReplan', 'GotoState') },
+    @{ Name='TnAiController.SetWorldStateClass'; Patterns=@('AiWorldState.SetClassValue\(WorldStateType, Value, Subject\)') },
+    @{ Name='TnAiController.SetWorldStateBool'; Patterns=@('AiWorldState.SetBoolValue\(WorldStateType, Value, Subject\)') },
+    @{ Name='TnWeapon.IsOverheating'; Patterns=@('return false'); Absent=@('return true') },
+    @{ Name='TnWeapon.Overheated.IsOverheating'; Patterns=@('return true'); Absent=@('return false') },
+    @{ Package='HM_Engine'; Name='HmGoapWorldStateCollection.SetClassValue'; Patterns=@(
+        'CreateHashedTable\(\)', 'Type.default.HashIndex, 1',
+        'Properties\[Type.default.HashIndex\].Type = Type',
+        'Properties\[Type.default.HashIndex\].Value.ClassVal = Value',
+        'Properties\[Type.default.HashIndex\].Subject = Subject'); Absent=@('Notify', 'Observer') },
+    @{ Package='HM_Engine'; Name='HmGoapWorldStateCollection.SetBoolValue'; Patterns=@(
+        'CreateHashedTable\(\)', 'Type.default.HashIndex, 1',
+        'Properties\[Type.default.HashIndex\].Type = Type',
+        'Properties\[Type.default.HashIndex\].Value.BoolVal = Value',
+        'Properties\[Type.default.HashIndex\].Subject = Subject'); Absent=@('Notify', 'Observer') },
+    @{ Name='TnWeapon.OnPreServerFire'; Patterns=@(
+        'TnPlayerPawn\(Instigator\)', 'TnPawn\(Instigator\).ExposeSelf\(\)') },
+    @{ Name='TnPawn.ExposeSelf'; Patterns=@(
+        'int\(Role\), int\(ROLE_Authority\)', '_IsCloaking, ExposeCloak',
+        '_BuffManager.RemoveBuff\(Class''TransGame.TnBuffCloak''\)',
+        '_BuffManager.AddBuff\(Class''TransGame.TnBuffDecloak'', 0, self\)',
+        '_BuffManager.HasBuff\(Class''TransGame.TnBuffDisguise''\)',
+        '_BuffManager.RemoveBuff\(Class''TransGame.TnBuffDisguise''\)',
+        '_BuffManager.AddBuff\(Class''TransGame.TnBuffDisguiseLost'', 0, self\)') },
+    @{ Package='HM_Engine'; Name='HmGoapPlanRunner.set_ActionSet'; Patterns=@(
+        '_ActionSet.Unbind\(\)', '_ActionSet = Value', '_ActionSet.Bind\(_Owner\)');
+        Absent=@('_ActionSet != Value', '_ActionSet == Value') },
+    @{ Package='HM_Engine'; Name='HmGoapPlanRunner.set_GoalSet'; Patterns=@(
+        '_GoalSet.Unbind\(\)', '_GoalSet = Value', 'ResetGoalIndex\(\)', '_GoalSet.Bind\(_Owner\)');
+        Absent=@('_GoalSet != Value', '_GoalSet == Value') },
+    @{ Package='HM_Engine'; Name='HmGoapWorldStateCollection.SetIntValue'; Patterns=@(
+        'CreateHashedTable\(\)', 'Type.default.HashIndex, 1',
+        'Properties\[Type.default.HashIndex\].Type = Type',
+        'Properties\[Type.default.HashIndex\].Value.IntVal = Value',
+        'Properties\[Type.default.HashIndex\].Subject = Subject'); Absent=@('Notify', 'Observer') },
+    @{ Name='TnVehiclePlaneAiControlStrategy.OnMoveTowardActor'; Patterns=@(
+        'SetWorldStateVehicleMode', 'AirPathNode\(GoalActor\)', 'IsActorAirborne\(GoalActor\)', '\? 2 : 1',
+        'SetBoosting\(CanFlyToGoal\(GoalActor\)\)') },
+    @{ Name='TnTacticalAnalyzer.SetSensorSet'; Patterns=@(
+        'SensorSet = Sensors', 'SensorSet, none',
+        'TnAiSensor\(SensorSet.Sensors\[I\]\).Initialize\(Owner, TacticalData\)');
+        Absent=@('SensorSet, Sensors', 'Uninitialize', 'Destroy') },
     @{ Name='TnAiController.ShouldUpdateAiming'; Patterns=@('__NFUN_119__\(Enemy, none\)', 'AiWorldState.GetBoolValue\(Class''TransGame.TnAiWorldStateLOSToEnemy''\)') },
     @{ Package='HM_Engine'; Name='HmGoapWorldStateCollection.GetBoolValue'; Patterns=@('Type.default.HashIndex, Properties.Length', 'Properties\[Type.default.HashIndex\].Type, Type', 'return false', 'return Properties\[Type.default.HashIndex\].Value.BoolVal') },
     @{ Name='TnAiWeaponAimer.get_OwnerIsAiming'; Patterns=@('return IsAiming\(\)') },
@@ -132,8 +431,10 @@ $behavior = @(
     @{ Name='TnServiceContainer.FindServiceIndex'; Patterns=@('I = 0', '__NFUN_254__\(_ServiceDescriptions\[I\].Type, Type\)', 'return I', 'return -1') },
     @{ Name='TnServiceContainer.GetService'; Patterns=@('Index = FindServiceIndex\(Type\)', 'return _ServiceDescriptions\[Index\].Service', 'return none') },
     @{ Name='TnTransformerForm.GetService'; Patterns=@('Service = _Services.GetService\(Type\)', 'if\(__NFUN_114__\(Service, none\)\)', 'Service = OnGetService\(Type\)') },
-    @{ Name='TnRobotForm.OnGetService'; Patterns=@('(?s)case ''TnBuffService'':\s*Service = _BuffManager;', '_Services.Add\(Type, Service\)') },
-    @{ Name='TnVehicleForm.OnGetService'; Patterns=@('case ''TnAnimatorService''', 'case ''TnAdditiveAnimatorService''', 'case ''TnTargetableService''', '_Services.Add\(Type, Service\)'); Absent=@('case ''TnBuffService''') },
+    @{ Name='TnRobotForm.OnGetService'; Patterns=@('(?s)case ''TnBuffService'':\s*Service = _BuffManager;', '_Services.Add\(Type, Service\)',
+        '(?s)case ''TnAnimatorService'':\s*Service = _Animator;', '(?s)case ''TnAdditiveAnimatorService'':\s*Service = _AdditiveAnimator;') },
+    @{ Name='TnVehicleForm.OnGetService'; Patterns=@('(?s)case ''TnAnimatorService'':\s*Service = _Animator;',
+        '(?s)case ''TnAdditiveAnimatorService'':\s*Service = _AdditiveAnimator;', 'case ''TnTargetableService''', '_Services.Add\(Type, Service\)'); Absent=@('case ''TnBuffService''') },
     @{ Name='TnAbility.GetCooldownTime'; Patterns=@('OwnerPawn.GetService\(''TnBuffService''\)', 'GetCurrentSkillDataIndex\(\)', 'BaseCooldown = Cooldown\[DataIndex\]', 'BaseCooldown = Cooldown\[0\]', 'BS.HasBuff\(Class''TransGame.TnBuffAbilityCooldown''\)', 'CooldownReductionModifier') },
     @{ Name='TnGame.GetCurrentSkillDataIndex'; Patterns=@('GetGameClass\(\)', 'static.GetSkillDataIndex\(\)') },
     @{ Name='TnGame.GetSkillDataIndex'; Patterns=@('return 1;') },
@@ -315,7 +616,10 @@ $behavior = @(
     @{ Name='TnAiController.InitializeFromTemplate'; Patterns=@(
         'get_TransformerPawn\(\).ApplyCharacter\(AiC.AiCharacterDataResolved\)',
         'get_TransformerPawn\(\).InvManager.DestroyInventory\(\)') },
-    @{ Name='TnPlayerController.OnSetPawn'; Patterns=@('PlayerPawn = TnPlayerPawn\(aPawn\)', '_PickupManager.Initialize\(PlayerPawn') },
+    @{ Name='TnPlayerController.OnSetPawn'; Patterns=@('PlayerPawn = TnPlayerPawn\(aPawn\)',
+        '(?s)_MeleeRequested = false;.*_PickupManager.Initialize\(PlayerPawn.*_FineAimManager.Initialize\(aPawn, PlayerTargeting, _CameraStrategyManager\)',
+        '(?s)ResetHud\(PlayerPawn\);\s*_PointOfInterestManager.Reset\(\);\s*DeferredTriggerKillstreak = false;',
+        'RemoveStaleKillstreaks\(PlayerPawn\)'); Absent=@('Possess\(', 'Restart\(', 'Spawn\(') },
     @{ Name='TnAiSquad.RestartGame'; Patterns=@('CharacterController = none', 'ShouldSpawnFromCheckpoint = true') },
     @{ Name='TnAiController.RequestReplan'; Patterns=@(
         'PlanRunner\._EvaluateCurrentGoalOnReplan = true',
@@ -331,7 +635,24 @@ $behavior = @(
     @{ Package='HM_Engine'; Name='HmWeapon.GetMaxAmmoClipCount'; Patterns=@('return HmWeaponData\(Data\).MaxAmmoClipCount') },
     @{ Package='HM_Engine'; Name='HmWeapon.GetMaxAmmoCount'; Patterns=@('return HmWeaponData\(Data\).MaxAmmoCount') },
     @{ Name='TnPawn.HasSkill'; Patterns=@('_CurrentCharacter.Skills.Find\(Skill\)') },
+    @{ Name='TnPlayerReplicationInfo.set_CurrentCharacter'; Patterns=@(
+        '_CurrentCharacter = Value', 'CurrentCharacterString = _CurrentCharacter.Specialty', 'RefreshProvider\(\)') },
+    @{ Name='TnPlayerReplicationInfo.RefreshProvider'; Patterns=@('PC = TnPlayerController\(Owner\)', 'PC.RefreshPlayerSubscribers\(\)') },
+    @{ Name='TnPlayerController.RefreshPlayerSubscribers'; Patterns=@('CurrentPlayerData, none', 'CurrentPlayerData.RefreshSubscribers\(\)') },
     @{ Name='TnWeapon.InitializeFromInstigator'; Patterns=@('TransformerPawn.HasSkill\(IncreaseAmmoSkill\)', 'IsEffectedByIncreaseAmmoSkill', 'AmmoIncrease = IncreaseAmmoSkill.static.GetAmmoIncrease\(self\)') },
+    @{ Name='TnWeapon.InitializeOwnerAnimator'; Patterns=@(
+        '(?s)if\(__NFUN_119__\(OwnerAnimator, none\)\)\s*\{\s*return;',
+        'TransformerPawn.GetVehicleService\(''TnAnimatorService''\)', 'TransformerPawn.GetRobotService\(''TnAnimatorService''\)',
+        'OwnerAnimator = TnWeaponOwnerAnimator\(TnWeaponData\(Data\).OwnerAnimations.Clone\(self\)\)',
+        'OwnerAnimator.Initialize\(AnimatorService, AdditiveAnimatorService\)') },
+    @{ Name='TnWeaponOwnerAnimator.Initialize'; Patterns=@(
+        '_Animator = Animator;', '_AdditiveAnimator = AdditiveAnimator;', 'LoopOverheatAnimation.IsLooping = true;') },
+    @{ Name='TnWeapon.SetPickupMeshes'; Patterns=@(
+        'DesiredPickupMesh = WeaponMesh.GetValidPickupMesh\(\)', 'DesiredPickupMesh.Clone\(self\)',
+        'DroppedPickupMesh = ClonedPickup', 'PickupFactoryMesh = ClonedPickup',
+        'DroppedPickupMesh = none', 'PickupFactoryMesh = none') },
+    @{ Package='Engine'; Name='Weapon.UpdateData'; Patterns=@(
+        '(?s)protected simulated function UpdateData\(\)\s*\{\s*//return;\s*\}') },
     @{ Name='TnSkillIncreaseAmmo.GetAmmoIncrease'; Patterns=@('return 0') },
     @{ Name='TnSkillExtraGrenade.GetAmmoIncrease'; Patterns=@('return 1') },
     @{ Name='TnSkillIncreaseAmmoFromClips.GetAmmoIncrease'; Patterns=@('__NFUN_144__\(2, W.GetMaxAmmoClipCount\(\)\)') },
@@ -452,6 +773,30 @@ $behavior = @(
         'get_TransformerPawn\(\).DesiredRotation = get_TransformerPawn\(\).Rotation'); Absent=@('Velocity =', 'Destroy', 'Spawn') },
     @{ Name='TnVehicleAiControlStrategy.StopMovement'; Patterns=@(
         '_TransformerPawn._VehicleForm.set_BoostingInput\(false\)', '_StopMovement = true') },
+    @{ Name='TnAiController.CreateAndInitializeVehicleAiControlStrategy'; Patterns=@(
+        '_VehicleAiControl = CreateVehicleAiControlStrategy\(\)', '_VehicleAiControl.Initialize\(self\)'); Absent=@('Possess\(', 'ApplyCharacter\(', 'Restart\(') },
+    @{ Name='TnVehicleAiControlStrategy.Initialize'; Patterns=@(
+        '_BoundController = C', '_TransformerPawn = C.get_TransformerPawn\(\)', '_PathFollower.Initialize\(C\)', 'OnInitialize\(\)') },
+    @{ Name='TnPathFollower.Initialize'; Patterns=@(
+        '_Controller = TransformerController', '_Pawn = _Controller.get_TransformerPawn\(\)') },
+    @{ Name='TnVehicleCarAiControlStrategy.OnInitialize'; Patterns=@(
+        'CarForm = TnCarForm\(_TransformerPawn._VehicleForm\)', 'Blueprint = CarForm.get_CarFormBlueprint\(\)') },
+    @{ Name='TnVehiclePlaneAiControlStrategy.OnInitialize'; Patterns=@(
+        '_PlaneForm = TnPlaneForm\(_TransformerPawn._VehicleForm\)', '_Blueprint = _PlaneForm.get_PlaneFormBlueprint\(\)') },
+    @{ Name='TnVehicleTankAiControlStrategy.OnInitialize'; Patterns=@(
+        'TankForm = TnTankForm\(_TransformerPawn._VehicleForm\)', 'Blueprint = TankForm.get_TankFormBlueprint\(\)') },
+    @{ Name='TnVehicleGiantTankAiControlStrategy.OnInitialize'; Patterns=@(
+        'TankForm = TnTankForm\(_TransformerPawn._VehicleForm\)', 'Blueprint = TankForm.get_TankFormBlueprint\(\)') },
+    @{ Name='TnVehicleAiControlStrategy.Activate'; Patterns=@(
+        'SetWorldStateVehicleMode\(1\)', '_DesiredLocation = _TransformerPawn.Location',
+        '_DesiredRotation = _TransformerPawn.Rotation', '_StopMovement = true') },
+    @{ Name='TnVehicleAiControlStrategy.SetWorldStateVehicleMode'; Patterns=@(
+        '_BoundController.AiWorldState.SetIntValue\(Class''TransGame.TnAiWorldStateVehicleMode'', int\(Value\)\)') },
+    @{ Name='TnVehicleAiControlStrategy.MoveToLocation'; Patterns=@(
+        '_StopMovement = false', '_DesiredRotation = CalculateRotation\(TargetLocation\)',
+        '_DesiredLocation = TargetLocation', 'OnMoveToLocation\(\)') },
+    @{ Name='TnAiController.Tick'; Patterns=@(
+        '(?s)_VehicleAiControl.Update\(DeltaTime\).*PlanRunner.Update\(DeltaTime\)') },
     @{ Name='TnCarForm.set_BoostingInput'; Patterns=@('_InputState._Boosting = Value') },
     @{ Name='TnPlaneForm.set_BoostingInput'; Patterns=@('_InputState._Boosting = Value') },
     @{ Name='TnTankForm.set_BoostingInput'; Patterns=@('_InputState._Boosting = Value') },

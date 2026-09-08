@@ -19,3 +19,11 @@ interface CompanionControllerTarget {
     fun onPlzaControllerKey(event: KeyEvent): Boolean
     fun onPlzaControllerMotion(event: MotionEvent): Boolean
 }
+
+/** Optional extension; ABI-1 packages continue using CompanionHost unchanged. */
+interface CompanionHostV2 : CompanionHost {
+    fun query(kind: Int, input: String): String
+    fun action64(operation: Int, argument: Long): Boolean
+    fun romfsRevision(): String
+    fun userDataDirectory(): String?
+}

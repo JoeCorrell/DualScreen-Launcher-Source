@@ -13,5 +13,8 @@ std::optional<Reservation> Probe(const DsNsoInfo& info, const std::string& name)
 bool Install(std::vector<u8>& image, size_t start, u32 mailbox, u32 bridge, u32 size);
 int Snapshot(void* out, size_t size);
 int Action(int operation, int item, int target);
+size_t MailboxCapacity();
+std::string Query(int kind, const std::string& input);
+bool Action64(int operation, int64_t argument);
 std::vector<u8> Asset(const std::string& path);
 }

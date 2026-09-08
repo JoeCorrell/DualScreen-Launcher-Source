@@ -32,6 +32,8 @@ bool UnrealAppendObjectClone(UnrealObjectCloneArray* j,void* source,void** out){
   if(clone_fault==5)m.type="UnknownModifier";
   if(clone_fault==6)m.outer=other.bytes;
   if(clone_fault==7)Put(heat,0x3C,1);
+  if(clone_fault==8 && n==1)Flags(mods[0],Flags(mods[0])^4u);
+  if(clone_fault==9 && n==3)Put(mods[2],0x44,Get(mods[2],0x44)+1);
   return true;
 }
 bool UnrealFinishObjectCloneArray(UnrealObjectCloneArray* j,bool commit){
@@ -69,28 +71,58 @@ void TestModifierInitialization(){
     assert(!std::memcmp(&pawn,&original_pawn,sizeof(pawn)) && !std::memcmp(&weapon,&original_weapon,sizeof(weapon)) &&
         !std::memcmp(&heat,&expected_heat,sizeof(heat)));
     const bool commit=(pass&1)!=0;
+    // A second Begin must not replace an unfinished admission, including
+    // admissions which only retain already-initialized objects.
+    assert(BeginInit(&j)==NativePlayerServiceResult::kRejected);
+    auto copied=j;
+    assert(NativeFinishWeaponModifierInitialization(&copied,true)==NativePlayerServiceResult::kRejected);
+    assert(NativeFinishWeaponModifierInitialization(&copied,false)==NativePlayerServiceResult::kRejected);
     assert(NativeFinishWeaponModifierInitialization(&j,commit)==NativePlayerServiceResult::kApplied && !j.clones.pending && !j.capacity_seeded);
+    assert(NativeFinishWeaponModifierInitialization(&copied,false)==NativePlayerServiceResult::kRejected);
+    const auto finished_mods=mods;const auto finished_array=array;const auto finished_heat=heat;
+    assert(!j.initialized.captured);
+    assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kRejected);
+    assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kRejected);
+    assert(!std::memcmp(finished_mods.data(),mods.data(),sizeof(mods)) &&
+        !std::memcmp(&finished_heat,&heat,sizeof(heat)) && array.data==finished_array.data &&
+        array.count==finished_array.count && array.capacity==finished_array.capacity);
     if(!commit)assert(array.data==original_array.data && array.count==0 && array.capacity==original_array.capacity &&
         !std::memcmp(&heat,&original_heat,sizeof(heat)));
     else {
       const auto originals=mods;NativeWeaponModifierInitialization again;
       assert(BeginInit(&again)==NativePlayerServiceResult::kApplied && !again.clones.pending && clone_calls==64);
+      assert(BeginInit(&again)==NativePlayerServiceResult::kRejected);
+      assert(NativeFinishWeaponModifierInitialization(&again,true)==NativePlayerServiceResult::kApplied);
       assert(!std::memcmp(originals.data(),mods.data(),sizeof(mods)));
     }
   }
   for(unsigned fault=1;fault<=6;++fault){
     Reset(0);clone_fault=fault;NativeWeaponModifierInitialization j;
     const auto result=BeginInit(&j);
-    assert(result==(fault==3 || fault==4 || fault==6 ? NativePlayerServiceResult::kStateMismatch:NativePlayerServiceResult::kRejected));
+    assert(result==(fault>=3 ? NativePlayerServiceResult::kStateMismatch:NativePlayerServiceResult::kRejected));
     if(j.clones.pending){
       context.objects[5]=controller.bytes;Put(templates[0],0x30,4);clone_fault=0;
-      for(auto& m:mods)m.outer=heat.bytes;
+      for(size_t i=0;i<mods.size();++i){mods[i].outer=heat.bytes;mods[i].type=kModifierSchemas[i%5].type;}
       assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied);
     }
     assert(array.data==slots.data() && array.count==0 && !g_modifiers_busy);
   }
   Reset();const auto original=mods;NativeWeaponModifierInitialization j;
   assert(BeginInit(&j)==NativePlayerServiceResult::kApplied && !clone_calls && !j.clones.pending);
+  const auto admitted=j.initialized;
+  assert(BeginInit(&j)==NativePlayerServiceResult::kRejected &&
+      SameWeaponModifierRuntime(admitted,j.initialized));
+  assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied);
+  assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kRejected);
+  assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kRejected);
+  // Reusing the same storage requires a fresh capture, not reusing the
+  // completed transaction's timer/flag snapshot after native events resume.
+  Put(mods[2],0x44,Get(mods[2],0x44)+2);
+  assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kRejected);
+  assert(BeginInit(&j)==NativePlayerServiceResult::kApplied &&
+      j.initialized.modifiers[2].timer==Get(mods[2],0x44));
+  assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kApplied);
+  Put(mods[2],0x44,Get(original[2],0x44));
   assert(!std::memcmp(original.data(),mods.data(),sizeof(mods)));
   Reset(0);cloning_ready=false;j={};assert(BeginInit(&j)==NativePlayerServiceResult::kRejected && !clone_calls);
   Reset(0);player_role_data=other.bytes;j={};assert(BeginInit(&j)==NativePlayerServiceResult::kRejected && !clone_calls);
@@ -111,13 +143,19 @@ void TestModifierInitialization(){
   Reset(0);Put(heat,0x2C,0);template_array.count=0;j={};
   assert(BeginInit(&j)==NativePlayerServiceResult::kApplied && j.capacity_seeded && !j.clones.pending);
   assert(BeginInit(&j)==NativePlayerServiceResult::kRejected);
+  auto copied_seed=j;
+  assert(NativeFinishWeaponModifierInitialization(&copied_seed,true)==NativePlayerServiceResult::kRejected);
+  assert(NativeFinishWeaponModifierInitialization(&copied_seed,false)==NativePlayerServiceResult::kRejected);
+  assert(Get(heat,0x2C)==100 && j.capacity_seeded);
   assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied && Get(heat,0x2C)==0);
+  assert(NativeFinishWeaponModifierInitialization(&copied_seed,true)==NativePlayerServiceResult::kRejected);
   // Allocation/clone failure cannot leave the previously zero service retuned.
   for(unsigned fault=1;fault<=6;++fault){
     Reset(0);Put(heat,0x2C,0);clone_fault=fault;j={};const auto result=BeginInit(&j);
-    assert(result==(fault==3 || fault==4 || fault==6 ? NativePlayerServiceResult::kStateMismatch:NativePlayerServiceResult::kRejected));
+    assert(result==(fault>=3 ? NativePlayerServiceResult::kStateMismatch:NativePlayerServiceResult::kRejected));
     if(j.capacity_seeded || j.clones.pending){
-      context.objects[5]=controller.bytes;Put(templates[0],0x30,4);clone_fault=0;for(auto& m:mods)m.outer=heat.bytes;
+      context.objects[5]=controller.bytes;Put(templates[0],0x30,4);clone_fault=0;
+      for(size_t i=0;i<mods.size();++i){mods[i].outer=heat.bytes;mods[i].type=kModifierSchemas[i%5].type;}
       assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied);
     }
     assert(Get(heat,0x2C)==0 && !j.capacity_seeded && !j.clones.pending && array.count==0);
@@ -140,11 +178,48 @@ void TestModifierInitialization(){
   Reset();j={};assert(BeginInit(&j)==NativePlayerServiceResult::kApplied);
   context.objects[5]=other.bytes;
   assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kStateMismatch);
+  // Matching object identities/tuning are insufficient if an event changed
+  // live flags or timers inside the supposedly quiescent initialization pulse.
+  for(bool clone:{false,true})for(unsigned field=0;field<2;++field){
+    Reset(clone ? 0:5);j={};assert(BeginInit(&j)==NativePlayerServiceResult::kApplied);
+    const auto flags=Flags(mods[0]);const auto timer=Get(mods[2],0x44);
+    uint32_t charging_mask=0;assert(FlagMask(&mods[0],L"IsCharging",&charging_mask));
+    if(field==0)Flags(mods[0],flags^charging_mask);else Put(mods[2],0x44,timer+1);
+    const auto changed=mods;
+    assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kStateMismatch);
+    assert(j.clones.pending==clone && !std::memcmp(changed.data(),mods.data(),sizeof(mods)));
+    // Fixture restores the event to exercise retry; production never erases
+    // an event to force admission through.
+    Flags(mods[0],flags);Put(mods[2],0x44,timer);
+    assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kApplied && !j.clones.pending);
+  }
   Reset(0);Put(heat,0x2C,0);clone_fault=7;j={};
   assert(BeginInit(&j)==NativePlayerServiceResult::kStateMismatch && j.clones.pending && j.capacity_seeded);
   assert(Get(heat,0x3C)==1 && NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kStateMismatch);
   assert(Get(heat,0x3C)==1); // Never erase a heat event to force rollback through.
   Put(heat,0x3C,0);clone_fault=0;
   assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied && Get(heat,0x2C)==0);
+  // Native OnHeatEvent can change flags/timers while CurrentHeat stays zero.
+  // Neither automatic failure cleanup nor explicit rollback may erase it.
+  for(unsigned fault:{8u,9u})for(bool seed:{false,true}) {
+    Reset(0);if(seed)Put(heat,0x2C,0);clone_fault=fault;j={};
+    assert(BeginInit(&j)==NativePlayerServiceResult::kStateMismatch && j.clones.pending && j.capacity_seeded==seed);
+    const auto event_state=mods;const auto event_array=array;
+    assert(Get(heat,0x3C)==0);
+    assert(!j.initialized.captured && NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kStateMismatch);
+    assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kStateMismatch);
+    assert(j.clones.pending && j.capacity_seeded==seed && Get(heat,0x2C)==100 &&
+        array.data==event_array.data && array.count==event_array.count &&
+        !std::memcmp(event_state.data(),mods.data(),sizeof(mods)));
+    Flags(mods[0],Flags(templates[0]));Put(mods[2],0x44,Get(templates[2],0x44));clone_fault=0;
+    assert(NativeFinishWeaponModifierInitialization(&j,true)==NativePlayerServiceResult::kStateMismatch && j.clones.pending);
+    assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied &&
+        !j.clones.pending && Get(heat,0x2C)==(seed ? 0:100));
+  }
+  Reset(0);j={};assert(BeginInit(&j)==NativePlayerServiceResult::kApplied);
+  const auto initial_timer=Get(mods[2],0x44);Put(mods[2],0x44,initial_timer+1);
+  assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kStateMismatch && j.clones.pending);
+  Put(mods[2],0x44,initial_timer);
+  assert(NativeFinishWeaponModifierInitialization(&j,false)==NativePlayerServiceResult::kApplied);
 }
 }

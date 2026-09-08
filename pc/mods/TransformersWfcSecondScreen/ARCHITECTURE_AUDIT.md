@@ -2,6 +2,14 @@
 
 ## Status and scope
 
+September 6 continuation: the current checkpoint and remaining work are recorded
+at the top of `NATIVE_SCRIPT_MIGRATION.md`. Downed/death, firing/melee, controller
+motion, fine-aim, targeting, camera, HUD and owner consumers now have scoped native adapters and
+executable-backed local tests. This removes the corresponding ineffective cooked
+patches, not the remaining normal-AI, weapon-bootstrap, class-menu and persistence
+requirements. The older batch counts below are historical. No gameplay completion,
+publication or device test is implied.
+
 The 2026-09-05 form-state follow-up now exits the old controller state before
 detachment, records even an early failed detach as requiring form restoration,
 and keeps guards held on unsafe exit/restore. Camera setup is staged so native

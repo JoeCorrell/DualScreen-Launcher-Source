@@ -29,6 +29,7 @@ class PayloadBootstrapTest {
 
         assertThat(parsed.version).isEqualTo("v1")
         assertThat(parsed.packs.single().bytes).isEqualTo(42)
+        assertThat(parsed.updateUrl).endsWith("/payload-bootstrap.json")
     }
 
     @Test

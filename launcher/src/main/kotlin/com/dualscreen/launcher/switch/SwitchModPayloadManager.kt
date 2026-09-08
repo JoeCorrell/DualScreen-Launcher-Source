@@ -26,7 +26,14 @@ internal class SwitchModPayloadManager(private val context: Context) {
             }
         }.getOrElse { return false }
         require(manifestBytes.size <= MAX_MANIFEST_BYTES) { "${game.title} mod manifest is too large." }
-        val json = JSONObject(manifestBytes.toString(Charsets.UTF_8))
+        val bundled = runCatching {
+            context.assets.open("$prefix/manifest.json").use { input ->
+                val bytes = input.readAtMost(MAX_MANIFEST_BYTES + 1)
+                require(bytes.size <= MAX_MANIFEST_BYTES)
+                JSONObject(bytes.toString(Charsets.UTF_8))
+            }
+        }.getOrNull()
+        val json = selectSwitchModManifest(JSONObject(manifestBytes.toString(Charsets.UTF_8)), bundled)
         require(json.getInt("schema") == 1) { "Unsupported ${game.title} mod manifest." }
         require(json.getString("titleId").equals(game.titleId, ignoreCase = true)) {
             "${game.title} mod payload targets the wrong title ID."
@@ -40,8 +47,15 @@ internal class SwitchModPayloadManager(private val context: Context) {
             "external-module" -> {
                 require(files.length() == 0) { "External packages cannot mix ordinary add-on files" }
                 val source = safeRelative(json.getString("package"))
-                val stream = runCatching { PayloadAssetStore.open(context, source) }.getOrNull() ?: return false
+                val stream = try { PayloadAssetStore.open(context, source) } catch (missing: java.io.FileNotFoundException) {
+                    if (org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.installedVersion(context, game.titleId) != null) {
+                        android.util.Log.w("SwitchModPayload", "${game.id}: update package unavailable; retaining verified installed module")
+                        return false
+                    }
+                    error("Automatic ${game.title} mod setup is incomplete: $source is missing. Return to the launcher and retry payload setup.")
+                }
                 stream.use { org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.install(context, game.titleId, it, retainNewer = true) }
+                android.util.Log.i("SwitchModPayload", "${game.id}: signed package synchronized automatically from $source")
                 return true
             }
             "data" -> Unit

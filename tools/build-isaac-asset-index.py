@@ -18,6 +18,7 @@ from pathlib import Path, PurePosixPath
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--resources", type=Path, required=True)
+    parser.add_argument("--metadata-resources", type=Path)
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
@@ -192,6 +193,8 @@ def main() -> None:
     animation_files = [
         "hudpickups.anm2",
         "minimap_icons.anm2",
+        "minimap1.anm2",
+        "minimap2.anm2",
         "ui_hearts.anm2",
         "ui_cardfronts.anm2",
         "ui_cardspills.anm2",
@@ -208,6 +211,40 @@ def main() -> None:
             for name in animation_files
         },
     }
+    metadata_resources = args.metadata_resources or resources
+    strings = {}
+    for filename in ("stringtable.sta", "stringtable_pc.sta"):
+        path = metadata_resources / filename
+        if path.exists():
+            for key in ET.parse(path).getroot().iter("key"):
+                strings[key.get("name")] = key.findtext("string", "")
+    for collection in (*output["items"].values(), output["players"], output["pockets"]):
+        for entry in collection.values():
+            for field in ("name", "description"):
+                token = entry.get(field + "Key")
+                if token:
+                    entry[field] = strings.get(token.removeprefix("#"), token if not token.startswith("#") else entry.get(field, ""))
+    progress = {"achievements": [], "challenges": [], "bosses": []}
+    for category, filename, tag in (("achievements", "achievements.xml", "achievement"), ("challenges", "challenges.xml", "challenge"), ("bosses", "bossportraits.xml", "boss")):
+        path = metadata_resources / filename
+        if not path.exists(): continue
+        tree = ET.parse(path, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
+        comment = ""
+        for element in tree.getroot():
+            if element.tag is ET.Comment:
+                comment = " ".join((element.text or "").split())
+                continue
+            if element.tag != tag: continue
+            entry = dict(element.attrib)
+            if not entry.get("id", "").isdigit(): continue
+            entry["id"] = int(entry["id"])
+            if category == "achievements":
+                entry["requirement"] = comment or entry.get("steam_description", "")
+            if category == "bosses":
+                entry["asset"] = resolve_asset(paths, "game/gfx/ui/boss/" + entry.get("portrait", ""))
+            comment = ""
+            progress[category].append(entry)
+    output["progress"] = progress
     all_items = [
         entry
         for category in output["items"].values()

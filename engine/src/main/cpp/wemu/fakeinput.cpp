@@ -29,6 +29,7 @@
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <linux/input.h>
+#include "FakeInputXbox360.h"
 
 #define EXPORT __attribute__((visibility("default"))) extern "C"
 
@@ -428,6 +429,7 @@ EXPORT int ioctl(int fd, int op, ...) {
 		if (!argp || requested == 0) { errno = EFAULT; return -1; }
 		std::vector<unsigned char> bitmask(requested, 0);
         for (int i = 0x130; i <= 0x13e; i++) {
+            if (xbox360_identity && !fakeinput::Xbox360Button(static_cast<uint16_t>(i))) continue;
             if (i == 0x130)
                 set_mask_bit(&bitmask, BTN_A);
             else if (i == 0x131)
@@ -462,8 +464,8 @@ EXPORT int ioctl(int fd, int op, ...) {
 		set_mask_bit(&bitmask, ABS_Y);
 		set_mask_bit(&bitmask, ABS_RX);
 		set_mask_bit(&bitmask, ABS_RY);
-		set_mask_bit(&bitmask, ABS_GAS);
-		set_mask_bit(&bitmask, ABS_BRAKE);
+		set_mask_bit(&bitmask, xbox360_identity ? ABS_RZ : ABS_GAS);
+		set_mask_bit(&bitmask, xbox360_identity ? ABS_Z : ABS_BRAKE);
 		set_mask_bit(&bitmask, ABS_HAT0X);
 		set_mask_bit(&bitmask, ABS_HAT0Y);
 		memcpy(argp, bitmask.data(), bitmask.size());
@@ -513,7 +515,12 @@ EXPORT int ioctl(int fd, int op, ...) {
     	Logger::log("Hooking ioctl EVIOCGABS(ABS) for event %s\n", event);
     	struct input_absinfo abs_info;
     	memset(&abs_info, 0, sizeof(abs_info));
-    	if (number >= 0x40 && number <= 0x44) {
+        if (xbox360_identity && (number == 0x42 || number == 0x45)) {
+            abs_info.value = 0;
+            abs_info.minimum = 0;
+            abs_info.maximum = 255;
+        }
+        else if (number >= 0x40 && number <= 0x44) {
     		abs_info.value = 0;
     		abs_info.minimum = -32768;
     		abs_info.maximum = 32767;
@@ -595,6 +602,13 @@ EXPORT ssize_t read(int fd, void *buf, size_t count) {
             bytes_read = syscall(SYS_read, fd, buf, count);
         }
         
+        if (xbox360_identity && bytes_read > 0 && bytes_read % sizeof(input_event) == 0) {
+            auto* events = static_cast<input_event*>(buf);
+            for (size_t i = 0; i < static_cast<size_t>(bytes_read) / sizeof(input_event); ++i) {
+                auto& e = events[i];
+                e.code = fakeinput::Xbox360Code(e.type, e.code);
+            }
+        }
     	return bytes_read;
     }
     return syscall(SYS_read, fd, buf, count);

@@ -23,6 +23,8 @@
 #include "BitmapFont.h"
 #include "Log.h"
 #include "PanelInput.h"
+#include "HudLayout.h"
+#include "MapLayout.h"
 #include "Protocol.h"
 
 namespace isaacds {
@@ -30,7 +32,7 @@ namespace {
 
 constexpr int kWidth = 1240;
 constexpr int kHeight = 1080;
-constexpr int kDashboardPageCount = 4;
+constexpr int kDashboardPageCount = 6;
 constexpr int kItemColumns = 6;
 constexpr int kItemVisibleRows = 3;
 constexpr int kItemSlotSize = 86;
@@ -58,7 +60,7 @@ constexpr COLORREF kWine = RGB(107, 36, 27);
 constexpr COLORREF kBackground = RGB(23, 17, 14);
 constexpr COLORREF kParchment = RGB(225, 201, 149);
 
-enum class Page : uint8_t { kMap, kStats, kRunInfo, kItems };
+enum class Page : uint8_t { kMap, kStats, kRunInfo, kItems, kPickups, kProgress };
 
 struct Surface {
   HDC dc = nullptr;
@@ -78,7 +80,7 @@ HANDLE g_thread = nullptr;
 DWORD g_thread_id = 0;
 HWND g_window = nullptr;
 Surface g_back;
-std::array<Surface, 4> g_static_pages;
+std::array<Surface, kDashboardPageCount> g_static_pages;
 BitmapFont g_font;
 SOCKET g_touch_socket = INVALID_SOCKET;
 SOCKET g_state_socket = INVALID_SOCKET;
@@ -86,6 +88,10 @@ bool g_winsock = false;
 LiveState g_state;
 Page g_page = Page::kMap;
 int g_selected_item = -1;
+bool g_item_details = false;
+int g_progress_tab = 0;
+int g_progress_offset = 0;
+int g_progress_character = -1;
 float g_item_scroll = 0.0f;
 bool g_pointer_down = false;
 bool g_pointer_scrolling = false;
@@ -170,12 +176,17 @@ bool Connected(ULONGLONG now = GetTickCount64()) {
   return g_state.last_packet_at && now - g_state.last_packet_at <= kStateStaleMs;
 }
 
+bool ItemPage() { return g_page == Page::kItems || g_page == Page::kPickups; }
+const std::vector<CollectedItem>& DisplayItems() {
+  return g_page == Page::kPickups ? g_state.progress.pickups : g_state.inventory.collectibles;
+}
+
 [[maybe_unused]] size_t PageIndex(Page page) {
   return static_cast<size_t>(page);
 }
 
 int ItemRows() {
-  return static_cast<int>((g_state.inventory.collectibles.size() +
+  return static_cast<int>((DisplayItems().size() +
                            kItemColumns - 1) /
                           kItemColumns);
 }
@@ -469,24 +480,19 @@ void DrawStaticPage(Page page, HDC dc) {
     DrawAgedPanel(dc, Rect(22, 370, 1218, 1058), 1);
   }
 
+  DrawAssetRegion(dc, "custom/background.png", Rect(340, 286, 1120, 320),
+                  Rect(320, 110, 1200, 278), false);
+
   // These centers are derived from the printed boxes in the two authored
   // sheets at the native 1240x1080 panel size.
   g_font.Draw(dc, "RUN TIME", 166.0f, 84.0f, 24.0f, kInk, true);
-  g_font.Draw(dc, "ACTIVE ITEMS", 470.0f, 70.0f, 22.0f, kInk, true);
-  g_font.Draw(dc, "CARD / RUNE / PILL", 774.0f, 70.0f, 19.0f, kInk,
-              true);
-  g_font.Draw(dc, "TRINKETS", 1059.0f, 70.0f, 22.0f, kInk, true);
-  const char* title = page == Page::kStats
-                          ? "STATS"
-                          : (page == Page::kRunInfo
-                                 ? "RUN INFO"
-                                 : (page == Page::kItems ? "ITEMS"
-                                                         : "DUNGEON MAP"));
+  const char* titles[] = {"DUNGEON MAP", "STATS", "RUN INFO", "ITEMS", "ITEM PICKUPS", "COMPLETION / PROGRESS"};
+  const char* title = titles[static_cast<size_t>(page)];
   const bool map_page = page == Page::kMap;
-  const bool centered_page = map_page || page == Page::kItems;
+  const bool centered_page = page != Page::kStats && page != Page::kRunInfo;
   g_font.Draw(dc, title, centered_page ? 620.0f : 790.0f,
-              map_page ? 520.0f : (page == Page::kItems ? 500.0f : 510.0f),
-              map_page ? 48.0f : 58.0f, kInk, true);
+              map_page ? 520.0f : 500.0f,
+              page == Page::kProgress ? 38.0f : 48.0f, kInk, true);
 
   AlphaFill(dc, Rect(60, 168, 272, 170), 105, kInk);
   if (map_page) {
@@ -495,29 +501,6 @@ void DrawStaticPage(Page page, HDC dc) {
     AlphaFill(dc, Rect(708, title_rule_y, 796, title_rule_y + 2), 135, kInk);
     Frame(dc, Rect(537, title_rule_y - 5, 547, title_rule_y + 5), kInk, 2);
     Frame(dc, Rect(693, title_rule_y - 5, 703, title_rule_y + 5), kInk, 2);
-  }
-}
-
-std::vector<std::pair<int, int>> RoomCells(const Room& room) {
-  const int x = room.grid % 13;
-  const int y = room.grid / 13;
-  switch (room.shape) {
-    case 4:
-      return {{x, y}, {x, y + 1}};
-    case 5:
-      return {{x, y}, {x + 1, y}};
-    case 6:
-      return {{x, y}, {x + 1, y}, {x, y + 1}, {x + 1, y + 1}};
-    case 7:
-      return {{x + 1, y}, {x, y + 1}, {x + 1, y + 1}};
-    case 8:
-      return {{x, y}, {x, y + 1}, {x + 1, y + 1}};
-    case 9:
-      return {{x, y}, {x + 1, y}, {x + 1, y + 1}};
-    case 10:
-      return {{x, y}, {x + 1, y}, {x, y + 1}};
-    default:
-      return {{x, y}};
   }
 }
 
@@ -549,8 +532,6 @@ const char* RoomIcon(int type) {
       return "IconDevilRoom";
     case 15:
       return "IconAngelRoom";
-    case 17:
-      return "IconBossAmbushRoom";
     case 18:
       return "IconIsaacsRoom";
     case 19:
@@ -565,131 +546,95 @@ const char* RoomIcon(int type) {
     case 26:
       return "IconTeleporterRoom";
     case 29:
-      return "IconTreasureRoomRed";
+      return "IconUltraSecretRoom";
     default:
       return nullptr;
   }
 }
 
+bool DrawNativeDungeon(HDC dc,const RECT& area) {
+  const auto& native=g_state.native_map;
+  if(!native.received) return false;
+  if(native.commands.empty()) return true;
+  const char* actors[]={"minimap1","minimap2","minimap_icons"};
+  double left=1e9,top=1e9,right=-1e9,bottom=-1e9;
+  for(const auto& c:native.commands) {
+    const auto* sprite=FindSprite(actors[c.actor],c.animation.c_str(),c.frame);
+    if(!sprite) return false;
+    left=std::min(left,c.x-sprite->pivot_x*c.scale_x);
+    top=std::min(top,c.y-sprite->pivot_y*c.scale_y);
+    right=std::max(right,c.x+(sprite->width-sprite->pivot_x)*c.scale_x);
+    bottom=std::max(bottom,c.y+(sprite->height-sprite->pivot_y)*c.scale_y);
+  }
+  if(right<=left || bottom<=top) return false;
+  const double scale=std::min(5.0,std::min((area.right-area.left)/(right-left),(area.bottom-area.top)/(bottom-top)));
+  const double ox=(area.left+area.right-(right-left)*scale)/2,oy=(area.top+area.bottom-(bottom-top)*scale)/2;
+  const int saved=SaveDC(dc);IntersectClipRect(dc,area.left,area.top,area.right,area.bottom);
+  for(const auto& c:native.commands) {
+    const auto* sprite=FindSprite(actors[c.actor],c.animation.c_str(),c.frame);
+    const int x=static_cast<int>(std::round(ox+(c.x-sprite->pivot_x*c.scale_x-left)*scale));
+    const int y=static_cast<int>(std::round(oy+(c.y-sprite->pivot_y*c.scale_y-top)*scale));
+    DrawSpriteColor(dc,sprite,Rect(x,y,x+static_cast<int>(std::round(sprite->width*c.scale_x*scale)),y+static_cast<int>(std::round(sprite->height*c.scale_y*scale))),
+        static_cast<float>(c.red),static_cast<float>(c.green),static_cast<float>(c.blue),static_cast<float>(c.alpha));
+  }
+  RestoreDC(dc,saved);return true;
+}
+
 void DrawDungeon(HDC dc) {
   const MapState& map = g_state.map;
-  // Leave the printed map title and floor line clear. Every generated room,
-  // corridor and selection bracket remains inside the inset map frame.
-  const RECT area = Rect(76, 622, 1164, 1008);
-  std::vector<const Room*> revealed_rooms;
-  revealed_rooms.reserve(map.rooms.size());
-  for (const Room& room : map.rooms) {
-    const bool current = room.grid == map.current_grid ||
-                         room.safe_grid == map.current_grid;
-    if (room.visited > 0 || current) revealed_rooms.push_back(&room);
-  }
-  if (revealed_rooms.empty()) {
-    g_font.Draw(dc, "MAP DATA WILL APPEAR IN A RUN", 620.0f, 730.0f,
-                25.0f, kInk, true);
+  const RECT area = Rect(76, 646, 1164, 1008);
+  if (map.curses & 4) {
+    g_font.Draw(dc, "?", 620.0f, 770.0f, 64.0f, kInk, true);
     return;
   }
-  std::map<std::pair<int, int>, const Room*> owners;
-  int minimum_x = 999;
-  int maximum_x = -999;
-  int minimum_y = 999;
-  int maximum_y = -999;
-  for (const Room* room : revealed_rooms) {
-    for (const auto& cell : RoomCells(*room)) {
-      owners[cell] = room;
-      minimum_x = std::min(minimum_x, cell.first);
-      maximum_x = std::max(maximum_x, cell.first);
-      minimum_y = std::min(minimum_y, cell.second);
-      maximum_y = std::max(maximum_y, cell.second);
+  if(DrawNativeDungeon(dc,area)) return;
+  int min_x = 13, min_y = 13, max_x = 0, max_y = 0;
+  bool any = false;
+  for (const Room& room : map.rooms) {
+    if (!MapRoomVisible(room)) continue;
+    const auto size = MapRoomSize(room.shape);
+    min_x = std::min(min_x, MapRoomX(room));
+    min_y = std::min(min_y, room.grid / 13);
+    max_x = std::max(max_x, MapRoomX(room) + size.first);
+    max_y = std::max(max_y, room.grid / 13 + size.second);
+    any = true;
+  }
+  if (!any) return;
+  // Keep the game's 18x16 grid and the ANM2's full shape sprite. L-shaped
+  // rooms must not be reconstructed as independent square room tiles.
+  const double scale = std::min(5.0, std::min(
+      double(area.right - area.left) / ((max_x - min_x) * 18),
+      double(area.bottom - area.top) / ((max_y - min_y) * 16)));
+  const double ox = (area.left + area.right - (max_x - min_x) * 18 * scale) / 2.0;
+  const double oy = (area.top + area.bottom - (max_y - min_y) * 16 * scale) / 2.0;
+  const int saved = SaveDC(dc);
+  IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
+  for (const Room& room : map.rooms) {
+    if (!MapRoomVisible(room)) continue;
+    const bool current = room.grid == map.current_grid || room.safe_grid == map.current_grid;
+    const char* animation = current ? "RoomCurrent" :
+                             (MapRoomVisited(room) ? "RoomVisited" : "RoomUnvisited");
+    const auto size = MapRoomSize(room.shape);
+    const int x = static_cast<int>(ox + (MapRoomX(room) - min_x) * 18 * scale);
+    const int y = static_cast<int>(oy + (room.grid / 13 - min_y) * 16 * scale);
+    const RECT bounds = Rect(x, y, x + static_cast<int>(size.first * 18 * scale),
+                            y + static_cast<int>(size.second * 16 * scale));
+    if (MapRoomBody(room, current))
+      DrawSprite(dc, FindSprite("minimap2", animation, room.shape - 1), bounds, room.flags>=0 && (room.flags & 1024));
+    // A known outline is not permission to disclose the room's type.
+    const char* icon = (room.display_flags & 4) ? RoomIcon(room.type) : nullptr;
+    if (icon && room.type == 4 && room.flags>=0 && (room.flags & 2048)) icon = "IconTreasureRoomRed";
+    if (icon && room.type == 11 && room.subtype == 1) icon = "IconBossAmbushRoom";
+    if (MapRoomLocked(room)) icon = "IconLockedRoom";
+    if (icon) {
+      const int center_x = x + static_cast<int>(9 * scale);
+      const int center_y = y + static_cast<int>(8 * scale);
+      const int half = static_cast<int>(5 * scale);
+      DrawSprite(dc, FindSprite("minimap_icons", icon),
+                 Rect(center_x-half, center_y-half, center_x+half, center_y+half));
     }
   }
-  const int columns = maximum_x - minimum_x + 1;
-  const int rows = maximum_y - minimum_y + 1;
-  const double cell = std::min(
-      122.0, std::min((area.right - area.left) / (columns + 0.4),
-                     (area.bottom - area.top) / (rows + 0.4)));
-  const double center_x = (area.left + area.right) * 0.5;
-  const double center_y = (area.top + area.bottom) * 0.5;
-  const double origin_x = center_x - columns * cell * 0.5 - minimum_x * cell;
-  const double origin_y = center_y - rows * cell * 0.5 - minimum_y * cell;
-
-  HPEN corridor = CreatePen(PS_SOLID, std::max(3, static_cast<int>(cell * 0.18)),
-                            RGB(76, 59, 43));
-  HGDIOBJ old_pen = SelectObject(dc, corridor);
-  for (const auto& entry : owners) {
-    const std::pair<int, int> right(entry.first.first + 1,
-                                    entry.first.second);
-    const std::pair<int, int> down(entry.first.first,
-                                   entry.first.second + 1);
-    for (const auto& neighbor : {right, down}) {
-      const auto found = owners.find(neighbor);
-      if (found == owners.end() || found->second == entry.second) continue;
-      MoveToEx(dc,
-               static_cast<int>(origin_x + (entry.first.first + 0.5) * cell),
-               static_cast<int>(origin_y + (entry.first.second + 0.5) * cell),
-               nullptr);
-      LineTo(dc,
-             static_cast<int>(origin_x + (neighbor.first + 0.5) * cell),
-             static_cast<int>(origin_y + (neighbor.second + 0.5) * cell));
-    }
-  }
-  SelectObject(dc, old_pen);
-  DeleteObject(corridor);
-
-  for (const Room* room : revealed_rooms) {
-    const auto cells = RoomCells(*room);
-    const bool current = room->grid == map.current_grid ||
-                         room->safe_grid == map.current_grid;
-    const COLORREF fill = current ? RGB(195, 106, 87)
-                                  : RGB(209, 184, 136);
-    for (const auto& position : cells) {
-      const RECT room_rect = Rect(
-          static_cast<int>(origin_x + position.first * cell + cell * 0.10),
-          static_cast<int>(origin_y + position.second * cell + cell * 0.14),
-          static_cast<int>(origin_x + (position.first + 1) * cell -
-                           cell * 0.10),
-          static_cast<int>(origin_y + (position.second + 1) * cell -
-                           cell * 0.14));
-      RECT shadow = room_rect;
-      OffsetRect(&shadow, 3, 4);
-      Fill(dc, shadow, RGB(60, 45, 35));
-      const int slot_frame = current ? 4 : 2;
-      if (!DrawSprite(dc, FindSprite("minimap_icons", "IconSlot", slot_frame),
-                      room_rect)) {
-        Fill(dc, room_rect, fill);
-        Frame(dc, room_rect, current ? RGB(107, 25, 21) : RGB(72, 50, 38),
-              current ? 4 : 2);
-      }
-      if (current) {
-        // The reference marks the current room with four white, square-corner
-        // brackets. Keep them just inside the map frame and clear of the icon.
-        const int length = std::max(12, static_cast<int>(cell * 0.18));
-        const int weight = std::max(3, static_cast<int>(cell * 0.035));
-        const COLORREF marker = RGB(241, 236, 214);
-        const int left = room_rect.left - 5;
-        const int top = room_rect.top - 5;
-        const int right = room_rect.right + 5;
-        const int bottom = room_rect.bottom + 5;
-        Fill(dc, Rect(left, top, left + length, top + weight), marker);
-        Fill(dc, Rect(left, top, left + weight, top + length), marker);
-        Fill(dc, Rect(right - length, top, right, top + weight), marker);
-        Fill(dc, Rect(right - weight, top, right, top + length), marker);
-        Fill(dc, Rect(left, bottom - weight, left + length, bottom), marker);
-        Fill(dc, Rect(left, bottom - length, left + weight, bottom), marker);
-        Fill(dc, Rect(right - length, bottom - weight, right, bottom), marker);
-        Fill(dc, Rect(right - weight, bottom - length, right, bottom), marker);
-      }
-    }
-    const char* icon_name = RoomIcon(room->type);
-    if (icon_name && !cells.empty()) {
-      const auto& anchor = cells.front();
-      const int icon_size = std::max(16, static_cast<int>(cell * 0.58));
-      const int x = static_cast<int>(origin_x + (anchor.first + 0.5) * cell);
-      const int y = static_cast<int>(origin_y + (anchor.second + 0.5) * cell);
-      DrawSprite(dc, FindSprite("minimap_icons", icon_name),
-                 Rect(x - icon_size / 2, y - icon_size / 2,
-                      x + icon_size / 2, y + icon_size / 2));
-    }
-  }
+  RestoreDC(dc, saved);
 }
 
 [[maybe_unused]] void DrawMapPage(HDC dc) {
@@ -774,6 +719,7 @@ void DrawHeart(HDC dc, const char* animation, int x, int y, int size = 48) {
 void DrawStatsPage(HDC dc);
 void DrawRunInfoPage(HDC dc);
 void DrawItemsPage(HDC dc);
+void DrawProgressPage(HDC dc);
 std::string CurseNames(int mask);
 
 void DrawItemAsset(HDC dc, const ItemMetadata* metadata, const RECT& bounds) {
@@ -805,14 +751,7 @@ std::string RunTimer() {
   return timer;
 }
 
-std::array<RECT, 2> InventorySlotBounds(int left, int right, int top,
-                                        int bottom, int gap) {
-  const int width = (right - left - gap) / 2;
-  return {Rect(left, top, left + width, bottom),
-          Rect(left + width + gap, top, right, bottom)};
-}
-
-void DrawSlotName(HDC dc, const std::string& value, const RECT& slot,
+[[maybe_unused]] void DrawSlotName(HDC dc, const std::string& value, const RECT& slot,
                   float y, int capacity) {
   const std::string name = Upper(Clean(value, "EMPTY"));
   const float center = (slot.left + slot.right) * 0.5f;
@@ -828,8 +767,6 @@ void DrawChargeBar(HDC dc, const ActiveItem& item,
   const int maximum = metadata ? metadata->max_charges : 0;
   const float center = (slot.left + slot.right) * 0.5f;
   if (maximum <= 0) {
-    g_font.Draw(dc, "NO CHARGE", center, static_cast<float>(slot.bottom - 32),
-                14.0f, kInkMuted, true);
     return;
   }
 
@@ -838,7 +775,7 @@ void DrawChargeBar(HDC dc, const ActiveItem& item,
   const int battery = std::clamp(item.battery_charge, 0, maximum);
   std::string value = Number(charge) + "/" + Number(maximum);
   if (battery > 0) value += " +" + Number(battery);
-  g_font.Draw(dc, value, center, static_cast<float>(slot.bottom - 52), 15.0f,
+  if(slot.right-slot.left>100) g_font.Draw(dc, value, center, static_cast<float>(slot.bottom - 52), 15.0f,
               kInk, true);
 
   const RECT bar = Rect(slot.left + 10, slot.bottom - 26,
@@ -868,17 +805,18 @@ void DrawActiveSlots(HDC dc) {
     if (item.slot >= 0 && item.slot < 2 && !entries[item.slot])
       entries[item.slot] = &item;
   }
-  const auto slots = InventorySlotBounds(328, 612, 123, 274, 13);
+  const auto slots = HudSlots(328, 612, entries[1] != nullptr);
   for (int index = 0; index < 2; ++index) {
     const ActiveItem* item = entries[index];
+    if (index == 0 || item)
+      DrawAssetStretch(dc, "custom/item_slot_dark.png", slots[index], false);
     if (!item) continue;
     const ItemMetadata* metadata = FindCollectible(item->id);
+    const bool charged = metadata && metadata->max_charges > 0;
     DrawItemAsset(dc, metadata,
-                  Rect(slots[index].left + 12, 132,
-                       slots[index].right - 12, 222));
+                  Rect(slots[index].left + 12, slots[index].top + 6,
+                       slots[index].right - 12, slots[index].bottom - (charged ? (index ? 32 : 55) : 12)));
     DrawChargeBar(dc, *item, metadata, slots[index]);
-    DrawSlotName(dc, metadata ? metadata->name : "ACTIVE ITEM", slots[index],
-                 303.0f, 2);
   }
 }
 
@@ -888,14 +826,16 @@ void DrawPocketSlots(HDC dc) {
     if (item.slot >= 0 && item.slot < 2 && !entries[item.slot])
       entries[item.slot] = &item;
   }
-  const auto slots = InventorySlotBounds(638, 911, 123, 274, 13);
+  const auto slots = HudSlots(638, 911, entries[1] != nullptr);
   for (int index = 0; index < 2; ++index) {
     const PocketItem* item = entries[index];
+    if (index == 0 || item)
+      DrawAssetStretch(dc, "custom/item_slot_dark.png", slots[index], false);
     if (!item) continue;
     const int slot_width = slots[index].right - slots[index].left;
-    const int image_height_limit = 122;
+    const int image_height_limit = index == 0 ? 122 : 79;
     const int image_width = item->kind == PocketKind::kPill
-                                ? std::min(slot_width - 26, 76)
+                                ? std::min(slot_width - 26, index == 0 ? 76 : 49)
                                 : std::min(slot_width - 20,
                                            image_height_limit * 2 / 3);
     const int image_height = item->kind == PocketKind::kPill
@@ -903,7 +843,7 @@ void DrawPocketSlots(HDC dc) {
                                  : image_height_limit;
     const int image_left =
         (slots[index].left + slots[index].right - image_width) / 2;
-    const int image_top = 132 + (122 - image_height) / 2;
+    const int image_top = (slots[index].top + slots[index].bottom - image_height) / 2;
     const RECT destination = Rect(image_left, image_top,
                                   image_left + image_width,
                                   image_top + image_height);
@@ -917,7 +857,6 @@ void DrawPocketSlots(HDC dc) {
     } else {
       DrawSprite(dc, PocketFrame(*item), destination);
     }
-    DrawSlotName(dc, item->name, slots[index], 303.0f, 2);
   }
 }
 
@@ -927,20 +866,19 @@ void DrawTrinketSlots(HDC dc) {
     if (item.slot >= 0 && item.slot < 2 && !entries[item.slot])
       entries[item.slot] = &item;
   }
-  const auto slots = InventorySlotBounds(922, 1197, 123, 274, 13);
+  const auto slots = HudSlots(922, 1197, entries[1] != nullptr);
   for (int index = 0; index < 2; ++index) {
     const Trinket* item = entries[index];
+    if (index == 0 || item)
+      DrawAssetStretch(dc, "custom/item_slot_dark.png", slots[index], false);
     if (!item) continue;
     DrawItemAsset(dc, FindTrinket(item->id),
-                  Rect(slots[index].left + 14, 138,
-                       slots[index].right - 14, 258));
+                  Rect(slots[index].left + 14, slots[index].top + 14,
+                       slots[index].right - 14, slots[index].bottom - 14));
     if (item->golden)
-      Frame(dc, Rect(slots[index].left + 8, 130,
-                     slots[index].right - 8, 267),
+      Frame(dc, Rect(slots[index].left + 8, slots[index].top + 8,
+                     slots[index].right - 8, slots[index].bottom - 8),
             RGB(177, 132, 35), 3);
-    const ItemMetadata* metadata = FindTrinket(item->id);
-    DrawSlotName(dc, metadata ? metadata->name : "TRINKET", slots[index],
-                 303.0f, 2);
   }
 }
 
@@ -979,7 +917,7 @@ int CountBits(uint64_t value) {
   return count;
 }
 
-bool IsRune(const PocketItem& item) {
+[[maybe_unused]] bool IsRune(const PocketItem& item) {
   if (item.kind != PocketKind::kCard) return false;
   const std::string name = Upper(item.name);
   return name.find("RUNE") != std::string::npos ||
@@ -1067,63 +1005,7 @@ void DrawStatsPage(HDC dc) {
                 true);
   }
 
-  g_font.Draw(dc, "MISC", 906.0f, 551.0f, 27.0f, kInk);
-  const std::array<std::pair<std::string, std::string>, 4> misc = {{
-      {"CURSE", CurseNames(g_state.run.curses)},
-      {"FLOOR", Upper(Clean(g_state.run.floor,
-                             Clean(g_state.map.floor, "UNKNOWN")))},
-      {"DEPTH", Number(std::max(g_state.run.stage, g_state.map.stage))},
-      {"SEED", Upper(g_state.run.seed.empty() ? "---- ----"
-                                                : g_state.run.seed)},
-  }};
-  const char* misc_icons[] = {"IconCurseRoom", "IconTreasureRoom",
-                              "IconLadder", "IconDiceRoom"};
-  for (size_t index = 0; index < misc.size(); ++index) {
-    const float y = 594.0f + static_cast<float>(index) * 36.0f;
-    DrawSprite(dc, FindSprite("minimap_icons", misc_icons[index]),
-               Rect(902, static_cast<int>(y) - 3, 940,
-                    static_cast<int>(y) + 35));
-    g_font.Draw(dc, misc[index].first, 952.0f, y, 20.0f, kInk);
-    float value_height = 20.0f;
-    while (value_height > 14.0f &&
-           g_font.Measure(misc[index].second, value_height) > 150.0f)
-      value_height -= 1.0f;
-    g_font.Draw(dc, misc[index].second, 1120.0f, y, value_height, kInk,
-                true);
-  }
 
-  int card_count = 0;
-  int rune_count = 0;
-  int pill_count = 0;
-  for (const PocketItem& item : g_state.inventory.pockets) {
-    if (item.kind == PocketKind::kPill)
-      ++pill_count;
-    else if (IsRune(item))
-      ++rune_count;
-    else
-      ++card_count;
-  }
-  g_font.Draw(dc, "COLLECTIBLES", 906.0f, 744.0f, 24.0f, kInk);
-  const std::array<std::pair<std::string, std::string>, 5> collection = {{
-      {"ITEMS", Number(static_cast<int>(g_state.inventory.collectibles.size())) +
-                    " / 721"},
-      {"TRINKETS", Number(static_cast<int>(g_state.inventory.trinkets.size())) +
-                       " / 208"},
-      {"CARDS", Number(card_count) + " / 36"},
-      {"PILLS", Number(pill_count) + " / 48"},
-      {"RUNES", Number(rune_count) + " / 24"},
-  }};
-  const char* collection_icons[] = {"IconItem", "IconTrinket", "IconCard",
-                                    "IconPill", "IconRune"};
-  for (size_t index = 0; index < collection.size(); ++index) {
-    const float y = 784.0f + static_cast<float>(index) * 36.0f;
-    DrawSprite(dc, FindSprite("minimap_icons", collection_icons[index]),
-               Rect(904, static_cast<int>(y) - 2, 938,
-                    static_cast<int>(y) + 32));
-    g_font.Draw(dc, collection[index].first, 952.0f, y, 19.0f, kInk);
-    g_font.Draw(dc, collection[index].second, 1120.0f, y, 19.0f, kInk,
-                true);
-  }
 }
 
 void DrawDashboard(HDC dc) {
@@ -1133,7 +1015,6 @@ void DrawDashboard(HDC dc) {
   // Match the game's hudpickups frame order: coin, key, bomb.
   const int values[] = {g_state.consumables.coins, g_state.consumables.keys,
                         g_state.consumables.bombs};
-  constexpr const char* labels[] = {"COINS", "KEYS", "BOMBS"};
   const int centers[] = {84, 166, 248};
   for (int index = 0; index < 3; ++index) {
     DrawSprite(dc, FindSprite("hudpickups", "Idle", index),
@@ -1141,8 +1022,6 @@ void DrawDashboard(HDC dc) {
                     centers[index] + 25, 240));
     g_font.Draw(dc, Number(values[index], 2), static_cast<float>(centers[index]),
                 250.0f, 30.0f, kInk, true);
-    g_font.Draw(dc, labels[index], static_cast<float>(centers[index]), 294.0f,
-                15.0f, kInk, true);
   }
 
   DrawActiveSlots(dc);
@@ -1153,12 +1032,17 @@ void DrawDashboard(HDC dc) {
     DrawStatsPage(dc);
   } else if (g_page == Page::kRunInfo) {
     DrawRunInfoPage(dc);
-  } else if (g_page == Page::kItems) {
+  } else if (ItemPage()) {
     DrawItemsPage(dc);
+  } else if (g_page == Page::kProgress) {
+    DrawProgressPage(dc);
   } else {
     const std::string floor = Upper(Clean(
         g_state.map.floor, Clean(g_state.run.floor, "UNKNOWN FLOOR")));
     g_font.Draw(dc, floor, 620.0f, 578.0f, 28.0f, kInk, true);
+    if (g_state.map.curses != 0)
+      g_font.Draw(dc, CurseNames(g_state.map.curses), 620.0f, 611.0f,
+                  18.0f, kWine, true);
     DrawDungeon(dc);
   }
 }
@@ -1217,10 +1101,39 @@ void DrawItemSelection(HDC dc, const RECT& slot) {
   Fill(dc, Rect(right - weight, bottom - length, right, bottom), marker);
 }
 
+void DrawItemDetails(HDC dc) {
+  const auto* item=FindCollectible(g_selected_item);
+  if(!item) return;
+  DrawAssetStretch(dc,"custom/item_description_panel.png",Rect(110,585,1130,1000),true);
+  DrawItemAsset(dc,item,Rect(140,630,310,800));
+  const std::string name=Upper(item->name);
+  const auto names=g_font.Wrap(name,30,700);
+  float y=610;
+  for(const auto& line:names) { g_font.Draw(dc,line,365,y,30,kInk); y+=35; }
+  g_font.Draw(dc,"X",1080,606,25,kInk,true);
+  y+=10;
+  for(const auto& line:g_font.Wrap(item->description,24,680)) {
+    if(y>825) break;
+    g_font.Draw(dc,line,365,y,24,kInk);y+=29;
+  }
+  y+=20;
+  std::string kind=Upper(item->kind)+"  |  QUALITY "+Number(item->quality);
+  if(item->max_charges>0) kind+="  |  CHARGES "+Number(item->max_charges);
+  for(const auto& line:g_font.Wrap(kind,20,680)) { g_font.Draw(dc,line,365,y,20,kInk);y+=25; }
+  int held=0;
+  for(const auto& entry:g_state.inventory.collectibles) if(entry.id==item->id) held=entry.count;
+  g_font.Draw(dc,"CURRENTLY HELD: "+Number(held),365,y+20,20,kInk);
+  if(g_page==Page::kPickups) {
+    int count=0;for(const auto& entry:g_state.progress.pickups) if(entry.id==item->id) ++count;
+    g_font.Draw(dc,"PICKED UP THIS RUN: "+Number(count),365,y+50,20,kInk);
+  }
+}
+
 void DrawItemsPage(HDC dc) {
+  if(g_item_details) { DrawItemDetails(dc); return; }
   g_font.Draw(dc,
-              Number(static_cast<int>(g_state.inventory.collectibles.size())) +
-                  " / 721",
+              Number(static_cast<int>(DisplayItems().size())) +
+                  (g_page == Page::kPickups ? " PICKUPS" : " ITEMS HELD"),
               620.0f, 558.0f, 24.0f, kInk, true);
 
   const int saved = SaveDC(dc);
@@ -1239,8 +1152,8 @@ void DrawItemsPage(HDC dc) {
                                      g_item_scroll);
       const RECT slot = Rect(x, y, x + kItemSlotSize, y + kItemSlotSize);
       DrawAssetStretch(dc, "custom/item_slot_dark.png", slot, true);
-      if (index < g_state.inventory.collectibles.size()) {
-        const CollectedItem& entry = g_state.inventory.collectibles[index];
+      if (index < DisplayItems().size()) {
+        const CollectedItem& entry = DisplayItems()[index];
         DrawItemAsset(dc, FindCollectible(entry.id),
                       Rect(x + 12, y + 12, x + kItemSlotSize - 12,
                            y + kItemSlotSize - 12));
@@ -1271,16 +1184,16 @@ void DrawItemsPage(HDC dc) {
   const ItemMetadata* selected = FindCollectible(g_selected_item);
   if (selected) {
     const CollectedItem* live = nullptr;
-    for (const CollectedItem& entry : g_state.inventory.collectibles) {
+    for (const CollectedItem& entry : DisplayItems()) {
       if (entry.id == g_selected_item) {
         live = &entry;
         break;
       }
     }
     const std::string name =
-        live && !live->name.empty() ? live->name : selected->name;
+        live && !live->name.empty() && live->name.front()!='#' ? live->name : selected->name;
     const std::string description =
-        live && !live->description.empty() ? live->description
+        live && !live->description.empty() && live->description.front()!='#' ? live->description
                                            : selected->description;
     const int quality = live && live->quality >= 0 ? live->quality
                                                      : selected->quality;
@@ -1319,7 +1232,7 @@ std::string CurseNames(int mask) {
   return result.empty() ? "CURSE " + Number(mask) : result;
 }
 
-const char* TransformationName(int id) {
+[[maybe_unused]] const char* TransformationName(int id) {
   constexpr const char* names[] = {
       "GUPPY",          "LORD OF THE FLIES", "MUSHROOM", "ANGEL",
       "BOB",            "DRUGS",             "MOM",      "OH CRAP",
@@ -1330,113 +1243,124 @@ const char* TransformationName(int id) {
                                                               : nullptr;
 }
 
+void DrawGoal(HDC dc) {
+  if(!g_state.progress.received) return;
+  // A suggested next route milestone, evaluated from native unlock bits.
+  // Isaac has branching routes, not a single stored universal quest target.
+  struct Milestone { int unlock, boss; const char* requirement; };
+  const Milestone milestones[]={
+    {4,6,"Defeat Mom to open the Womb"},
+    {34,8,"Defeat Mom's Heart 11 times"},
+    {57,39,"Defeat Isaac 5 times for the Polaroid"},
+    {78,24,"Defeat Satan 5 times for the Negative"},
+    {407,63,"Defeat Hush 3 times to open the alternate path"},
+    {635,88,"Defeat Mother to open the strange door"}
+  };
+  const Milestone* target=nullptr;
+  for(const auto& milestone:milestones) {
+    if(g_state.progress.achievements[milestone.unlock]!='1') { target=&milestone; break; }
+  }
+  g_font.Draw(dc,"GOAL",790,797,35,kInk,true);
+  if(!target) {
+    g_font.Draw(dc,"REVIEW REMAINING COMPLETION MARKS",790,856,19,kInk,true);
+    return;
+  }
+  const auto found=BossMetadata().find(target->boss);
+  if(found==BossMetadata().end()) return;
+  DrawAssetFit(dc,found->second.asset,Rect(450,842,650,1008),false);
+  g_font.Draw(dc,Upper(found->second.name),865,856,25,kInk,true);
+  const auto lines=g_font.Wrap(target->requirement,19,440);
+  for(size_t i=0;i<lines.size() && i<3;i++) g_font.Draw(dc,lines[i],675,903+i*23,19,kInk);
+}
+
 void DrawRunInfoPage(HDC dc) {
+  DrawGoal(dc);
   const RunInfo& run = g_state.run;
   const PlayerMetadata* player = FindPlayer(g_state.character_id);
   const std::string character = Clean(g_state.character_name,
                                       player ? player->name : "UNKNOWN");
   DrawCharacterStickyNote(dc, player, character);
 
-  const std::array<std::pair<std::string, std::string>, 8> details = {{
+  const std::array<std::pair<std::string, std::string>, 4> details = {{
       {"SEED", Upper(run.seed.empty() ? "---- ----" : run.seed)},
-      {"CHARACTER", Upper(character)},
-      {"FLOOR", Upper(Clean(run.floor, Clean(g_state.map.floor, "UNKNOWN")))},
-      {"STAGE", Number(std::max(run.stage, g_state.map.stage))},
-      {"STAGE TYPE", Number(std::max(run.stage_type, g_state.map.stage_type))},
+      {"DEPTH", Number(run.stage)},
       {"TIME", RunTimer()},
-      {"CURSES", CurseNames(run.curses)},
-      {"DUNGEON SEED", Number(static_cast<int>(g_state.map.dungeon_seed))},
+      {"TOTAL HITS", g_state.progress.total_hits < 0 ? "--" : Number(g_state.progress.total_hits)},
   }};
-  const char* detail_icons[] = {
-      "IconDiceRoom", "IconIsaacsRoom", "IconTreasureRoom", "IconLadder",
-      "IconPortal", "IconBattery", "IconCurseRoom", "IconSecretRoom",
-  };
   for (size_t index = 0; index < details.size(); ++index) {
-    const float y = 588.0f + static_cast<float>(index) * 36.0f;
-    DrawSprite(dc, FindSprite("minimap_icons", detail_icons[index]),
-               Rect(422, static_cast<int>(y) - 1, 456,
-                    static_cast<int>(y) + 33));
-    g_font.Draw(dc, details[index].first, 468.0f, y, 21.0f, kInk);
-    float value_height = 21.0f;
-    while (value_height > 14.0f &&
-           g_font.Measure(details[index].second, value_height) > 112.0f)
-      value_height -= 1.0f;
-    g_font.Draw(dc, details[index].second, 760.0f, y, value_height, kInk,
-                true);
+    const float y = 600.0f + static_cast<float>(index) * 46.0f;
+    g_font.Draw(dc, details[index].first, 480.0f, y, 27.0f, kInk);
+    g_font.Draw(dc, details[index].second, 920.0f, y, 27.0f, kInk, true);
   }
 
-  g_font.Draw(dc, "REWARDS", 906.0f, 580.0f, 25.0f, kInk);
-  const std::array<std::pair<std::string, std::string>, 4> rewards = {{
-      {"DEVIL CHANCE", Percent(run.devil_chance)},
-      {"ANGEL CHANCE", Percent(run.angel_chance)},
-      {"PLANETARIUM", Percent(run.planetarium_chance)},
-      {"DEVIL DEALS", Number(run.devil_deals)},
-  }};
-  const char* reward_icons[] = {"IconDevilRoom", "IconAngelRoom",
-                                "IconPlanetarium", "IconBoss"};
-  for (size_t index = 0; index < rewards.size(); ++index) {
-    const float y = 620.0f + static_cast<float>(index) * 36.0f;
-    DrawSprite(dc, FindSprite("minimap_icons", reward_icons[index]),
-               Rect(902, static_cast<int>(y) - 1, 936,
-                    static_cast<int>(y) + 33));
-    g_font.Draw(dc, rewards[index].first, 946.0f, y, 18.0f, kInk);
-    g_font.Draw(dc, rewards[index].second, 1140.0f, y, 20.0f, kInk, true);
-  }
+}
 
-  const int rooms_seen = static_cast<int>(std::count_if(
-      g_state.map.rooms.begin(), g_state.map.rooms.end(),
-      [](const Room& room) { return room.visited != 0; }));
-  const std::array<std::pair<std::string, std::string>, 5> counts = {{
-      {"ITEMS", Number(static_cast<int>(g_state.inventory.collectibles.size()))},
-      {"TRINKETS", Number(static_cast<int>(g_state.inventory.trinkets.size()))},
-      {"ROOMS", Number(rooms_seen)},
-      {"PICKUPS", Number(g_state.consumables.coins, 2) + " / " +
-                      Number(g_state.consumables.keys, 2) + " / " +
-                      Number(g_state.consumables.bombs, 2)},
-      {"FORMS", Number(static_cast<int>(run.transformations.size()))},
-  }};
-  const char* count_icons[] = {"IconItem", "IconTrinket", "IconIsaacsRoom",
-                               "IconCoin", "IconPortal"};
-  g_font.Draw(dc, "RUN COUNTS", 906.0f, 760.0f, 24.0f, kInk);
-  for (size_t index = 0; index < counts.size(); ++index) {
-    const float y = 798.0f + static_cast<float>(index) * 34.0f;
-    DrawSprite(dc, FindSprite("minimap_icons", count_icons[index]),
-               Rect(902, static_cast<int>(y) - 1, 936,
-                    static_cast<int>(y) + 33));
-    g_font.Draw(dc, counts[index].first, 946.0f, y, 19.0f, kInk);
-    float value_height = 20.0f;
-    while (value_height > 13.0f &&
-           g_font.Measure(counts[index].second, value_height) > 145.0f)
-      value_height -= 1.0f;
-    g_font.Draw(dc, counts[index].second, 1120.0f, y, value_height, kInk,
-                true);
-  }
+bool ProgressBit(const std::string& bits, int id) {
+  return id >= 0 && static_cast<size_t>(id)<bits.size() && bits[id]=='1';
+}
 
-  std::vector<std::string> names;
-  for (int form : run.transformations) {
-    if (const char* name = TransformationName(form)) names.emplace_back(name);
+void DrawProgressPage(HDC dc) {
+  const auto& progress=g_state.progress;
+  if(!progress.received) {
+    g_font.Draw(dc,"WAITING FOR SAVE PROGRESS",620,680,26,kInk,true); return;
   }
-  g_font.Draw(dc, "TRANSFORMATIONS", 468.0f, 878.0f, 21.0f, kInk);
-  if (names.empty()) {
-    g_font.Draw(dc, "NONE", 760.0f, 878.0f, 21.0f, kInk, true);
-  } else {
-    for (size_t index = 0; index < names.size() && index < 4; index += 2) {
-      std::string line = names[index];
-      if (index + 1 < names.size()) line += " / " + names[index + 1];
-      float height = 19.0f;
-      while (height > 13.0f && g_font.Measure(line, height) > 290.0f)
-        height -= 1.0f;
-      g_font.Draw(dc, line, 468.0f,
-                  910.0f + static_cast<float>(index / 2) * 23.0f, height,
-                  kInk);
+  const char* tabs[]={"REMAINING", "COMPLETED", "CHALLENGES", "BOSSES", "MARKS"};
+  for(int i=0;i<5;i++) {
+    if(i==g_progress_tab) Frame(dc,Rect(100+i*208,548,302+i*208,592),kInk,2);
+    g_font.Draw(dc,tabs[i],201.0f+i*208,557,18,kInk,true);
+  }
+  if(g_progress_tab==4) {
+    const int character=g_progress_character<0 ? std::clamp(g_state.character_id,0,40) : g_progress_character;
+    const auto* player=FindPlayer(character);
+    g_font.Draw(dc,player ? Upper(player->name) : "CHARACTER",620,618,25,kInk,true);
+    if(progress.completion.size()!=492) {
+      g_font.Draw(dc,"WAITING FOR COMPLETION MARKS",620,720,22,kInk,true); return;
     }
+    const char* names[]={"MOM'S HEART","ISAAC","SATAN","BOSS RUSH","???","THE LAMB","MEGA SATAN","GREED","HUSH","DELIRIUM","MOTHER","THE BEAST"};
+    for(int i=0;i<12;i++) {
+      int value=progress.completion[character*12+i];
+      const char* status=(value&2) ? "HARD" : (value&1) ? "NORMAL" : (value&8) ? "ONLINE HARD" : (value&4) ? "ONLINE NORMAL" : "INCOMPLETE";
+      const float x=270.0f+(i%3)*350, y=682.0f+(i/3)*65;
+      g_font.Draw(dc,names[i],x,y,21,kInk,true);
+      g_font.Draw(dc,status,x,y+27,17,value ? kInk : kInkMuted,true);
+    }
+    g_font.Draw(dc,"< CHARACTER",240,963,22,kInk,true);
+    g_font.Draw(dc,"CHARACTER >",1000,963,22,kInk,true);
+    return;
   }
+  const auto& metadata=g_progress_tab==2 ? ChallengeMetadata() : g_progress_tab==3 ? BossMetadata() : AchievementMetadata();
+  const auto& bits=g_progress_tab==2 ? progress.challenges : g_progress_tab==3 ? progress.bosses : progress.achievements;
+  std::vector<const ProgressMetadata*> entries;
+  int completed=0;
+  for(const auto& pair:metadata) {
+    const bool done=ProgressBit(bits,pair.first);
+    if(done) ++completed;
+    if((g_progress_tab==0 && done) || (g_progress_tab==1 && !done)) continue;
+    entries.push_back(&pair.second);
+  }
+  g_font.Draw(dc,Number(completed)+" COMPLETED / "+Number(static_cast<int>(metadata.size())-completed)+" REMAINING",620,605,21,kInk,true);
+  g_progress_offset=std::clamp(g_progress_offset,0,std::max(0,static_cast<int>(entries.size())-4));
+  if(progress.readonly) g_font.Draw(dc,"UNLOCKS RESTRICTED FOR THIS RUN",620,630,16,kWine,true);
+  for(int i=0;i<4 && g_progress_offset+i<static_cast<int>(entries.size());i++) {
+    const auto& entry=*entries[g_progress_offset+i];
+    const float y=652.0f+i*72;
+    const std::string prefix=ProgressBit(bits,entry.id) ? "[X] " : "[ ] ";
+    auto names=g_font.Wrap(prefix+entry.name,21,1010);
+    if(!names.empty()) g_font.Draw(dc,names.front(),115,y,21,kInk);
+    auto lines=g_font.Wrap(entry.requirement,17,1010);
+    for(size_t line=0;line<std::min<size_t>(2,lines.size());line++)
+      g_font.Draw(dc,lines[line],150,y+26+line*19,17,kInkMuted);
+  }
+  g_font.Draw(dc,"< PREVIOUS",240,963,23,kInk,true);
+  g_font.Draw(dc,"NEXT >",1000,963,23,kInk,true);
 }
 
 void DrawWaiting(HDC dc) {
   const ULONGLONG now = GetTickCount64();
   const bool connected = Connected(now);
-  if (connected && g_state.in_run) return;
+  // Update callbacks stop while paused. Keep the last authoritative snapshot
+  // readable; silence is not a run-exit or a reason to cover the interface.
+  if (g_state.in_run) return;
   // Keep startup messaging inside the inset map panel so the top regions
   // remain readable and every overlay respects the authored boundaries.
   AlphaFill(dc, Rect(42, 484, 1198, 1022), 184, kBackground);
@@ -1493,6 +1417,7 @@ void RequestRender(bool immediate = false) {
 void SetPage(Page page) {
   if (page == g_page) return;
   g_page = page;
+  g_item_scroll=0; g_selected_item=-1;g_item_details=false;
   const char* name = g_page == Page::kStats
                          ? "stats"
                          : (g_page == Page::kRunInfo
@@ -1515,7 +1440,18 @@ void HandleTap(float normalized_x, float normalized_y) {
     return;
   const float x = normalized_x * kWidth;
   const float y = normalized_y * kHeight;
-  if (g_page != Page::kItems) return;
+  if (g_page == Page::kProgress) {
+    if (y >= 550 && y < 604) { g_progress_tab=std::clamp(static_cast<int>((x-100)/208),0,4); g_progress_offset=0; }
+    else if (y >= 950) {
+      if(g_progress_tab==4) {
+        if(g_progress_character<0) g_progress_character=std::clamp(g_state.character_id,0,40);
+        g_progress_character=(g_progress_character+(x<620 ? 40 : 1))%41;
+      } else g_progress_offset=std::max(0,g_progress_offset+(x<620 ? -4 : 4));
+    }
+    RequestRender(true); return;
+  }
+  if (!ItemPage()) return;
+  if(g_item_details) { g_item_details=false;RequestRender(true);return; }
   if (y >= kItemGridTop && y < kItemGridTop + kItemGridHeight && x < 205.0f) {
     g_item_scroll = std::clamp(
         g_item_scroll - kItemVisibleRows * kItemRowStep, 0.0f,
@@ -1543,8 +1479,9 @@ void HandleTap(float normalized_x, float normalized_y) {
   if (y - kItemGridTop + g_item_scroll - row * kItemRowStep >= kItemSlotSize)
     return;
   const size_t index = static_cast<size_t>(row * kItemColumns + column);
-  if (index < g_state.inventory.collectibles.size()) {
-    g_selected_item = g_state.inventory.collectibles[index].id;
+  if (index < DisplayItems().size()) {
+    g_selected_item = DisplayItems()[index].id;
+    g_item_details=true;
     RequestRender(true);
   }
 }
@@ -1565,7 +1502,7 @@ void HandleInput(const PanelInput& input) {
       return;
     case PanelInputKind::kNavUp:
     case PanelInputKind::kNavDown:
-      if (g_page == Page::kItems) {
+      if (ItemPage()) {
         const float direction = input.kind == PanelInputKind::kNavUp ? -1.0f
                                                                      : 1.0f;
         g_item_scroll = std::clamp(g_item_scroll + direction * kItemRowStep,
@@ -1574,9 +1511,9 @@ void HandleInput(const PanelInput& input) {
       }
       return;
     case PanelInputKind::kNavActivate:
-      if (g_page == Page::kItems && g_selected_item < 0 &&
-          !g_state.inventory.collectibles.empty()) {
-        g_selected_item = g_state.inventory.collectibles.front().id;
+      if (ItemPage() && g_selected_item < 0 &&
+          !DisplayItems().empty()) {
+        g_selected_item = DisplayItems().front().id;
         RequestRender(true);
       }
       return;
@@ -1589,7 +1526,7 @@ void HandleInput(const PanelInput& input) {
       return;
     case PanelInputKind::kMove:
       if (!g_pointer_down) return;
-      if (g_page == Page::kItems &&
+      if (ItemPage() &&
           (std::fabs(input.y - g_pointer_start_y) > 0.012f ||
            g_pointer_scrolling)) {
         g_pointer_scrolling = true;
@@ -1681,8 +1618,8 @@ void PollStateSocket() {
         "[State] first authoritative in-game packet accepted sequence=%llu",
         static_cast<unsigned long long>(g_state.last_sequence));
   }
-  if (g_selected_item < 0 && !g_state.inventory.collectibles.empty())
-    g_selected_item = g_state.inventory.collectibles.front().id;
+  if (g_selected_item < 0 && !DisplayItems().empty())
+    g_selected_item = DisplayItems().front().id;
   g_item_scroll = std::clamp(g_item_scroll, 0.0f, MaximumItemScroll());
   (void)newest_topic;
   RequestRender();
@@ -1714,8 +1651,8 @@ void PollDirectStatePackets() {
         "[State] first authoritative in-game packet accepted sequence=%llu",
         static_cast<unsigned long long>(g_state.last_sequence));
   }
-  if (g_selected_item < 0 && !g_state.inventory.collectibles.empty())
-    g_selected_item = g_state.inventory.collectibles.front().id;
+  if (g_selected_item < 0 && !DisplayItems().empty())
+    g_selected_item = DisplayItems().front().id;
   g_item_scroll = std::clamp(g_item_scroll, 0.0f, MaximumItemScroll());
   (void)newest_topic;
   RequestRender();
@@ -1750,9 +1687,21 @@ void CloseSocket(SOCKET* socket_handle) {
   *socket_handle = INVALID_SOCKET;
 }
 
+BOOL CALLBACK FindSecondary(HMONITOR monitor, HDC, LPRECT, LPARAM parameter);
+
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wparam,
                                  LPARAM lparam) {
   switch (message) {
+    case WM_DISPLAYCHANGE:
+    case WM_POWERBROADCAST: {
+      if(message==WM_POWERBROADCAST && wparam!=PBT_APMRESUMEAUTOMATIC && wparam!=PBT_APMRESUMESUSPEND) return TRUE;
+      MonitorChoice monitor;
+      EnumDisplayMonitors(nullptr,nullptr,FindSecondary,reinterpret_cast<LPARAM>(&monitor));
+      if(monitor.score>=0) SetWindowPos(window,HWND_TOPMOST,monitor.bounds.left,monitor.bounds.top,
+          kWidth,kHeight,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+      RequestRender(true);
+      return TRUE;
+    }
     case WM_ERASEBKGND:
       return 1;
     case WM_MOUSEACTIVATE:
@@ -1980,6 +1929,8 @@ DWORD WINAPI PanelThread(void*) {
   DrawStaticPage(Page::kStats, g_static_pages[1].dc);
   DrawStaticPage(Page::kRunInfo, g_static_pages[2].dc);
   DrawStaticPage(Page::kItems, g_static_pages[3].dc);
+  DrawStaticPage(Page::kPickups, g_static_pages[4].dc);
+  DrawStaticPage(Page::kProgress, g_static_pages[5].dc);
   Log(LogLevel::kInfo, "[PanelInit] dashboard backgrounds ready");
 
   WSADATA data = {};

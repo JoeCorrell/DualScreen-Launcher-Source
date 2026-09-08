@@ -1,6 +1,11 @@
 package com.dualscreen.launcher.session
 
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.PowerManager
+import android.view.Display
 import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.os.Environment
@@ -39,6 +44,11 @@ import com.dualscreen.launcher.WfcDisplayConfiguration
 import com.dualscreen.launcher.access.AccessState
 import com.dualscreen.launcher.resolveConfigurationLauncherExecutable
 import com.dualscreen.launcher.supportedGameLaunchEnvironment
+import com.dualscreen.launcher.supportedGameTranslatorExtras
+import com.dualscreen.launcher.Ac2WowBox64Configuration
+import com.dualscreen.launcher.supportedGameFexCoreVersion
+import com.dualscreen.launcher.supportedGameDirectXConfig
+import com.dualscreen.launcher.supportedGameGpuDriverId
 import com.thor.core.display.DisplayTopology
 import com.wemu.engine.XServerHost
 import com.wemu.engine.container.Container
@@ -81,6 +91,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     private var secondaryDisplayId by mutableStateOf<Int?>(null)
     private var sessionTitle by mutableStateOf("Game")
     private var managedPanel by mutableStateOf(false)
+    private var diagnosticsOnly by mutableStateOf(false)
     private var nativeTextBridge = false
     private var nativePanelModeModifierDown = false
     private var nativePanelModeModifierUsed = false
@@ -102,7 +113,15 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     private val terminationHandled = AtomicBoolean(false)
     private lateinit var launchStatus: LaunchStatusStore
     private var guestOutputCallback: Callback<String>? = null
+    private var diagnosticCapture: DiagnosticGuestCapture? = null
     private var launchStartedAt = 0L
+    private var activityVisible = false
+    private var isaacDeviceSleep = false
+    private val screenReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            refreshSecondaryDisplay()
+        }
+    }
 
     private val displayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) = refreshSecondaryDisplay()
@@ -112,6 +131,14 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, screenReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_OFF)
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
         val app = application as DualScreenLauncherApplication
         if (app.settings.settings.value.keepScreenAwake) window.addFlags(FLAG_KEEP_SCREEN_ON)
         hideSystemUi()
@@ -138,6 +165,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
                     secondaryDisplayId = secondaryDisplayId,
                     title = sessionTitle,
                     managedPanel = managedPanel,
+                    diagnosticsOnly = diagnosticsOnly,
                     controls = runtimeControls,
                     metrics = runtimeMetrics,
                     log = runtimeLog,
@@ -159,7 +187,9 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         sessionTitle = if (configurationLauncher) "${game.title} Launcher" else game.title
         managedPanel = !configurationLauncher &&
             game.panelMode in setOf(LowerPanelMode.STARDEW, LowerPanelMode.VALHEIM)
+        diagnosticsOnly = game.panelMode == LowerPanelMode.DIAGNOSTICS
         nativeTextBridge = !configurationLauncher && game.id == "skyrim-se"
+        isaacDeviceSleep = !configurationLauncher && game.id == "isaac-repentance"
         launchStatus = app.launchStatus
         val logFile = launchStatus.begin(game)
         launchStatus.record(
@@ -238,9 +268,9 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         // while the companion owns the separate 1240x1080 lower monitor.
         // Letting the global launcher preference change this value recreates
         // the off-screen/stretched window regression and makes the panel's
-        // fallback origin incorrect. Keep this override local to WFC; every
-        // other game continues to use the user's selected resolution.
-        val selectedResolution = if (game.id == "transformers-wfc") {
+        // fallback origin incorrect. Dishonored's verified stacked-desktop
+        // launch uses the same geometry; other games retain the user setting.
+        val selectedResolution = if (game.id in setOf("transformers-wfc", "dishonored")) {
             GameResolution.HD
         } else {
             requestedResolution
@@ -457,6 +487,20 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             )
         }
 
+        if (!configurationLauncher && game.id == "dishonored") {
+            // Migrate the installed shortcut as well as new catalog installs.
+            // The native game parses these values before creating its viewport.
+            shortcut.putExtra("execArgs", game.launchArguments)
+            supportedGameGpuDriverId(game.id)?.let { shortcut.putExtra("rendererDriverId", it) }
+            shortcut.saveData()
+            launchStatus.record(
+                "DISPLAY",
+                "Dishonored windowed client=${selectedResolution.containerValue}; " +
+                    "top-screen client fitting enabled; args=${game.launchArguments}; " +
+                    "driver=${shortcut.getExtra("rendererDriverId")}; shared preset retained",
+            )
+        }
+
         withContext(Dispatchers.IO) {
             DualscreenStorage().exposeConfigurationFiles(container, game)
         }
@@ -465,6 +509,28 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         // installs. This keeps Wine's optional first-boot add-on dialogs from
         // blocking invisibly in front of the game.
         val launchEnvironment = supportedGameLaunchEnvironment(game.id)
+        val translatorExtras = supportedGameTranslatorExtras(game.id)
+        if (translatorExtras.isNotEmpty()) {
+            val removedOverride = if (game.id == "assassins-creed-ii") withContext(Dispatchers.IO) {
+                Ac2WowBox64Configuration.restorePerformance(container.rootDir)
+            } else false
+            translatorExtras.forEach { (key, value) -> shortcut.putExtra(key, value) }
+            shortcut.saveData()
+            launchStatus.record("TRANSLATOR", "${game.title}: FEXCore / ${translatorExtras["fexcorePreset"]}; removedAc2StartupOverride=$removedOverride; preSpawnAffinity=${translatorExtras["affinityBeforeLaunch"] == "1"}; shared container retained")
+        }
+        supportedGameDirectXConfig(game.id, shortcut.getExtra("dxwrapperConfig").ifBlank { container.dxWrapperConfig })?.let { config ->
+            shortcut.putExtra("dxwrapper", "dxvk+vkd3d")
+            shortcut.putExtra("dxwrapperConfig", config)
+            shortcut.saveData()
+            launchStatus.record("DIRECTX", "Dishonored uses DXVK 2.6.2 / VKD3D 2.9; shared preset retained")
+        }
+        supportedGameFexCoreVersion(game.id)?.let { version ->
+            if (shortcut.getExtra("fexcoreVersion") != version) {
+                shortcut.putExtra("fexcoreVersion", version)
+                shortcut.saveData()
+            }
+            launchStatus.record("TRANSLATOR", "${game.title} uses $version; shared container settings retained")
+        }
         if (shortcut.getExtra("envVars") != launchEnvironment) {
             shortcut.putExtra("envVars", launchEnvironment)
             shortcut.saveData()
@@ -531,8 +597,25 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             shortcut
         }
 
-        guestOutputCallback = Callback<String> { line: String -> launchStatus.guest(line) }.also {
+        if (diagnosticsOnly) {
+            diagnosticCapture = DiagnosticGuestCapture(
+                File(checkNotNull(launchStatus.status.value).logFile).parentFile!!,
+                File(container.rootDir, ".wine/drive_c/users/xuser/Saved Games/Crysis3/Game.log"),
+                onError = { Log.w(TAG, "Crysis diagnostic capture failed", it) },
+            )
+        }
+        val capture = diagnosticCapture
+        guestOutputCallback = Callback<String> { line: String ->
+            if (capture != null) capture.offer(line) else launchStatus.guest(line)
+        }.also {
             ProcessHelper.addDebugCallback(it)
+        }
+        if (diagnosticsOnly) {
+            launchStatus.record("DIAGNOSTICS", "Crysis-only Wine exception logging enabled; " +
+                "Skyrim's shared container retained; hash-locked compatibility patch and read-only native UI trial. " +
+                "Full-session output: guest-tail.log / guest-tail.1.log; engine log: Game-latest.log")
+            launchStatus.record("GAME_LOG", File(container.rootDir,
+                ".wine/drive_c/users/xuser/Saved Games/Crysis3/Game.log").absolutePath)
         }
         updateStatus("INITIALIZING TESTED WINDOWS RUNTIME", "Preparing Wine, prefix, renderer and mounts")
         /*
@@ -564,6 +647,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         val session = WemuRuntimeEngine.INSTANCE.createSession(this, this, container, runtimeShortcut)
         session.setShortcutLaunchDeferred(deferredStardewLaunch)
         runtime = session
+        refreshSecondaryDisplay()
         if (game.id == "skyrim-se") {
             session.setSkyrimAudioCompatibility(true)
             session.setAudioGainDb(6f)
@@ -594,7 +678,7 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             "PREPARE",
             "X server ready; renderer=${session.displayRenderer} wine=${session.wineInfo?.identifier()}",
         )
-        attachRenderer(xServer, session)
+        attachRenderer(xServer, session, game)
         watchForGameWindow(xServer, game, configurationLauncher)
         val installingWfcPrerequisites = wfcPrerequisites != null && !wfcPrerequisites.installed
         updateStatus(
@@ -678,12 +762,20 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
         }
     }
 
-    private fun attachRenderer(xServer: XServer, session: RuntimeSession) {
+    private fun attachRenderer(xServer: XServer, session: RuntimeSession, game: SupportedGame) {
         val view = XServerView(this, xServer, session.displayRenderer)
         serverView = view
         root.addView(view, 0, FrameLayout.LayoutParams(-1, -1))
         val renderer = view.renderer
         session.configureRenderer(renderer)
+        if (game.id == "dishonored") {
+            // Wine centers this decorated client in the 1280x1800 desktop.
+            // Fit/crop its client using the existing renderer, preserving the
+            // lower panel's independent surface and the game's windowed D3D9
+            // device. This is session-local: WFC's shared fit setting stays 0.
+            renderer.setFitGuestWindow(true)
+            launchStatus.record("DISPLAY", "Dishonored top-screen client fitting applied")
+        }
         xServer.setRenderer(renderer)
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(this)
@@ -883,7 +975,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
             }
             if (gameWindowVisible.compareAndSet(false, true)) {
                 runOnUiThread {
-                    stopGuestOutputCapture()
+                    // Diagnostic sessions must retain the crash, not just startup.
+                    if (!diagnosticsOnly) stopGuestOutputCapture()
                     launchStatus.ready("Game window matched: $identity")
                     // The launch cover is correctness state, not decoration.
                     // A ViewPropertyAnimator needs a later Choreographer frame
@@ -1095,10 +1188,13 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     private fun stopGuestOutputCapture() {
         guestOutputCallback?.let(ProcessHelper::removeDebugCallback)
         guestOutputCallback = null
+        diagnosticCapture?.close()
+        diagnosticCapture = null
     }
 
     override fun onStart() {
         super.onStart()
+        activityVisible = true
         // A Presentation belongs only to a visible game activity. Recreate it
         // after returning from another app instead of leaving a stale waiting
         // panel obscuring that app's lower display.
@@ -1108,9 +1204,12 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     override fun onResume() {
         super.onResume()
         hideSystemUi()
+        refreshSecondaryDisplay()
     }
 
     override fun onStop() {
+        activityVisible = false
+        refreshSecondaryDisplay()
         // Setting the id to null disposes PresentationHost and its SurfaceView.
         // The guest can remain alive; onStart attaches a fresh lower Surface.
         secondaryDisplayId = null
@@ -1368,6 +1467,8 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     }
 
     override fun onDestroy() {
+        CompanionDisplayCover.update(this, null)
+        unregisterReceiver(screenReceiver)
         stopGuestOutputCapture()
         windowListener?.let { listener ->
             runtime?.xServer?.windowManager?.removeOnWindowModificationListener(listener)
@@ -1414,10 +1515,28 @@ class GameSessionActivity : AppCompatActivity(), XServerHost {
     private fun refreshSecondaryDisplay() {
         val manager = getSystemService(DisplayManager::class.java)
         @Suppress("DEPRECATION")
+        val mainDisplayState = windowManager.defaultDisplay.state
+        val awake = getSystemService(PowerManager::class.java)?.isInteractive != false &&
+            mainDisplayState != Display.STATE_OFF && mainDisplayState != Display.STATE_DOZE_SUSPEND
+        if (isaacDeviceSleep) runtime?.setDeviceSleeping(!awake)
+        if (!activityVisible || !awake) {
+            CompanionDisplayCover.update(this, null)
+            if (secondaryDisplayId != null) {
+                secondaryDisplayId = null
+                SecondScreenOutput.requestDetach()
+            }
+            return
+        }
+        @Suppress("DEPRECATION")
         val current = windowManager.defaultDisplay.displayId
         secondaryDisplayId = manager?.displays?.firstOrNull { candidate ->
-            candidate.displayId != current && DisplayTopology.isUsableSecondary(candidate)
+            candidate.displayId != current && candidate.state != Display.STATE_OFF &&
+                candidate.state != Display.STATE_DOZE_SUSPEND && DisplayTopology.isUsableSecondary(candidate)
         }?.displayId
+        // AC II-only until display lifecycle and controller focus are verified on device.
+        CompanionDisplayCover.update(this, secondaryDisplayId.takeIf {
+            intent.getStringExtra(EXTRA_GAME_ID) == "assassins-creed-ii"
+        })
         Log.i(TAG, "Secondary display -> $secondaryDisplayId")
     }
 

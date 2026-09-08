@@ -33,6 +33,11 @@ public abstract class GPUStatus {
      * make the plain one jitter.
      */
     public static int getLoadPercent() {
+        // KGSL stops accumulating hardware busy counters when pwrscale is
+        // disabled. Both percentage and busy/total can then retain the same
+        // historical value throughout gameplay; neither is a live fallback.
+        // Seen on Thor: fixed 56734/1018476 counters with pwrscale=0.
+        if (readInt(KGSL + "pwrscale") == 0) return -1;
         /*
          * AYN's Adreno kernel exposes both nodes, but `devfreq/gpu_load` is a
          * compatibility stub which stays at zero while the GPU is busy.  The

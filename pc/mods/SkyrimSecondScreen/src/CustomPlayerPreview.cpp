@@ -32,12 +32,11 @@ constexpr uint32_t kRenderWidth = 400;
 constexpr uint32_t kRenderHeight = 640;
 constexpr uint64_t kStaticPerfLogIntervalMs = 10000;
 constexpr uint64_t kAnimationFrameMs = 33;
-// The assembled Skyrim meshes already face this private camera at zero yaw.
-// Retain only the measured asset-space correction. Applying an additional
-// 180-degree turn presents the rear/inside of FaceGen head parts: the actual
-// face is then back-face culled while separately rendered mouth geometry can
-// remain visible through the resulting hole.
-constexpr float kNeutralFacingYawDegrees = -7.0f;
+// Skyrim's bind-pose front is +Y (the supplied Argonian eyes/mouth sit on
+// that side of the head). Our camera looks from -Y toward +Y, so turn the
+// entire assembled skeleton 180 degrees, retaining the seven-degree portrait
+// yaw. This is independent of the rasterizer's exterior-winding convention.
+constexpr float kNeutralFacingYawDegrees = 173.0f;
 constexpr size_t kMaxAssetBytes = 256u * 1024u * 1024u;
 constexpr size_t kMaxNifBytes = 64u * 1024u * 1024u;
 
@@ -987,8 +986,8 @@ DWORD WINAPI WorkerMain(void*) {
     AcquireSRWLockShared(&g_manifest_lock);
     const bool current = manifest.revision == g_pending_manifest.revision &&
                          manifest.world_epoch == g_pending_manifest.world_epoch;
-    ReleaseSRWLockShared(&g_manifest_lock);
     if (!current) {
+      ReleaseSRWLockShared(&g_manifest_lock);
       Log("[SKYRIM-PREVIEW]", "discarded stale assembly revision=%llu",
           static_cast<unsigned long long>(manifest.revision));
       continue;
@@ -996,6 +995,9 @@ DWORD WINAPI WorkerMain(void*) {
     AcquireSRWLockExclusive(&g_scene_lock);
     g_ready_scene = std::move(built);
     ReleaseSRWLockExclusive(&g_scene_lock);
+    // Keep the manifest generation stable through publication. Otherwise a
+    // reset between validation and this assignment can resurrect the old save.
+    ReleaseSRWLockShared(&g_manifest_lock);
   }
   return 0;
 }
@@ -1076,8 +1078,16 @@ ID3D11ShaderResourceView* CreateDdsTexture(ID3D11Device* device,
   const DdsHeader* header = reinterpret_cast<const DdsHeader*>(
       blob.bytes.data() + 4);
   if (header->size != 124 || header->pixel_format.size != 32 ||
-      !header->width || !header->height)
+      !header->width || !header->height ||
+      header->width > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+      header->height > D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION ||
+      header->depth > 1 || (header->caps2 & 0xFE00u))
     return nullptr;
+  uint32_t max_mips = 1;
+  for (uint32_t side = std::max(header->width, header->height); side > 1;
+       side /= 2)
+    ++max_mips;
+  if (header->mip_count > max_mips) return nullptr;
   size_t offset = 4 + sizeof(DdsHeader);
   DXGI_FORMAT format = DXGI_FORMAT_UNKNOWN;
   const uint32_t four = header->pixel_format.four_cc;
@@ -1086,7 +1096,8 @@ ID3D11ShaderResourceView* CreateDdsTexture(ID3D11Device* device,
     const auto* dx10 = reinterpret_cast<const DdsHeaderDx10*>(
         blob.bytes.data() + offset);
     format = static_cast<DXGI_FORMAT>(dx10->format);
-    if (dx10->array_size != 1 || dx10->dimension != 3) return nullptr;
+    if (dx10->array_size != 1 || dx10->dimension != 3 ||
+        (dx10->misc & D3D11_RESOURCE_MISC_TEXTURECUBE)) return nullptr;
     offset += sizeof(DdsHeaderDx10);
   } else if (four == FourCc('D', 'X', 'T', '1')) {
     format = DXGI_FORMAT_BC1_UNORM;
@@ -1117,6 +1128,14 @@ ID3D11ShaderResourceView* CreateDdsTexture(ID3D11Device* device,
     return nullptr;
   }
   if (srgb) format = SrgbFormat(format);
+  // The upload layout below handles block compression or four-byte colour
+  // pixels only. Never hand the driver a buffer sized for a different format.
+  if (!IsBlockCompressed(format) &&
+      format != DXGI_FORMAT_R8G8B8A8_UNORM &&
+      format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB &&
+      format != DXGI_FORMAT_B8G8R8A8_UNORM &&
+      format != DXGI_FORMAT_B8G8R8A8_UNORM_SRGB)
+    return nullptr;
   const uint32_t mip_count = std::max(1u, header->mip_count);
   std::vector<D3D11_SUBRESOURCE_DATA> initial;
   initial.reserve(mip_count);
@@ -1215,6 +1234,7 @@ struct GpuState {
   uint64_t world_epoch = 0;
   uint64_t rendered_control_revision = 0;
   uint64_t frame_revision = 0;
+  uint64_t submitted_frame_revision = 0;
   uint64_t last_render_ms = 0;
   uint64_t last_perf_log_ms = 0;
   uint64_t animation_start_ms = 0;
@@ -1550,7 +1570,10 @@ bool CreateGpuState(IDXGISwapChain* chain) {
   D3D11_RASTERIZER_DESC raster{};
   raster.FillMode = D3D11_FILL_SOLID;
   raster.CullMode = D3D11_CULL_BACK;
-  raster.FrontCounterClockwise = FALSE;
+  // NIF exterior triangles are CCW. The Z-up, +Y view swaps Y and Z
+  // (determinant -1); with the D3D viewport they remain counterclockwise on
+  // screen. Clockwise-front culls the exterior and exposes the model's inside.
+  raster.FrontCounterClockwise = TRUE;
   raster.DepthClipEnable = TRUE;
   device->CreateRasterizerState(&raster, &g_gpu.cull_back);
   raster.CullMode = D3D11_CULL_NONE;
@@ -1577,9 +1600,12 @@ bool CreateGpuState(IDXGISwapChain* chain) {
   Log("[SKYRIM-PREVIEW-RENDER]",
       "private D3D11 target initialized size=%ux%u device=%p", kRenderWidth,
       kRenderHeight, device);
-  return g_gpu.sampler && g_gpu.cull_back && g_gpu.cull_none &&
+  const bool ready = g_gpu.sampler && g_gpu.cull_back && g_gpu.cull_none &&
          g_gpu.depth_state && g_gpu.blend && g_gpu.white &&
          g_gpu.flat_normal && g_gpu.black;
+  // A partial initialization must not pass the same-device fast path later.
+  if (!ready) ReleaseGpu();
+  return ready;
 }
 
 ID3D11ShaderResourceView* GpuTexture(const std::shared_ptr<TextureBlob>& blob,
@@ -1632,7 +1658,7 @@ bool UploadScene(const CpuScene& scene) {
     mesh.index_count = static_cast<uint32_t>(source.indices.size());
     std::memcpy(mesh.tint, source.tint, sizeof(mesh.tint));
     std::memcpy(mesh.material, source.material, sizeof(mesh.material));
-    mesh.flags[0] = source.model_space_normal ? 1.0f : 0.0f;
+    mesh.flags[0] = source.model_space_normal && mesh.normal ? 1.0f : 0.0f;
     mesh.flags[1] = source.skin_material ? 1.0f : 0.0f;
     mesh.double_sided = source.double_sided;
     mesh.kind = source.kind;
@@ -1740,10 +1766,13 @@ void RetireReadbacks() {
                                        &mapped))) {
       if (g_submit && slot.world_epoch == g_gpu.world_epoch &&
           slot.world_epoch ==
-              g_requested_reset_epoch.load(std::memory_order_acquire))
+              g_requested_reset_epoch.load(std::memory_order_acquire) &&
+          slot.revision > g_gpu.submitted_frame_revision) {
         g_submit(kRenderWidth, kRenderHeight,
                  static_cast<const uint8_t*>(mapped.pData), mapped.RowPitch,
                  slot.revision);
+        g_gpu.submitted_frame_revision = slot.revision;
+      }
       g_gpu.immediate->Unmap(slot.staging, 0);
     }
     slot.pending = false;
@@ -1946,7 +1975,9 @@ void RenderPresent(IDXGISwapChain* chain,
   AcquireSRWLockShared(&g_scene_lock);
   scene = g_ready_scene;
   ReleaseSRWLockShared(&g_scene_lock);
-  if (scene && scene->revision != g_gpu.scene_revision) UploadScene(*scene);
+  if (scene && scene->world_epoch == reset_epoch &&
+      scene->revision != g_gpu.scene_revision)
+    UploadScene(*scene);
   if (g_gpu.meshes.empty()) return;
   const uint64_t now = GetTickCount64();
   const bool animation = g_gpu.animation_start_ms != 0;

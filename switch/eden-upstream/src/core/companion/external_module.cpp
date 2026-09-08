@@ -2,6 +2,7 @@
 #include "core/companion/external_module.h"
 #include "common/logging.h"
 #include <mutex>
+#include <atomic>
 #ifdef __ANDROID__
 #include <dlfcn.h>
 #endif
@@ -11,6 +12,7 @@ std::mutex mutex;
 DsHostApi host_api{};
 const DsModuleApi* module{};
 std::string loaded_path;
+std::atomic<size_t> mailbox_capacity{};
 }
 bool Load(const std::string& path, const DsHostApi& host, u64 title, const std::string& version) {
     const std::scoped_lock lock{mutex};
@@ -24,14 +26,14 @@ bool Load(const std::string& path, const DsHostApi& host, u64 title, const std::
     auto entry=reinterpret_cast<DsModuleEntry>(dlsym(handle,"ds_companion_module_v1"));
     host_api=host;
     const auto* candidate=entry ? entry(&host_api) : nullptr;
-    if (!candidate || candidate->size<sizeof(DsModuleApi) || candidate->abi!=DS_COMPANION_ABI ||
+    if (!candidate || candidate->size<offsetof(DsModuleApi,query) || candidate->abi!=DS_COMPANION_ABI ||
         !candidate->title_id || !candidate->version || !candidate->probe || !candidate->install ||
         !candidate->snapshot || !candidate->action || !candidate->asset || candidate->title_id != title || version != candidate->version) {
         dlclose(handle); return false;
     }
     // Do not unload old code while Android may still be detaching an old view.
     // Handles are pinned until process exit. Activation only happens outside a game.
-    module=candidate; loaded_path=path;
+    module=candidate; loaded_path=path; mailbox_capacity=0;
     LOG_INFO(Loader,"[Companion] external module {} title={:016X}",module->version,module->title_id);
     return true;
 #else
@@ -45,6 +47,7 @@ std::optional<Reservation> Probe(const DsNsoInfo& info,const std::string& name) 
     if (!module || !module->probe(&info,name.c_str(),&r.mailbox_size,&r.bridge_size)) return {};
     if (!r.mailbox_size || (r.mailbox_size&0xfff) || (r.bridge_size&0xfff) ||
         r.mailbox_size>0x100000 || r.bridge_size>0x100000) return {};
+    mailbox_capacity=r.mailbox_size;
     return r;
 }
 bool Install(std::vector<u8>& image,size_t start,u32 mailbox,u32 bridge,u32 size) {
@@ -56,6 +59,19 @@ int Snapshot(void* out,size_t size) {
 }
 int Action(int operation,int item,int target) {
     const std::scoped_lock lock{mutex}; return module ? module->action(operation,item,target) : 15;
+}
+size_t MailboxCapacity() { return mailbox_capacity.load(); }
+std::string Query(int kind, const std::string& input) {
+    const std::scoped_lock lock{mutex};
+    if (!module || module->size < sizeof(DsModuleApi) || !module->query) return {};
+    const auto size=module->query(kind,input.c_str(),nullptr,0);
+    if (!size || size>4*1024*1024) return {};
+    std::string result(size,'\0');
+    return module->query(kind,input.c_str(),reinterpret_cast<u8*>(result.data()),size)==size ? result : std::string{};
+}
+bool Action64(int operation,int64_t argument) {
+    const std::scoped_lock lock{mutex};
+    return module && module->size >= sizeof(DsModuleApi) && module->action64 && module->action64(operation,argument);
 }
 std::vector<u8> Asset(const std::string& path) {
     const DsModuleApi* current;

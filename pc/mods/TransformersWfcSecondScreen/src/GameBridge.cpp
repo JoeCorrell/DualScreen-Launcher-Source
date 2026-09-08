@@ -24,7 +24,9 @@
 #include "NativePointOfInterest.h"
 #include "NativeCollisionRoles.h"
 #include "NativeWeaponHeat.h"
+#include "NativeWeaponAnimator.h"
 #include "WeaponRoleJournal.h"
+#include "SwapScratch.h"
 #include "NativeCameraHandoff.h"
 #include "NativePlayerFormState.h"
 #include "NativePlayerInput.h"
@@ -32,6 +34,10 @@
 #include "NativePawnOwnership.h"
 #include "NativePlayerAdoption.h"
 #include "NativeAiAdoption.h"
+#include "NativeCharacterIdentity.h"
+#include "NativeVehicleAi.h"
+#include "NativeAiSensors.h"
+#include "NativeAiWorldState.h"
 #include "StateStore.h"
 #include "UnrealBridge.h"
 
@@ -3069,6 +3075,8 @@ struct WfcSwapJournal {
   void* replacement_target_vehicle_ai_control = nullptr;
   void* restored_target_vehicle_ai_control = nullptr;
   uint32_t previous_target_vehicle_ai_control_index = 0;
+  NativeVehicleAiNavigation previous_target_vehicle_navigation{};
+  bool target_vehicle_navigation_captured = false;
   void* target_plan_runner = nullptr;
   void* target_weapon_shooter = nullptr;
   void* target_weapon_aimer = nullptr;
@@ -3077,6 +3085,7 @@ struct WfcSwapJournal {
   void* target_goal_set = nullptr;
   void* target_tactical_analyzer = nullptr;
   void* target_sensor_set = nullptr;
+  uint32_t target_sensor_set_index = 0;
   void* point_of_interest_manager = nullptr;
   void* hud = nullptr;
   void* player_ability_manager = nullptr;
@@ -3091,9 +3100,6 @@ struct WfcSwapJournal {
   CharacterRoleMapping desired_mapping = {};
   CharacterRoleMappingRestorePoint mapping_restore = {};
   bool role_adapter_installed_here = false;
-  UnrealFunctionHandle ai_create_vehicle_control = {};
-  UnrealFunctionHandle ai_set_sensor_set = {};
-  UnrealFunctionHandle player_set_current_character = {};
   std::array<InventoryWeaponRole, 32> player_inventory_weapons = {};
   std::array<InventoryWeaponRole, 32> target_inventory_weapons = {};
   uint32_t player_inventory_weapon_count = 0;
@@ -3108,6 +3114,8 @@ struct WfcSwapJournal {
   uint32_t target_inventory_head_index = 0;
   uint64_t player_inventory_fingerprint = 0;
   uint64_t target_inventory_fingerprint = 0;
+  bool animator_preparation_dirty = false;
+  bool animator_preparation_committed = false;
   void* player_collision_controller = nullptr;
   void* target_collision_controller = nullptr;
   bool target_lifecycle_was_proxy = false;
@@ -3138,6 +3146,7 @@ struct WfcSwapJournal {
   // mutation boundaries. Once the first one is attempted, rollback must
   // retarget the same live objects after restoring the original graph.
   bool target_ai_lifecycle_rebind_started = false;
+  bool target_world_state_refresh_started = false;
   bool target_ai_lifecycle_rebound = false;
   bool target_sensor_rebind_started = false;
   bool target_sensor_rebound = false;
@@ -3156,6 +3165,10 @@ struct WfcSwapJournal {
 };
 
 WfcSwapJournal g_swap_journal;
+// Never embed owning journals in the copied inventory/preflight snapshots.
+// A dirty initializer retains this fixed-address recovery record until it can
+// be safely undone; ResetSwapSnapshot must not discard it.
+UnrealObjectCloneProperty g_weapon_animator_recovery;
 
 bool ReadRequiredObject(void* owner, const wchar_t* property, void** output) {
   return output && UnrealReadObjectProperty(owner, property, output) &&
@@ -3316,6 +3329,10 @@ bool CaptureInventoryWeaponRoles(
       return fail("weapon-heat-modifiers",weapon);
     if (!NativeCaptureWeaponDataCache(g_game_thread.load(std::memory_order_relaxed),pawn,weapon,entry.desired_data,&entry.data_cache))
       return fail("weapon-derived-data-cache",weapon);
+    const char* retention_reason=nullptr;
+    if (!NativeCaptureWeaponRetention(g_executable,g_game_thread.load(std::memory_order_relaxed),
+        pawn,weapon,entry.desired_data,entry.data_cache.kind,&entry.retention,&retention_reason))
+      return fail(retention_reason,weapon);
     if (*count_output >= output->size())
       return fail("weapon-capacity", weapon);
     (*output)[(*count_output)++] = entry;
@@ -3398,7 +3415,12 @@ bool InventoryCaptureStillCurrent(
     uint32_t expected_count, uint8_t desired_role, void* expected_manager,
     uint32_t expected_manager_index, void* expected_head,
     uint32_t expected_head_index, uint64_t expected_fingerprint) {
-  std::array<WfcSwapJournal::InventoryWeaponRole, 32> current = {};
+  if(GetCurrentThreadId()!=g_game_thread.load(std::memory_order_relaxed))return false;
+  static std::array<WfcSwapJournal::InventoryWeaponRole, 32> current{};
+  static bool capture_busy=false;
+  SwapScratchLease lease(capture_busy);
+  if(!lease)return false;
+  // CaptureInventoryWeaponRoles initializes the scratch array itself.
   uint32_t current_count = 0;
   void* current_manager = nullptr;
   uint32_t current_manager_index = 0;
@@ -3520,6 +3542,7 @@ class WfcSwapOperations final : public CharacterSwapOperations {
   bool ResetTargetWeaponShooter() noexcept;
   bool ActivateTargetWeaponShooter(void* pawn) noexcept;
   bool ApplyInventoryWeaponRoles() noexcept;
+  bool PrepareInventoryWeaponAnimators() noexcept;
   bool RestoreInventoryWeaponRoles() noexcept;
   bool RestoreDeferredRuntimeState() noexcept;
 };
@@ -3536,14 +3559,6 @@ bool SwapWorldMutationActive() {
 bool ValidateSwapCallContracts(const WfcSwapJournal& journal) {
   bool ok = true;
   size_t checked = 0;
-  const auto check = [&](void* object, const wchar_t* function,
-                         const wchar_t* result,
-                         std::initializer_list<UnrealCallParameterContract> args) {
-    ++checked;
-    // Deliberately do not short-circuit: report all missing contracts in the
-    // same attempt, before either pawn/controller is touched.
-    ok = UnrealValidateCallContract(object, function, result, args) && ok;
-  };
   checked += 2;
   const bool input_ok = PrepareNativePlayerInput(GetModuleHandleW(nullptr),
       g_game_thread.load(std::memory_order_relaxed), journal.player_controller);
@@ -3635,6 +3650,31 @@ bool ValidateSwapCallContracts(const WfcSwapJournal& journal) {
       journal.player_pawn, journal.target_pawn);
   Log(LogLevel::kInfo, "[SquadSwitch] native camera handoff audit=%s", camera_ok ? "pass" : "fail");
   ok = camera_ok && ok;
+  const auto vehicle_ready = [&](void* pawn) {
+    return !UnrealObjectIsA(pawn,L"TnAiPawn") ||
+        (camera_ok && PrepareNativeVehicleAi(g_executable,
+            g_game_thread.load(std::memory_order_relaxed),journal.target_controller,pawn));
+  };
+  const bool vehicle_ok=vehicle_ready(journal.player_pawn) && vehicle_ready(journal.target_pawn) &&
+      (journal.target_lifecycle_was_proxy || NativeVehicleAiMatchesPawn(journal.target_controller,journal.target_pawn));
+  Log(LogLevel::kInfo,"[SquadSwitch] native vehicle-AI lifecycle audit=%s",vehicle_ok ? "pass":"fail");
+  ok=vehicle_ok && ok;
+  const auto world_state_ready = [&](void* pawn) {
+    return !UnrealObjectIsA(pawn,L"TnAiPawn") ||
+        PrepareNativeAiWorldState(g_executable,g_game_thread.load(std::memory_order_relaxed),
+            journal.target_controller,pawn);
+  };
+  const bool world_state_ok=world_state_ready(journal.player_pawn) && world_state_ready(journal.target_pawn);
+  Log(LogLevel::kInfo,"[SquadSwitch] native AI world-state audit=%s",world_state_ok ? "pass":"fail");
+  ok=world_state_ok && ok;
+  ++checked;
+  const bool sensors_ok=PrepareNativeAiSensors(g_executable,
+      g_game_thread.load(std::memory_order_relaxed),journal.target_controller);
+  Log(LogLevel::kInfo,"[SquadSwitch] native sensor lifecycle audit=%s physical-player-adapter=%s",
+      sensors_ok ? "pass":"fail",journal.former_player_requires_proxy ? "still-required":"not-required");
+  ok=sensors_ok && ok;
+  ++checked;
+  ++checked;
   ++checked;
   const bool view_ok = camera_ok && PrepareNativeViewTarget(journal.player_controller,
       journal.player_pawn, journal.target_pawn);
@@ -3707,8 +3747,11 @@ bool ValidateSwapCallContracts(const WfcSwapJournal& journal) {
   ok=player_collision_ok && target_collision_ok && ok;
   const auto weapons = [&](void* pawn,const auto& entries, uint32_t count) {
     for (uint32_t i = 0; i < count; ++i) {
-      check(entries[i].weapon, L"SetWeaponDataType", nullptr,
-            {{L"Type", L"ByteProperty", 1}});
+      ++checked;
+      const bool retention_ok=NativeWeaponRetentionStable(entries[i].retention);
+      Log(LogLevel::kInfo,"[SquadSwitch] custom retained-weapon role audit item=%lu result=%s",
+          static_cast<unsigned long>(entries[i].object_index),retention_ok ? "pass":"fail");
+      ok=retention_ok && ok;
       if (entries[i].heat_state_captured) {
         const bool heat_ok=PrepareNativeWeaponHeat(g_executable,
             g_game_thread.load(std::memory_order_relaxed),pawn,entries[i].weapon);
@@ -3743,7 +3786,13 @@ bool WfcSwapOperations::CaptureJournal(
 #define WFC_SWAP_CAPTURE_REQUIRE(condition) \
   do { if (!(condition)) return capture_failed(#condition); } while (false)
 
-  WfcSwapJournal journal;
+  if(GetCurrentThreadId()!=g_game_thread.load(std::memory_order_relaxed))
+    return capture_failed("wrong game thread");
+  static WfcSwapJournal journal;
+  static bool capture_busy=false;
+  SwapScratchLease lease(capture_busy);
+  if(!lease)return capture_failed("recursive journal capture");
+  ResetSwapSnapshot(journal);
   journal.request_id = request.request_id;
   journal.world = g_world_info;
   journal.player_controller = g_controller;
@@ -3882,6 +3931,8 @@ bool WfcSwapOperations::CaptureJournal(
       &journal.target_tactical_analyzer));
   WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
       journal.target_tactical_analyzer, L"SensorSet", &journal.target_sensor_set));
+  journal.target_sensor_set_index=UnrealObjectIndex(journal.target_sensor_set);
+  WFC_SWAP_CAPTURE_REQUIRE(journal.target_sensor_set_index!=0);
   WFC_SWAP_CAPTURE_REQUIRE(ReadRequiredObject(
       journal.player_controller, L"_PointOfInterestManager",
       &journal.point_of_interest_manager));
@@ -3953,6 +4004,11 @@ bool WfcSwapOperations::CaptureJournal(
   void* previous_aimer_controller = nullptr;
   bool target_shooter_firing = false;
   WFC_SWAP_CAPTURE_REQUIRE(ValidateSwapCallContracts(journal));
+  if (journal.player_mode==TransformerMode::kVehicle || journal.target_mode==TransformerMode::kVehicle) {
+    WFC_SWAP_CAPTURE_REQUIRE(NativeReadVehicleAiNavigation(
+        journal.target_controller,&journal.previous_target_vehicle_navigation));
+    journal.target_vehicle_navigation_captured=true;
+  }
   WFC_SWAP_CAPTURE_REQUIRE(UnrealReadObjectProperty(
       journal.target_weapon_shooter, L"Owner", &previous_shooter_owner));
   WFC_SWAP_CAPTURE_REQUIRE(previous_shooter_owner == journal.target_pawn);
@@ -4022,18 +4078,11 @@ bool WfcSwapOperations::CaptureJournal(
     return capture_failed("target GOAP plan/sensor graph");
   journal.target_plan_was_suspended = plan_runner_suspended;
 
-  if (!UnrealResolveExactScriptFunctionForObject(
-          journal.target_controller, L"TransGame.TnAiController",
-          L"CreateAndInitializeVehicleAiControlStrategy",
-          &journal.ai_create_vehicle_control) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          journal.target_controller, L"TransGame.TnAiController",
-          L"SetSensorSet", &journal.ai_set_sensor_set) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          journal.player_pri, L"TransGame.TnPlayerReplicationInfo",
-          L"set_CurrentCharacter",
-          &journal.player_set_current_character))
-    return capture_failed("exact script function resolution");
+  if (!NativeCharacterIdentityReady(g_executable,
+          g_game_thread.load(std::memory_order_relaxed),journal.player_pri,journal.target_pawn) ||
+      (journal.target_pri && !NativeCharacterIdentityReady(g_executable,
+          g_game_thread.load(std::memory_order_relaxed),journal.target_pri,journal.player_pawn)))
+    return capture_failed("native current identity preparation");
 
   g_swap_journal = journal;
   const bool lifecycle_coherent =
@@ -4041,7 +4090,7 @@ bool WfcSwapOperations::CaptureJournal(
           ? TargetProxyLifecycleCoherent(journal.target_pawn)
           : TargetAiLifecycleCoherent(journal.target_pawn);
   if (!lifecycle_coherent) {
-    g_swap_journal = {};
+    ResetSwapSnapshot(g_swap_journal);
     return capture_failed("target AI lifecycle coherence");
   }
 #undef WFC_SWAP_CAPTURE_REQUIRE
@@ -4167,19 +4216,23 @@ bool WfcSwapOperations::TargetAiLifecycleCoherent(
 bool WfcSwapOperations::RebindTargetSensors(
     void* expected_pawn) noexcept {
   if (!UnrealObjectIsA(expected_pawn, L"TnPawn")) return false;
+  void* current_sensor_set=nullptr;
+  if (UnrealObjectIndex(g_swap_journal.target_sensor_set)!=g_swap_journal.target_sensor_set_index ||
+      !UnrealReadObjectProperty(g_swap_journal.target_tactical_analyzer,L"SensorSet",&current_sensor_set) ||
+      current_sensor_set!=g_swap_journal.target_sensor_set) return false;
   g_swap_journal.target_sensor_rebind_started = true;
-  if (!UnrealCallExactVoidObject(g_swap_journal.target_controller,
-                                 g_swap_journal.ai_set_sensor_set,
-                                 L"InSensorSet", nullptr))
-    return false;
-  void* detached_sensor_set = g_swap_journal.target_sensor_set;
-  if (!UnrealReadObjectProperty(g_swap_journal.target_tactical_analyzer,
-                                L"SensorSet", &detached_sensor_set) ||
-      detached_sensor_set != nullptr ||
-      !UnrealCallExactVoidObject(
-          g_swap_journal.target_controller,
-          g_swap_journal.ai_set_sensor_set, L"InSensorSet",
-          g_swap_journal.target_sensor_set))
+  // TnTacticalAnalyzer.SetSensorSet (10B61A70) ALWAYS initializes every
+  // sensor when non-null, even when assigning the same set. The previous
+  // null-then-rebind sequence unnecessarily removed the set's engine root.
+  // Preserve the live SensorSet reference throughout its callbacks.
+  void* previous=expected_pawn==g_swap_journal.player_pawn ? g_swap_journal.target_pawn:
+      expected_pawn==g_swap_journal.target_pawn ? g_swap_journal.player_pawn:nullptr;
+  const auto result=NativeRebindAiSensors(g_swap_journal.target_controller,expected_pawn,previous,
+      g_swap_journal.player_move_input,g_swap_journal.player_look_input);
+  Log(LogLevel::kInfo,"[SquadSwitch] native sensor rebind result=%u pawn=%p",
+      static_cast<unsigned>(result),expected_pawn);
+  if (result!=NativeAiSensorResult::kApplied ||
+      UnrealObjectIndex(g_swap_journal.target_sensor_set)!=g_swap_journal.target_sensor_set_index)
     return false;
   g_swap_journal.target_sensor_rebound =
       TargetSensorsCoherent(expected_pawn);
@@ -4214,37 +4267,16 @@ bool WfcSwapOperations::RebindTargetAiLifecycle(
       current_solution || pending_solution)
     return false;
 
-  // HmGoapPlanRunner.set_ActionSet performs the native Unbind/Bind lifecycle
-  // immediately. Calling the setter directly is intentional: the public
-  // ReplaceActionSet path may defer replacement while the runner is
-  // suspended. First publish null and prove it became null so even a setter
-  // with same-value suppression cannot skip the subsequent bind of the
-  // original set.
-  if (NativeAiSetActionSet(g_swap_journal.target_controller, nullptr) !=
-      NativeAiPlanningResult::kApplied)
-    return false;
-  void* detached_action_set = g_swap_journal.target_action_set;
-  if (!UnrealReadObjectProperty(g_swap_journal.target_plan_runner,
-                                L"_ActionSet", &detached_action_set) ||
-      detached_action_set != nullptr)
-    return false;
-
+  // Shipping setters 11386BA0/113791F0 unconditionally Unbind then Bind,
+  // including a same-set assignment. Keep the existing owning reference
+  // through callbacks; clearing it first creates an avoidable unrooted gap.
+  // The public ReplaceActionSet path may defer while suspended, so use the
+  // verified private setter, not that public scheduling entry.
   if (NativeAiSetActionSet(g_swap_journal.target_controller,
                            g_swap_journal.target_action_set) != NativeAiPlanningResult::kApplied)
     return false;
 
-  // Force the goal and sensor setters across a distinct value as well. This
-  // removes any dependency on undocumented same-object suppression. The
-  // decompiled TnTacticalAnalyzer.SetSensorSet path then initializes every
-  // sensor with Owner.get_TransformerPawn() for the newly mapped actor.
-  if (NativeAiSetGoalSet(g_swap_journal.target_controller, nullptr) !=
-      NativeAiPlanningResult::kApplied)
-    return false;
-  void* detached_goal_set = g_swap_journal.target_goal_set;
-  if (!UnrealReadObjectProperty(g_swap_journal.target_plan_runner,
-                                L"_GoalSet", &detached_goal_set) ||
-      detached_goal_set != nullptr ||
-      NativeAiSetGoalSet(g_swap_journal.target_controller,
+  if (NativeAiSetGoalSet(g_swap_journal.target_controller,
                          g_swap_journal.target_goal_set) != NativeAiPlanningResult::kApplied)
     return false;
 
@@ -4573,74 +4605,34 @@ bool WfcSwapOperations::RestoreOriginalGraph() noexcept {
   if (!ok || ControllerPawn(g_swap_journal.target_controller) != g_swap_journal.target_pawn ||
       PawnController(g_swap_journal.target_pawn) != g_swap_journal.target_controller)
     return failed_control_restore("restore-ai");
-  if (ok && g_swap_journal.target_vehicle_ai_control_detached) {
-    void* current_strategy = nullptr;
-    void* const previous_strategy =
-        g_swap_journal.previous_target_vehicle_ai_control;
-    const bool previous_strategy_still_valid =
-        previous_strategy && UnrealObjectValid(previous_strategy) &&
-        UnrealObjectIndex(previous_strategy) ==
-            g_swap_journal.previous_target_vehicle_ai_control_index;
-    bool restored =
-        previous_strategy_still_valid &&
-        ReadOptionalObject(g_swap_journal.target_controller,
-                           L"_VehicleAiControl", &current_strategy) &&
-        current_strategy == nullptr &&
-        UnrealWriteObjectPropertyExpected(
-            g_swap_journal.target_controller, L"_VehicleAiControl", nullptr,
-            previous_strategy);
-    if (restored) {
-      g_swap_journal.restored_target_vehicle_ai_control = previous_strategy;
+  if (ok && (g_swap_journal.target_vehicle_ai_control_detached ||
+             g_swap_journal.target_vehicle_ai_control_rebuilt)) {
+    if (g_swap_journal.target_lifecycle_was_proxy) {
+      // Returning to the original physical-player proxy means no native AI
+      // strategy. Never pass this sibling allocation through the AI factory.
+      void* current=nullptr;
+      ok=!g_swap_journal.previous_target_vehicle_ai_control &&
+          ReadOptionalObject(g_swap_journal.target_controller,L"_VehicleAiControl",&current) &&
+          (!current || UnrealWriteObjectPropertyExpected(
+              g_swap_journal.target_controller,L"_VehicleAiControl",current,nullptr));
+    } else {
+      // Both detach and rebuild remove the saved strategy's engine root.
+      // The tested native restoration validates the borrowed object identity
+      // and every cached owner, or reconstructs only this controller service.
+      const auto restored=NativeRestoreVehicleAi(g_swap_journal.target_controller,
+          g_swap_journal.target_pawn,g_swap_journal.previous_target_vehicle_ai_control,
+          g_swap_journal.previous_target_vehicle_ai_control_index,
+          g_swap_journal.player_move_input,g_swap_journal.player_look_input);
+      Log(LogLevel::kInfo,"[SquadSwitch] native vehicle-AI rollback result=%u",static_cast<unsigned>(restored));
+      ok=restored==NativeVehicleAiResult::kApplied;
     }
-    ok = restored && ok;
-  }
-  if (ok && g_swap_journal.target_vehicle_ai_control_rebuilt) {
-    // The cross-role bind creates a strategy for the former player pawn. Once
-    // the original target is restored, rebuild from that pawn/controller pair
-    // instead of retaining the now-wrong strategy or a possibly GC'd raw
-    // pointer captured before the transaction.
-    void* current_strategy = nullptr;
-    bool pointer_restored =
-        ReadOptionalObject(g_swap_journal.target_controller,
-                           L"_VehicleAiControl", &current_strategy);
-    void* const previous_strategy =
-        g_swap_journal.previous_target_vehicle_ai_control;
-    const bool previous_strategy_still_valid =
-        previous_strategy && UnrealObjectValid(previous_strategy) &&
-        UnrealObjectIndex(previous_strategy) ==
-            g_swap_journal.previous_target_vehicle_ai_control_index;
-    if (pointer_restored && previous_strategy_still_valid &&
-        current_strategy != previous_strategy) {
-      pointer_restored = UnrealWriteObjectPropertyExpected(
-          g_swap_journal.target_controller, L"_VehicleAiControl",
-          current_strategy, previous_strategy);
-      current_strategy = pointer_restored ? previous_strategy
-                                          : current_strategy;
-    } else if (pointer_restored && !previous_strategy && current_strategy) {
-      pointer_restored = UnrealWriteObjectPropertyExpected(
-          g_swap_journal.target_controller, L"_VehicleAiControl",
-          current_strategy, nullptr);
-      if (pointer_restored) current_strategy = nullptr;
-    } else if (previous_strategy && !previous_strategy_still_valid) {
-      pointer_restored = false;
+    if (ok) ok=ReadOptionalObject(g_swap_journal.target_controller,L"_VehicleAiControl",
+        &g_swap_journal.restored_target_vehicle_ai_control);
+    if (ok && g_swap_journal.target_vehicle_navigation_captured) {
+      ok=NativeRestoreVehicleAiNavigation(g_swap_journal.previous_target_vehicle_navigation);
+      Log(LogLevel::kInfo,"[SquadSwitch] native vehicle navigation rollback=%s original=%d",
+          ok ? "pass":"fail",g_swap_journal.previous_target_vehicle_navigation.mode);
     }
-
-    if (!pointer_restored) {
-      ok = UnrealCallExactVoid(g_swap_journal.target_controller,
-                               g_swap_journal.ai_create_vehicle_control) && ok;
-      current_strategy = nullptr;
-      ok = ReadOptionalObject(g_swap_journal.target_controller,
-                              L"_VehicleAiControl", &current_strategy) && ok;
-      if (previous_strategy && !current_strategy) ok = false;
-      if (!previous_strategy && current_strategy) {
-        const bool cleared = UnrealWriteObjectPropertyExpected(
-            g_swap_journal.target_controller, L"_VehicleAiControl",
-            current_strategy, nullptr);
-        ok = cleared && ok;
-        if (cleared) current_strategy = nullptr;
-      }
-    }
-    g_swap_journal.restored_target_vehicle_ai_control = current_strategy;
   }
   if (ok && (g_swap_journal.target_ai_lifecycle_rebind_started ||
              g_swap_journal.target_sensor_rebind_started)) {
@@ -4756,6 +4748,67 @@ bool WfcSwapOperations::ActivateTargetWeaponShooter(void* pawn) noexcept {
          active_weapon == weapon;
 }
 
+bool WfcSwapOperations::PrepareInventoryWeaponAnimators() noexcept {
+  const auto original_pairs=[&](){
+    return ControllerPawn(g_swap_journal.player_controller)==g_swap_journal.player_pawn &&
+        PawnController(g_swap_journal.player_pawn)==g_swap_journal.player_controller &&
+        ControllerPawn(g_swap_journal.target_controller)==g_swap_journal.target_pawn &&
+        PawnController(g_swap_journal.target_pawn)==g_swap_journal.target_controller &&
+        RoleMappingMatches(g_swap_journal.previous_mapping) &&
+        NativePlayerInputHeld(g_swap_journal.player_move_input) && NativePlayerInputHeld(g_swap_journal.player_look_input);
+  };
+  if(g_weapon_animator_recovery.pending) {
+    g_swap_journal.animator_preparation_dirty=true;
+    return false;
+  }
+  const auto prepare=[&](void* pawn,auto& entries,uint32_t count) {
+    if(count>entries.size()) { g_swap_journal.animator_preparation_dirty=true;return false; }
+    for(uint32_t i=0;i<count;++i) {
+      auto& entry=entries[i];
+      if(!entry.retention.needs_animator)continue;
+      if(!original_pairs()) {
+        g_swap_journal.animator_preparation_dirty=g_swap_journal.animator_preparation_committed;
+        return false;
+      }
+      if(!NativeWeaponRetentionStable(entry.retention))return false;
+      const auto result=NativePrepareWeaponAnimator(g_executable,
+          g_game_thread.load(std::memory_order_relaxed),pawn,entry.weapon,
+          entry.desired_data,&g_weapon_animator_recovery);
+      Log(LogLevel::kInfo,"[SquadSwitch] animator preparation pawn=%lu weapon=%lu result=%u recovery=%u",
+          static_cast<unsigned long>(UnrealObjectIndex(pawn)),static_cast<unsigned long>(entry.object_index),
+          static_cast<unsigned>(result),g_weapon_animator_recovery.pending ? 1u:0u);
+      if(result!=NativePlayerServiceResult::kApplied) {
+        g_swap_journal.animator_preparation_dirty=result==NativePlayerServiceResult::kStateMismatch || g_weapon_animator_recovery.pending;
+        return false;
+      }
+      g_swap_journal.animator_preparation_committed=true;
+      NativeWeaponRetention refreshed{};
+      if(!original_pairs() || !NativeCaptureWeaponRetention(g_executable,g_game_thread.load(std::memory_order_relaxed),
+          pawn,entry.weapon,entry.desired_data,entry.data_cache.kind,&refreshed) ||
+          refreshed.needs_animator || !refreshed.services[0]) {
+        g_swap_journal.animator_preparation_dirty=true;return false;
+      }
+      // Native InitializeOwnerAnimator keeps this character-owned service on
+      // subsequent role changes. Adopt only the new root into the weak baseline;
+      // no other service, tuning, controller or inventory change is permitted.
+      auto expected=entry.retention;
+      expected.services[0]=refreshed.services[0];expected.indices[0]=refreshed.indices[0];expected.needs_animator=false;
+      if(!SameWeaponRetentionIdentity(expected,refreshed)) {
+        g_swap_journal.animator_preparation_dirty=true;return false;
+      }
+      entry.retention=refreshed;
+    }
+    return true;
+  };
+  if(!prepare(g_swap_journal.player_pawn,g_swap_journal.player_inventory_weapons,g_swap_journal.player_inventory_weapon_count) ||
+      !prepare(g_swap_journal.target_pawn,g_swap_journal.target_inventory_weapons,g_swap_journal.target_inventory_weapon_count))return false;
+  if(!original_pairs()) {
+    g_swap_journal.animator_preparation_dirty=g_swap_journal.animator_preparation_committed;
+    return false;
+  }
+  return true;
+}
+
 bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
   if (!InventoryCaptureStillCurrent(
           g_swap_journal.player_pawn,
@@ -4852,6 +4905,11 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
         return false;
       }
       entry.data_cache=latest_cache;
+      if (!NativeWeaponRetentionStable(entry.retention)) {
+        Log(LogLevel::kWarning,"[SquadSwitch] retained weapon services changed before tuning item=%lu",
+            static_cast<unsigned long>(entry.object_index));
+        return false;
+      }
       if (entry.heat_state_captured) {
         NativeWeaponModifiers latest_modifiers;
         if (!NativeCaptureWeaponModifiers(g_game_thread.load(std::memory_order_relaxed),pawn,entry.weapon,&latest_modifiers) ||
@@ -4868,12 +4926,10 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
       uint8_t current_type = 0;
       void* current_data = nullptr;
       float current_heat = 0.0f;
-      if (!UnrealCallVoidByte(entry.weapon, L"SetWeaponDataType", L"Type",
-                              role))
+      if (NativeAssignWeaponRoleData(entry.role_data,false)!=NativePlayerServiceResult::kApplied)
         return false;
-      // The preservation-safe role path must provide the authored interval
-      // BEFORE heat callbacks. Do not depend on UpdateData rebuilding this
-      // existing weapon/lerper, or expose the old role's interval to callbacks.
+      // Apply authored tuning to the existing weapon/lerper. Never replay the
+      // stock UpdateData construction/reset tail on a retained squad weapon.
       if (NativeRestoreWeaponProgress(entry.progress,entry.desired_data,false)!=NativePlayerServiceResult::kApplied)
         return false;
       if (NativeRetargetWeaponDataCache(entry.data_cache,false)!=NativePlayerServiceResult::kApplied)
@@ -4893,26 +4949,27 @@ bool WfcSwapOperations::ApplyInventoryWeaponRoles() noexcept {
           return false;
         NativeWeaponModifiers retained;
         if (!NativeCaptureWeaponModifiers(g_game_thread.load(std::memory_order_relaxed),pawn,entry.weapon,&retained) ||
-            !SameWeaponModifierIdentity(entry.modifiers,retained)) {
+            !SameWeaponModifierRuntime(entry.modifiers,retained)) {
           Log(LogLevel::kWarning,"[SquadSwitch] tuning replaced or retuned live heat modifiers item=%lu",
               static_cast<unsigned long>(entry.object_index));
           return false;
         }
-        if (NativeSyncWeaponHeat(pawn,entry.weapon,entry.current_heat)!=NativePlayerServiceResult::kApplied ||
-            NativeRestoreWeaponModifiers(entry.modifiers)!=NativePlayerServiceResult::kApplied ||
-            !UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
+        // No ResetHeatProperties/SyncCurrentHeat is needed: the custom Data
+        // assignment does not touch heat or enter a weapon animation state.
+        // Preserve the actual service, including its current state and timers.
+        if (!UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
                                      &current_heat) ||
             std::fabs(current_heat - entry.current_heat) > 0.001f)
           return false;
       }
-      // Heat state changes can dispatch weapon/animation callbacks. Preserve
-      // the final runtime progress as well as supplying correct tuning on entry.
+      // Verify final tuning/ammo and retained services after all publications.
       if (NativeRestoreWeaponProgress(entry.progress,entry.desired_data,false)!=NativePlayerServiceResult::kApplied ||
           NativeRetargetWeaponAmmo(entry.ammo,false)!=NativePlayerServiceResult::kApplied ||
           !UnrealReadByteProperty(entry.weapon, L"WeaponDataType",
                                   &current_type) ||
           !UnrealReadObjectProperty(entry.weapon, L"Data", &current_data) ||
-          current_type != role || current_data != entry.desired_data)
+          current_type != role || current_data != entry.desired_data ||
+          !NativeWeaponRetentionStable(entry.retention))
         return false;
     }
     return true;
@@ -4945,8 +5002,7 @@ bool WfcSwapOperations::RestoreInventoryWeaponRoles() noexcept {
                        entry.weapon_heat_index;
       }
       restored = restored &&
-                 UnrealCallVoidByte(entry.weapon, L"SetWeaponDataType", L"Type",
-                                    entry.previous_data_type) &&
+                 NativeAssignWeaponRoleData(entry.role_data,true)==NativePlayerServiceResult::kApplied &&
                  NativeRestoreWeaponProgress(entry.progress,entry.previous_data,true)==NativePlayerServiceResult::kApplied &&
                  NativeRetargetWeaponAmmo(entry.ammo,true)==NativePlayerServiceResult::kApplied &&
                  NativeRetargetWeaponDataCache(entry.data_cache,true)==NativePlayerServiceResult::kApplied;
@@ -4964,9 +5020,7 @@ bool WfcSwapOperations::RestoreInventoryWeaponRoles() noexcept {
           restored =
               restored_heat_object==entry.weapon_heat && restored_heat_index==entry.weapon_heat_index &&
               NativeCaptureWeaponModifiers(g_game_thread.load(std::memory_order_relaxed),pawn,entry.weapon,&retained) &&
-              SameWeaponModifierIdentity(entry.modifiers,retained) &&
-              NativeSyncWeaponHeat(pawn,entry.weapon,entry.current_heat)==NativePlayerServiceResult::kApplied &&
-              NativeRestoreWeaponModifiers(entry.modifiers)==NativePlayerServiceResult::kApplied &&
+              SameWeaponModifierRuntime(entry.modifiers,retained) &&
               UnrealReadFloatProperty(entry.weapon_heat, L"CurrentHeat",
                                       &restored_heat) &&
               std::fabs(restored_heat - entry.current_heat) <= 0.001f;
@@ -4980,7 +5034,7 @@ bool WfcSwapOperations::RestoreInventoryWeaponRoles() noexcept {
                  UnrealReadObjectProperty(entry.weapon, L"Data",
                                           &restored_data) &&
                  restored_type == entry.previous_data_type &&
-                 restored_data == entry.previous_data;
+                 restored_data == entry.previous_data && NativeWeaponRetentionStable(entry.retention);
       if (restored) entry.changed = false;
       ok = restored && ok;
     }
@@ -5012,10 +5066,8 @@ bool WfcSwapOperations::RestoreDeferredRuntimeState() noexcept {
       const bool target_restored =
           UnrealReadStructProperty(g_swap_journal.target_pawn,
                                    L"_CurrentCharacter", &target_current) &&
-          UnrealCallExactVoidStruct(
-              g_swap_journal.target_pri,
-              g_swap_journal.player_set_current_character, L"Value",
-              target_current);
+          NativeAssignCurrentCharacter(g_swap_journal.target_pri,
+              g_swap_journal.target_pawn)==NativePlayerServiceResult::kApplied;
       if (target_restored)
         g_swap_journal.target_current_identity_updated = false;
       restored = target_restored && restored;
@@ -5025,10 +5077,8 @@ bool WfcSwapOperations::RestoreDeferredRuntimeState() noexcept {
       const bool current_restored =
           UnrealReadStructProperty(g_swap_journal.player_pawn,
                                    L"_CurrentCharacter", &player_current) &&
-          UnrealCallExactVoidStruct(
-              g_swap_journal.player_pri,
-              g_swap_journal.player_set_current_character, L"Value",
-              player_current);
+          NativeAssignCurrentCharacter(g_swap_journal.player_pri,
+              g_swap_journal.player_pawn)==NativePlayerServiceResult::kApplied;
       if (current_restored)
         g_swap_journal.player_current_identity_updated = false;
       restored = current_restored && restored;
@@ -5106,6 +5156,22 @@ bool WfcSwapOperations::RestoreDeferredRuntimeState() noexcept {
       g_swap_journal.runtime_services_restore_pending = false;
     }
     ok = restored && ok;
+  }
+
+  if (ok && g_swap_journal.target_world_state_refresh_started) {
+    // RestoreOriginalGraph has restored reciprocal ownership; the deferred
+    // inventory/service restoration above must finish before refreshing the
+    // planner's weapon/overheat/form cache. Never refresh the crossed graph
+    // with original inventory, or resume planning after a dirty failure.
+    if (!g_swap_journal.target_lifecycle_was_proxy) {
+      const auto result=NativeRefreshAiWorldState(g_swap_journal.target_controller,
+          g_swap_journal.target_pawn,g_swap_journal.player_move_input,g_swap_journal.player_look_input);
+      Log(LogLevel::kInfo,"[SquadSwitch] native AI world-state rollback result=%u",static_cast<unsigned>(result));
+      ok=result==NativeAiWorldStateResult::kApplied;
+    }
+    // A physical-player proxy has no audited native AI world-state refresh.
+    // Its normal-AI adapter remains a separate mandatory admission gate.
+    if (ok) g_swap_journal.target_world_state_refresh_started=false;
   }
 
   if (ok && g_swap_journal.camera_restore_pending) {
@@ -5285,12 +5351,21 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
       if (!RoleMappingMatches(g_swap_journal.previous_mapping) ||
           !NativePlayerFormIsCurrent(g_swap_journal.player_controller, g_swap_journal.player_pawn))
         return CharacterSwapApplyResult::kFailedNoMutation;
+      // This is the first atomic-commit stage, NOT the prior preparation tick.
+      // All lazy animator initialization finishes while both original control
+      // pairs are still intact. Never detach a controller after dirty recovery.
+      if(!PrepareInventoryWeaponAnimators())
+        return g_swap_journal.animator_preparation_dirty || g_swap_journal.animator_preparation_committed
+            ? CharacterSwapApplyResult::kFailedNeedsRollback:CharacterSwapApplyResult::kFailedNoMutation;
       g_swap_journal.player_form_restore_pending = true;
       const auto form_exit = NativeLeavePlayerForm(g_swap_journal.player_controller,
           g_swap_journal.player_pawn, g_swap_journal.player_move_input, g_swap_journal.player_look_input);
       if (form_exit == NativePlayerFormResult::kRejected) {
         g_swap_journal.player_form_restore_pending = false;
-        return CharacterSwapApplyResult::kFailedNoMutation;
+        // Lazy service preparation may already have committed a character's
+        // animator; still run this stage's restored-graph verification.
+        return g_swap_journal.animator_preparation_committed ? CharacterSwapApplyResult::kFailedNeedsRollback
+            : CharacterSwapApplyResult::kFailedNoMutation;
       }
       if (form_exit != NativePlayerFormResult::kApplied) {
         g_swap_journal.graph_restore_failed = true;
@@ -5390,17 +5465,16 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
       // a live handoff, including the original mission's GetCharacterName().
       // Arm each restoration before crossing the engine mutation boundary.
       g_swap_journal.player_current_identity_updated = true;
-      if (!UnrealCallExactVoidStruct(
-              g_swap_journal.player_pri,
-              g_swap_journal.player_set_current_character, L"Value",
-              target_current))
+      const auto identity_result=NativeAssignCurrentCharacter(
+          g_swap_journal.player_pri,g_swap_journal.target_pawn);
+      Log(LogLevel::kInfo,"[SquadSwitch] native current identity result=%u pri=%p pawn=%p",
+          static_cast<unsigned>(identity_result),g_swap_journal.player_pri,g_swap_journal.target_pawn);
+      if (identity_result!=NativePlayerServiceResult::kApplied)
         return CharacterSwapApplyResult::kFailedNeedsRollback;
       if (g_swap_journal.target_pri) {
         g_swap_journal.target_current_identity_updated = true;
-        if (!UnrealCallExactVoidStruct(
-                g_swap_journal.target_pri,
-                g_swap_journal.player_set_current_character, L"Value",
-                player_current))
+        if (NativeAssignCurrentCharacter(g_swap_journal.target_pri,
+                g_swap_journal.player_pawn)!=NativePlayerServiceResult::kApplied)
           return CharacterSwapApplyResult::kFailedNeedsRollback;
       }
 
@@ -5420,6 +5494,9 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
         Log(LogLevel::kError,"[SquadSwitch] runtime rebind stopped stage=%s; rollback required",stage);
         return CharacterSwapApplyResult::kFailedNeedsRollback;
       };
+      // Native service/weapon callbacks can change planning inputs before a
+      // later step fails. Own their cache restoration before the first call.
+      g_swap_journal.target_world_state_refresh_started=true;
       if (!RebindPlayerServices(g_swap_journal.target_pawn,
           g_swap_journal.hud,g_swap_journal.hud)) return failed("player-services");
       if (g_swap_journal.former_player_requires_proxy) {
@@ -5443,17 +5520,19 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
       } else {
         // A call can mutate its service before failing its result checks.
         // Keep ownership of this rollback step even when it reports failure.
+        if (NativeAiDrainStoppedPlan(g_swap_journal.target_controller)!=NativeAiPlanningResult::kApplied)
+          return failed("AI-plan-drain-before-vehicle");
         g_swap_journal.target_vehicle_ai_control_rebuilt = true;
-        const bool vehicle_control_rebuilt = UnrealCallExactVoid(
-            g_swap_journal.target_controller,
-            g_swap_journal.ai_create_vehicle_control);
+        const auto vehicle_result=NativeRebuildVehicleAi(g_swap_journal.target_controller,
+            g_swap_journal.player_pawn,g_swap_journal.player_move_input,g_swap_journal.player_look_input);
+        Log(LogLevel::kInfo,"[SquadSwitch] native vehicle-AI rebuild result=%u",static_cast<unsigned>(vehicle_result));
+        const bool vehicle_control_rebuilt=vehicle_result==NativeVehicleAiResult::kApplied;
         void* replacement_vehicle_control = nullptr;
         const bool vehicle_control_valid =
             ReadOptionalObject(g_swap_journal.target_controller,
                                L"_VehicleAiControl",
                                &replacement_vehicle_control) &&
-            (!g_swap_journal.previous_target_vehicle_ai_control ||
-             replacement_vehicle_control != nullptr);
+            NativeVehicleAiMatchesPawn(g_swap_journal.target_controller,g_swap_journal.player_pawn);
         g_swap_journal.replacement_target_vehicle_ai_control =
             replacement_vehicle_control;
         if (!vehicle_control_rebuilt || !vehicle_control_valid ||
@@ -5478,6 +5557,12 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
           NativePlayerServiceResult::kApplied) return failed("old-ability-hud");
       if (NativeSetBuffHud(g_swap_journal.player_controller,g_swap_journal.player_pawn,nullptr)!=
           NativePlayerServiceResult::kApplied) return failed("old-buff-hud");
+      if (!g_swap_journal.former_player_requires_proxy) {
+        const auto result=NativeRefreshAiWorldState(g_swap_journal.target_controller,
+            g_swap_journal.player_pawn,g_swap_journal.player_move_input,g_swap_journal.player_look_input);
+        Log(LogLevel::kInfo,"[SquadSwitch] native AI world-state refresh result=%u",static_cast<unsigned>(result));
+        if (result!=NativeAiWorldStateResult::kApplied) return failed("AI-world-state");
+      }
       g_swap_journal.services_rebound = true;
       return CharacterSwapApplyResult::kApplied;
     }
@@ -5528,6 +5613,11 @@ CharacterSwapApplyResult WfcSwapOperations::ApplyMutation(
     }
     case CharacterSwapMutation::kReleaseTransitionGuards: {
       bool ok = true;
+      if (!g_swap_journal.former_player_requires_proxy &&
+          !NativeAiWorldStateMatchesPawn(g_swap_journal.target_controller,g_swap_journal.player_pawn)) {
+        Log(LogLevel::kError,"[SquadSwitch] AI world-state changed before resume; rollback required");
+        return CharacterSwapApplyResult::kFailedNeedsRollback;
+      }
       if (g_swap_journal.target_ai_suspended &&
           !g_swap_journal.former_player_requires_proxy) {
         const bool resumed = NativeAiResumePlanRunner(g_swap_journal.target_controller) ==
@@ -5661,6 +5751,14 @@ bool WfcSwapOperations::RevertMutation(
       if (!ok) g_swap_journal.graph_restore_failed = true;
       return ok;
     case CharacterSwapMutation::kDetachOriginalControlLinks: {
+      if(g_swap_journal.animator_preparation_dirty || g_weapon_animator_recovery.pending) {
+        // No controller detachment was attempted in this failure path. Keep
+        // input/AI quiesced if the initializer lost ownership or world identity.
+        if(g_weapon_animator_recovery.pending)
+          UnrealFinishObjectCloneProperty(&g_weapon_animator_recovery,false);
+        g_swap_journal.graph_restore_failed=true;
+        return false;
+      }
       const bool restored = RestoreOriginalGraph() && RestoreDeferredRuntimeState();
       if (!restored) g_swap_journal.graph_restore_failed = true;
       return restored;
@@ -5930,6 +6028,10 @@ bool WfcSwapOperations::VerifyCommittedGraph(
                           L"_VehicleAiControl", &vehicle_ai_control) ||
       vehicle_ai_control !=
           g_swap_journal.replacement_target_vehicle_ai_control ||
+      (g_swap_journal.former_player_requires_proxy ? vehicle_ai_control!=nullptr
+          : !NativeVehicleAiMatchesPawn(g_swap_journal.target_controller,g_swap_journal.player_pawn)) ||
+      (!g_swap_journal.former_player_requires_proxy &&
+          !NativeAiWorldStateMatchesPawn(g_swap_journal.target_controller,g_swap_journal.player_pawn)) ||
       !CollisionRoleIs(g_swap_journal.target_collision_controller, true) ||
       !CollisionRoleIs(g_swap_journal.player_collision_controller, false) ||
       !InventoryWeaponRolesMatch(
@@ -5969,6 +6071,7 @@ bool WfcSwapOperations::VerifyRestoredGraph(
           g_swap_journal.target_controller ||
       g_squad_pawns[request.squad_slot] != g_swap_journal.target_pawn ||
       g_swap_journal.target_ai_lifecycle_rebind_started ||
+      g_swap_journal.target_world_state_refresh_started ||
       g_swap_journal.target_ai_lifecycle_rebound ||
       g_swap_journal.target_sensor_rebind_started ||
       g_swap_journal.target_sensor_rebound ||
@@ -5998,7 +6101,9 @@ bool WfcSwapOperations::VerifyRestoredGraph(
       (ReadOptionalObject(g_swap_journal.target_controller,
                           L"_VehicleAiControl", &vehicle_ai_control) &&
        vehicle_ai_control ==
-           g_swap_journal.restored_target_vehicle_ai_control);
+           g_swap_journal.restored_target_vehicle_ai_control &&
+       (g_swap_journal.target_lifecycle_was_proxy ? vehicle_ai_control==nullptr
+           : NativeVehicleAiMatchesPawn(g_swap_journal.target_controller,g_swap_journal.target_pawn)));
   return vehicle_strategy_restored &&
          ResolveLiveCharacterHash(g_swap_journal.player_controller,
                                   g_swap_journal.player_pawn, &player_hash) &&
@@ -6088,7 +6193,7 @@ bool WfcSwapOperations::ExitFailedClosed(
     if (!g_role_proxy_failed_closed && !g_role_proxy_death_pending &&
         !g_world_command_gate_pending && !DeferredCheckpointFailedClosed())
       SetCommandAcceptance(true);
-    g_swap_journal = {};
+    ResetSwapSnapshot(g_swap_journal);
     return true;
   }
   if (!VerifyRestoredGraph(request, capture)) return false;
@@ -6103,7 +6208,7 @@ bool WfcSwapOperations::ExitFailedClosed(
   if (!g_role_proxy_failed_closed && !g_role_proxy_death_pending &&
       !g_world_command_gate_pending && !DeferredCheckpointFailedClosed())
     SetCommandAcceptance(true);
-  g_swap_journal = {};
+  ResetSwapSnapshot(g_swap_journal);
   return true;
 }
 
@@ -6264,9 +6369,28 @@ bool CompleteDeferredCheckpointRestore() {
   }
   g_switch_in_progress = false;
   g_switch_snapshot_pending = false;
-  g_swap_journal = {};
-  if (!MarkDeferredCheckpointNativeGraphVerified(true) ||
-      !ReplayDeferredCheckpoint()) {
+  ResetSwapSnapshot(g_swap_journal);
+  const CheckpointRestoreJournal replay_owner = g_checkpoint_restore;
+  const bool replayed = MarkDeferredCheckpointNativeGraphVerified(replay_owner.checkpoint, true) &&
+                        ReplayDeferredCheckpoint();
+  // Native writer callbacks can reset the world or replace this journal. An
+  // old frame must not erase a new request or reopen its input gate afterward.
+  if (!g_checkpoint_restore.active ||
+      g_checkpoint_restore.checkpoint.generation != replay_owner.checkpoint.generation ||
+      g_checkpoint_restore.swap_request_id != replay_owner.swap_request_id ||
+      g_world_info != replay_owner.world ||
+      !UnrealObjectValid(g_world_info) ||
+      UnrealObjectIndex(g_world_info) != replay_owner.world_object_index) {
+    Log(LogLevel::kWarning, "[Checkpoint] stale writer return ignored after recovery/world changed");
+    return false;
+  }
+  if (!replayed || CharacterRoleMappingActive() ||
+      g_controller != replay_owner.controller ||
+      g_pawn != replay_owner.physical_player_pawn ||
+      !UnrealObjectValid(g_controller) || !UnrealObjectValid(g_pawn) ||
+      UnrealObjectIndex(g_controller) != replay_owner.controller_object_index ||
+      UnrealObjectIndex(g_pawn) != replay_owner.physical_player_pawn_object_index ||
+      ControllerPawn(g_controller) != g_pawn || PawnController(g_pawn) != g_controller) {
     FailDeferredCheckpointClosed();
     SetCommandAcceptance(false);
     DiscardAllCommands();
@@ -6280,7 +6404,7 @@ bool CompleteDeferredCheckpointRestore() {
     SetCommandAcceptance(true);
   }
   Log(LogLevel::kInfo,
-      "[Checkpoint] native player graph restored and deferred save completed");
+      "[Checkpoint] native player graph restored and deferred writer dispatched; game owns disk completion");
   return true;
 }
 
@@ -6324,7 +6448,7 @@ void DriveCharacterSwap(ULONGLONG now) {
           Log(LogLevel::kWarning,
               "[SquadSwitch] synchronized snapshot published; input remains closed for lifecycle recovery");
         }
-        g_swap_journal = {};
+        ResetSwapSnapshot(g_swap_journal);
       }
     }
   } else if (status.phase == CharacterSwapPhase::kFailedClosed &&
@@ -7575,7 +7699,7 @@ void ShutdownGameBridge() {
   g_role_proxy_death_pending = false;
   g_world_command_gate_pending = false;
   g_checkpoint_restore = {};
-  g_swap_journal = {};
+  ResetSwapSnapshot(g_swap_journal);
   g_pending_ability_release = {};
   SetSnapshotStage("idle");
 }

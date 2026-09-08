@@ -7,6 +7,8 @@
 #include "LuaBridge.h"
 #include "Log.h"
 #include "Panel.h"
+#include "NativeState.h"
+#include "NativeMap.h"
 
 struct lua_State;
 
@@ -20,6 +22,9 @@ using LuaPushCClosure = void(__cdecl*)(lua_State*, LuaCFunction, int);
 using LuaSetField = void(__cdecl*)(lua_State*, int, const char*);
 using LuaSetGlobal = void(__cdecl*)(lua_State*, const char*);
 using LuaLoadFileX = int(__cdecl*)(lua_State*, const char*, const char*);
+using LuaPushLString = const char*(__cdecl*)(lua_State*, const char*, size_t);
+using LuaCheckInteger = int64_t(__cdecl*)(lua_State*, int);
+using LuaPushInteger = void(__cdecl*)(lua_State*, int64_t);
 
 LuaCheckLString g_check_lstring = nullptr;
 LuaCreateTable g_create_table = nullptr;
@@ -28,6 +33,9 @@ LuaPushCClosure g_push_cclosure = nullptr;
 LuaSetField g_set_field = nullptr;
 LuaSetGlobal g_set_global = nullptr;
 LuaLoadFileX g_real_loadfilex = nullptr;
+LuaPushLString g_push_lstring = nullptr;
+LuaCheckInteger g_check_integer = nullptr;
+LuaPushInteger g_push_integer = nullptr;
 INIT_ONCE g_lua_once = INIT_ONCE_STATIC_INIT;
 volatile LONG g_hook_installed = 0;
 volatile LONG g_global_logged = 0;
@@ -51,15 +59,18 @@ BOOL CALLBACK InitializeLuaApi(PINIT_ONCE, PVOID, PVOID*) {
   g_push_cclosure = LuaSymbol<LuaPushCClosure>(lua, "lua_pushcclosure");
   g_set_field = LuaSymbol<LuaSetField>(lua, "lua_setfield");
   g_set_global = LuaSymbol<LuaSetGlobal>(lua, "lua_setglobal");
+  g_push_lstring = LuaSymbol<LuaPushLString>(lua, "lua_pushlstring");
+  g_check_integer = LuaSymbol<LuaCheckInteger>(lua, "luaL_checkinteger");
+  g_push_integer = LuaSymbol<LuaPushInteger>(lua, "lua_pushinteger");
   return g_check_lstring && g_create_table && g_push_boolean &&
-         g_push_cclosure && g_set_field && g_set_global;
+         g_push_cclosure && g_set_field && g_set_global && g_push_lstring && g_check_integer && g_push_integer;
 }
 
 bool EnsureLuaApi() {
   return InitOnceExecuteOnce(&g_lua_once, InitializeLuaApi, nullptr, nullptr) !=
              FALSE &&
          g_check_lstring && g_create_table && g_push_boolean &&
-         g_push_cclosure && g_set_field && g_set_global;
+         g_push_cclosure && g_set_field && g_set_global && g_push_lstring && g_check_integer && g_push_integer;
 }
 
 int __cdecl SendState(lua_State* state) {
@@ -70,10 +81,44 @@ int __cdecl SendState(lua_State* state) {
   return 1;
 }
 
+int __cdecl NativeRunState(lua_State* state) {
+  const auto snapshot = isaacds::ReadNativeRunState();
+  g_push_lstring(state, snapshot.data(), snapshot.size());
+  return 1;
+}
+
+int __cdecl NativeRoomFlags(lua_State* state) {
+  const auto snapshot = isaacds::ReadNativeRoomFlags();
+  g_push_lstring(state, snapshot.data(), snapshot.size());
+  return 1;
+}
+
+int __cdecl NativeHits(lua_State* state) {
+  const int64_t restore=g_check_integer(state,1);
+  const int value=restore>=-1 && restore<=100000000 ?
+      isaacds::NativeHitCount(static_cast<int>(restore)) : -1;
+  g_push_integer(state,value);
+  return 1;
+}
+
+int __cdecl NativeMap(lua_State* state) {
+  const std::string result=isaacds::ReadNativeMapCommands();
+  g_push_lstring(state,result.data(),result.size());
+  return 1;
+}
+
 void PublishSendGlobal(lua_State* state) {
   if (!state || !EnsureLuaApi()) return;
   g_push_cclosure(state, SendState, 0);
   g_set_global(state, "IsaacSecondScreenSend");
+  g_push_cclosure(state, NativeRunState, 0);
+  g_set_global(state, "IsaacSecondScreenNativeState");
+  g_push_cclosure(state, NativeRoomFlags, 0);
+  g_set_global(state, "IsaacSecondScreenRoomFlags");
+  g_push_cclosure(state, NativeHits, 0);
+  g_set_global(state, "IsaacSecondScreenHits");
+  g_push_cclosure(state, NativeMap, 0);
+  g_set_global(state, "IsaacSecondScreenNativeMap");
   if (InterlockedCompareExchange(&g_global_logged, 1, 0) == 0) {
     isaacds::Log(isaacds::LogLevel::kInfo,
                  "[LuaBridge] native state-submit global published");
@@ -82,6 +127,8 @@ void PublishSendGlobal(lua_State* state) {
 
 int __cdecl HookLuaLoadFileX(lua_State* state, const char* filename,
                              const char* mode) {
+  isaacds::InstallCompanionAchievementCompatibility();
+  isaacds::InstallNativeMapObserver();
   PublishSendGlobal(state);
   return g_real_loadfilex ? g_real_loadfilex(state, filename, mode) : 1;
 }

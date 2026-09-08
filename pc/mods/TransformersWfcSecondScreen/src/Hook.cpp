@@ -26,17 +26,46 @@ bool Rel32(uint8_t* output, const uint8_t* instruction,
 
 bool InstallInlineHook(InlineHook* hook, void* target, void* replacement,
                        const uint8_t* expected, size_t stolen_bytes,
-                       void** original) {
+                       void** original,
+                       std::initializer_list<size_t> relative_calls) {
   if (!hook || !target || !replacement || !expected || !original ||
       stolen_bytes < 5 ||
       stolen_bytes > sizeof(hook->original) || hook->target ||
       std::memcmp(target, expected, stolen_bytes) != 0)
     return false;
+  // Only explicitly audited E8 instruction boundaries are accepted. This is
+  // not a disassembler: existing prolog-only callers retain their old path.
+  size_t previous_end = 0;
+  for (const size_t offset : relative_calls) {
+    if (offset < previous_end || offset > stolen_bytes - 5 ||
+        expected[offset] != 0xE8)
+      return false;
+    int32_t displacement = 0;
+    std::memcpy(&displacement, expected + offset + 1, 4);
+    const uintptr_t destination = reinterpret_cast<uintptr_t>(target) +
+        offset + 5 + static_cast<uintptr_t>(displacement);
+    if (destination >= reinterpret_cast<uintptr_t>(target) &&
+        destination < reinterpret_cast<uintptr_t>(target) + stolen_bytes)
+      return false;  // Never branch back into bytes this hook will overwrite.
+    previous_end = offset + 5;
+  }
   auto* trampoline = static_cast<uint8_t*>(VirtualAlloc(
       nullptr, stolen_bytes + 5, MEM_COMMIT | MEM_RESERVE,
       PAGE_EXECUTE_READWRITE));
   if (!trampoline) return false;
   std::memcpy(trampoline, target, stolen_bytes);
+  for (const size_t offset : relative_calls) {
+    int32_t displacement = 0;
+    std::memcpy(&displacement, expected + offset + 1, 4);
+    const uintptr_t destination = reinterpret_cast<uintptr_t>(target) +
+        offset + 5 + static_cast<uintptr_t>(displacement);
+    if (!Rel32(trampoline + offset, trampoline + offset,
+               reinterpret_cast<void*>(destination))) {
+      VirtualFree(trampoline, 0, MEM_RELEASE);
+      return false;
+    }
+    trampoline[offset] = 0xE8;  // Rel32 emits E9; retain CALL stack semantics.
+  }
   if (!Rel32(trampoline + stolen_bytes, trampoline + stolen_bytes,
              static_cast<uint8_t*>(target) + stolen_bytes)) {
     VirtualFree(trampoline, 0, MEM_RELEASE);

@@ -5,6 +5,15 @@ import org.junit.Test
 
 class NativePanelTouchSafetyTest {
     @Test
+    fun replayingACompletedContactCannotRecreateItsPressedState() {
+        val gate = NativeGestureCompletionGate()
+        assertThat(gate.isCompleted(100L)).isFalse()
+        assertThat(gate.accept(downTime = 100L, eventTime = 140L)).isTrue()
+        assertThat(gate.isCompleted(100L)).isTrue()
+        assertThat(gate.isCompleted(200L)).isFalse()
+    }
+
+    @Test
     fun exactTerminalReplayIsRejectedWithoutSuppressingTheNextGesture() {
         val gate = NativeGestureCompletionGate()
 

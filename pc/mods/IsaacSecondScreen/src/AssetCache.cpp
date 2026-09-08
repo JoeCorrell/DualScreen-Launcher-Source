@@ -208,9 +208,31 @@ bool DrawAssetRegion(HDC dc, const std::string& relative_path,
               source_bounds.bottom - source_bounds.top, smooth);
 }
 
-bool DrawSprite(HDC dc, const SpriteFrame* frame, const RECT& bounds) {
+bool DrawSpriteColor(HDC dc, const SpriteFrame* frame, const RECT& bounds, float red, float green, float blue, float alpha) {
+  if(!frame) return false;
+  auto* image=ResolveAsset(frame->asset);if(!image) return false;
+  Gdiplus::ColorMatrix matrix={{{red,0,0,0,0},{0,green,0,0,0},{0,0,blue,0,0},{0,0,0,alpha,0},{0,0,0,0,1}}};
+  Gdiplus::ImageAttributes attributes;attributes.SetColorMatrix(&matrix);
+  Gdiplus::Graphics graphics(dc);
+  graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+  graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+  return graphics.DrawImage(image,Gdiplus::Rect(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),
+      frame->x,frame->y,frame->width,frame->height,Gdiplus::UnitPixel,&attributes)==Gdiplus::Ok;
+}
+
+bool DrawSprite(HDC dc, const SpriteFrame* frame, const RECT& bounds, bool red_room) {
   if (!frame) return false;
   Gdiplus::Image* image = ResolveAsset(frame->asset);
+  if(image && red_room) {
+    // J460 minimap room flag 10 multiplies RGB by (1, 75/255, 75/255).
+    Gdiplus::ColorMatrix matrix={{{1,0,0,0,0},{0,75.0f/255,0,0,0},{0,0,75.0f/255,0,0},{0,0,0,1,0},{0,0,0,0,1}}};
+    Gdiplus::ImageAttributes attributes; attributes.SetColorMatrix(&matrix);
+    Gdiplus::Graphics graphics(dc);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeNearestNeighbor);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+    return graphics.DrawImage(image,Gdiplus::Rect(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top),
+        frame->x,frame->y,frame->width,frame->height,Gdiplus::UnitPixel,&attributes)==Gdiplus::Ok;
+  }
   return image && Draw(dc, image, bounds, frame->x, frame->y, frame->width,
                        frame->height, false);
 }

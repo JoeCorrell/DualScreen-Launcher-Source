@@ -197,25 +197,15 @@ Java_com_wemu_engine_renderer_ASurfaceRenderer_nativeSetWindowBuffer(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_wemu_engine_renderer_ASurfaceRenderer_nativeBeginTransaction(JNIEnv*, jobject) {
+Java_com_wemu_engine_renderer_ASurfaceRenderer_nativeUpdateWindows(
+        JNIEnv* env, jobject, jintArray packedRows, jint count) {
+    if (!packedRows || count <= 0 || count > 65536 ||
+        env->GetArrayLength(packedRows) / 11 < count) return;
+    // Copy before locking. Never retain a pinned Java array across compositor
+    // calls; context lifetime spans creation, filling and applying the batch.
+    std::vector<int32_t> rows(static_cast<size_t>(count) * 11);
+    env->GetIntArrayRegion(packedRows, 0, count * 11, rows.data());
+    if (env->ExceptionCheck()) return;
     std::shared_lock lk(g_ctxMutex);
-    if (auto* r = g_ctx) r->beginTransaction();
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_wemu_engine_renderer_ASurfaceRenderer_nativeApplyTransaction(JNIEnv*, jobject) {
-    std::shared_lock lk(g_ctxMutex);
-    if (auto* r = g_ctx) r->applyTransaction();
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_wemu_engine_renderer_ASurfaceRenderer_nativeUpdateWindow(
-        JNIEnv*, jobject, jlong contentId, jboolean visible, jint zOrder,
-        jint srcL, jint srcT, jint srcR, jint srcB,
-        jint dstL, jint dstT, jint dstR, jint dstB)
-{
-    std::shared_lock lk(g_ctxMutex);
-    if (auto* r = g_ctx) {
-        r->updateWindow((int64_t)contentId, visible, zOrder, srcL, srcT, srcR, srcB, dstL, dstT, dstR, dstB);
-    }
+    if (auto* r = g_ctx) r->updateWindows(rows.data(), static_cast<size_t>(count));
 }

@@ -4,10 +4,7 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import java.lang.ref.WeakReference
 
-internal interface BotwControllerTarget {
-    fun onBotwControllerKey(event: KeyEvent): Boolean
-    fun onBotwControllerMotion(event: MotionEvent): Boolean
-}
+internal typealias BotwControllerTarget = com.dualscreen.companion.api.CompanionControllerTarget
 
 internal object BotwControllerBridge {
     private var target = WeakReference<BotwControllerTarget>(null)
@@ -21,8 +18,8 @@ internal object BotwControllerBridge {
     }
 
     fun dispatchKeyEvent(event: KeyEvent): Boolean =
-        target.get()?.onBotwControllerKey(event) == true
+        target.get()?.onPlzaControllerKey(event) == true
 
     fun dispatchMotionEvent(event: MotionEvent): Boolean =
-        target.get()?.onBotwControllerMotion(event) == true
+        target.get()?.onPlzaControllerMotion(event) == true
 }

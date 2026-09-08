@@ -2,6 +2,12 @@
 
 namespace wfcds {
 
+bool CheckpointGate::TokenMatches(const DeferredCheckpointRequest& request) const noexcept {
+  return request.generation && request.generation == request_.generation &&
+         RequestMatches(request.manager, request.manager_object_index,
+                        request.checkpoint_index);
+}
+
 bool CheckpointGate::RequestMatches(uintptr_t manager,
                                     uint32_t manager_object_index,
                                     int32_t checkpoint_index) const noexcept {
@@ -51,6 +57,7 @@ CheckpointInterceptResult CheckpointGate::Intercept(
   request_.manager_object_index = manager_object_index;
   request_.checkpoint_index = checkpoint_index;
   request_.generation = generation;
+  completed_ = {};
   state_ = CheckpointGateState::kAwaitingNativeRestore;
   return CheckpointInterceptResult::kDeferred;
 }
@@ -65,8 +72,9 @@ bool CheckpointGate::ConsumeNativeRestoreRequest(
 }
 
 bool CheckpointGate::MarkNativeGraphVerified(
+    const DeferredCheckpointRequest& request,
     bool role_mapping_active, bool native_player_graph_valid) noexcept {
-  if (state_ != CheckpointGateState::kNativeRestoreRequested) return false;
+  if (state_ != CheckpointGateState::kNativeRestoreRequested || !TokenMatches(request)) return false;
   if (role_mapping_active || !native_player_graph_valid) {
     FailClosed();
     return false;
@@ -83,24 +91,38 @@ bool CheckpointGate::BeginReplay(
   return true;
 }
 
-bool CheckpointGate::CompleteReplay(uintptr_t manager,
-                                    uint32_t manager_object_index,
+bool CheckpointGate::CaptureReplayToken(DeferredCheckpointRequest* output) const noexcept {
+  if (!output || state_ != CheckpointGateState::kReplayEntered) return false;
+  *output = request_;
+  return true;
+}
+
+bool CheckpointGate::CompleteReplay(const DeferredCheckpointRequest& request,
                                     bool original_returned) noexcept {
-  if (state_ != CheckpointGateState::kReplayEntered ||
-      manager != request_.manager ||
-      manager_object_index != request_.manager_object_index ||
-      !original_returned) {
+  // An old completion must neither finish nor poison a later request for the
+  // same manager/slot. Failure of the currently owned call still fails closed.
+  if (state_ != CheckpointGateState::kReplayEntered || !TokenMatches(request)) return false;
+  if (!original_returned) {
     FailClosed();
     return false;
   }
+  completed_ = request_;
   state_ = CheckpointGateState::kIdle;
   request_ = {};
   return true;
 }
 
-void CheckpointGate::AbortReplay() noexcept {
-  if (state_ == CheckpointGateState::kReplayArmed ||
-      state_ == CheckpointGateState::kReplayEntered)
+bool CheckpointGate::ReplayCompleted(const DeferredCheckpointRequest& request) const noexcept {
+  return state_ == CheckpointGateState::kIdle && request.generation &&
+         completed_.generation == request.generation &&
+         completed_.manager == request.manager &&
+         completed_.manager_object_index == request.manager_object_index &&
+         completed_.checkpoint_index == request.checkpoint_index;
+}
+
+void CheckpointGate::AbortReplay(const DeferredCheckpointRequest& request) noexcept {
+  if (TokenMatches(request) && (state_ == CheckpointGateState::kReplayArmed ||
+      state_ == CheckpointGateState::kReplayEntered))
     FailClosed();
 }
 
@@ -111,6 +133,7 @@ void CheckpointGate::FailClosed() noexcept {
 void CheckpointGate::Reset() noexcept {
   state_ = CheckpointGateState::kIdle;
   request_ = {};
+  completed_ = {};
 }
 
 }  // namespace wfcds

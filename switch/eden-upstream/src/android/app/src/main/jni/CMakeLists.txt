@@ -7,7 +7,6 @@
 add_library(yuzu-android SHARED
     arkham_companion.cpp
     arkham_companion.h
-    botw_companion.cpp
     botw_companion.h
     botw_romfs_assets.cpp
     botw_romfs_assets.h

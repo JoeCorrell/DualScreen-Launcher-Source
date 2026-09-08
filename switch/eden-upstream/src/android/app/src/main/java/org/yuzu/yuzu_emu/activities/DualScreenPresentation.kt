@@ -153,7 +153,7 @@ private class DualScreenCompanionHost(context: android.content.Context) : FrameL
         removeAllViews()
         val content = when (titleId) {
             BOTW_TITLE_ID -> if (BuildConfig.BOTW_DUALSCREEN_ENABLED) {
-                BotwDualScreenCompanionLayout(context)
+                org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.createView(context, "01007EF00011E000")
             } else {
                 WaitingForGameView(context)
             }
@@ -211,65 +211,6 @@ private class SmoDualScreenCompanionLayout(context: android.content.Context) : F
         return Rect(l, t,
             l + ((SmoUiLayout.PLAYER_RIGHT - SmoUiLayout.PLAYER_LEFT) * scale).roundToInt().coerceAtLeast(1),
             t + ((SmoUiLayout.PLAYER_BOTTOM - SmoUiLayout.PLAYER_TOP) * scale).roundToInt().coerceAtLeast(1))
-    }
-}
-
-private class BotwDualScreenCompanionLayout(context: android.content.Context) : FrameLayout(context) {
-    private companion object {
-        private const val DESIGN_WIDTH = 1240f
-        private const val DESIGN_HEIGHT = 1080f
-        private const val PLAYER_LEFT = 813f
-        private const val PLAYER_TOP = 368f
-        private const val PLAYER_RIGHT = 1104f
-        private const val PLAYER_BOTTOM = 954f
-    }
-
-    private val playerView = BotwPlayerRenderView(context)
-    private val companionView = BotwCompanionView(
-        context,
-        onPlayerAppearanceChanged = { appearance, visible ->
-            playerView.setAppearance(appearance, visible)
-        },
-        onPlayerItemAction = playerView::playItemAction,
-        onPlayerHeldItemCountChanged = playerView::syncHeldItemCount
-    )
-
-    init {
-        setBackgroundColor(Color.BLACK)
-        addView(
-            companionView,
-            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        )
-        addView(playerView, LayoutParams(1, 1))
-    }
-
-    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec)
-        val bounds = calculatePlayerBounds(measuredWidth, measuredHeight)
-        playerView.measure(
-            MeasureSpec.makeMeasureSpec(bounds.width(), MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(bounds.height(), MeasureSpec.EXACTLY)
-        )
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val layoutWidth = right - left
-        val layoutHeight = bottom - top
-        companionView.layout(0, 0, layoutWidth, layoutHeight)
-        val bounds = calculatePlayerBounds(layoutWidth, layoutHeight)
-        playerView.layout(bounds.left, bounds.top, bounds.right, bounds.bottom)
-    }
-
-    private fun calculatePlayerBounds(width: Int, height: Int): Rect {
-        if (width <= 0 || height <= 0) return Rect(0, 0, 1, 1)
-        val scale = min(width / DESIGN_WIDTH, height / DESIGN_HEIGHT)
-        val offsetX = (width - DESIGN_WIDTH * scale) * 0.5f
-        val offsetY = (height - DESIGN_HEIGHT * scale) * 0.5f
-        val nextWidth = ((PLAYER_RIGHT - PLAYER_LEFT) * scale).roundToInt().coerceAtLeast(1)
-        val nextHeight = ((PLAYER_BOTTOM - PLAYER_TOP) * scale).roundToInt().coerceAtLeast(1)
-        val nextLeft = (offsetX + PLAYER_LEFT * scale).roundToInt()
-        val nextTop = (offsetY + PLAYER_TOP * scale).roundToInt()
-        return Rect(nextLeft, nextTop, nextLeft + nextWidth, nextTop + nextHeight)
     }
 }
 

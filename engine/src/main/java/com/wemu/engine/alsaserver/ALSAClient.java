@@ -25,12 +25,24 @@ public class ALSAClient {
     private ByteBuffer sharedBuffer;
     private ByteBuffer conversionBuffer;
     private volatile boolean playing = false;
+    private volatile boolean releasing;
     private long streamPtr = 0;
     private final boolean burstAligned;
     private volatile float linearGain = 1.0f;
     private final AudioGain.LoudnessState loudnessState = new AudioGain.LoudnessState();
     private boolean loudnessActive;
     private long lastRecoveryLogMillis;
+    private long lastWriteLogMillis;
+    private long writePackets, partialWrites, writeTimeouts, droppedFrames;
+    private final PcmWritePump writePump = new PcmWritePump() {
+        @Override int write(ByteBuffer data, int byteOffset, int frames) {
+            int accepted = ALSAClient.this.write(streamPtr, data, byteOffset, frames);
+            if (accepted > 0) position += accepted;
+            return accepted;
+        }
+        @Override boolean recover(int error) { return recoverStreamLocked(error); }
+        @Override boolean isPlaying() { return playing && !releasing; }
+    };
 
     public ALSAClient() {
         this(false);
@@ -78,6 +90,7 @@ public class ALSAClient {
     public void release() {
         // Before the lock, so a client mid-flood stops trying rather than
         // queueing up behind the close.
+        releasing = true;
         playing = false;
 
         synchronized (streamLock) {
@@ -98,22 +111,27 @@ public class ALSAClient {
     }
 
     public void prepare() {
-        position = 0;
+        writePackets = partialWrites = writeTimeouts = droppedFrames = 0;
+        lastWriteLogMillis = android.os.SystemClock.elapsedRealtime();
         frameBytes = channelCount * dataType.byteCount;
         release();
 
         if (!isValidBufferSize()) return;
 
         synchronized (streamLock) {
+            position = 0;
+            releasing = false;
             streamPtr = create(
                     dataType.ordinal(), channelCount, sampleRate, bufferSize, burstAligned);
         }
-        if (streamPtr > 0) start();
+        // Native pointers are opaque bits; Android may tag the high byte, which
+        // makes a valid pointer negative as a Java long.
+        if (streamPtr != 0) start();
     }
 
     public void start() {
         synchronized (streamLock) {
-            if (streamPtr > 0 && !playing) {
+            if (streamPtr != 0 && !playing && !releasing) {
                 start(streamPtr);
                 playing = true;
             }
@@ -122,7 +140,7 @@ public class ALSAClient {
 
     public void stop() {
         synchronized (streamLock) {
-            if (streamPtr > 0 && playing) {
+            if (streamPtr != 0 && playing) {
                 stop(streamPtr);
                 playing = false;
             }
@@ -131,7 +149,7 @@ public class ALSAClient {
 
     public void pause() {
         synchronized (streamLock) {
-            if (streamPtr > 0) {
+            if (streamPtr != 0) {
                 pause(streamPtr);
                 playing = false;
             }
@@ -140,7 +158,7 @@ public class ALSAClient {
 
     public void drain() {
         synchronized (streamLock) {
-            if (streamPtr > 0) flush(streamPtr);
+            if (streamPtr != 0) flush(streamPtr);
         }
     }
 
@@ -169,12 +187,20 @@ public class ALSAClient {
             }
             int numFrames = byteCount / frameBytes;
             ByteBuffer output = convertForAAudio(data, byteCount);
-            int framesWritten = output != null ? write(streamPtr, output, numFrames) : -1;
-            if (framesWritten < 0 && output != null && recoverStreamLocked(framesWritten)) {
-                output.rewind();
-                framesWritten = write(streamPtr, output, numFrames);
+            int outputFrameBytes = dataType == DataType.U8 ? frameBytes * 2 : frameBytes;
+            int framesWritten = writePump.transfer(output, outputFrameBytes);
+            ++writePackets;
+            partialWrites += writePump.partialWrites;
+            writeTimeouts += writePump.timeouts;
+            droppedFrames += numFrames - framesWritten;
+            long now = android.os.SystemClock.elapsedRealtime();
+            if (now - lastWriteLogMillis >= 10000L) {
+                Log.i(TAG, "PCM packets=" + writePackets + " partialWrites=" + partialWrites
+                        + " timeouts=" + writeTimeouts + " droppedFrames=" + droppedFrames
+                        + " xruns=" + (streamPtr != 0 ? getXRunCount(streamPtr) : -1)
+                        + " accepted=" + Integer.toUnsignedLong(position));
+                lastWriteLogMillis = now;
             }
-            if (framesWritten > 0) position += framesWritten;
             data.rewind();
         }
     }
@@ -185,6 +211,7 @@ public class ALSAClient {
      * behavior) made silence permanent. Recreate once and retry the buffer.
      */
     private boolean recoverStreamLocked(int error) {
+        if (releasing) return false;
         long now = android.os.SystemClock.elapsedRealtime();
         if (now - lastRecoveryLogMillis >= 1000L) {
             Log.w(TAG, "AAudio write failed (" + error + "); reopening guest stream "
@@ -195,13 +222,21 @@ public class ALSAClient {
         if (streamPtr != 0) close(streamPtr);
         streamPtr = create(dataType.ordinal(), channelCount, sampleRate, bufferSize, burstAligned);
         if (streamPtr == 0) return false;
+        if (releasing) return false; // release owns the close after this write unlocks.
         start(streamPtr);
         playing = true;
         return true;
     }
 
     public int pointer() {
-        return position;
+        synchronized (streamLock) {
+            // Compatibility rollback: the bundled guest fills a 1920-frame
+            // ring while AudioTrack can require 1922 frames to start. Waiting
+            // for the consumed cursor here can stop both sides permanently.
+            // Restore the pre-regression accepted-write cursor. A consumed
+            // cursor must not be re-enabled without guest-ring startup tests.
+            return position;
+        }
     }
 
     public void setDataType(DataType dataType) {
@@ -344,7 +379,11 @@ public class ALSAClient {
     private native long create(int format, byte channelCount, int sampleRate, int bufferSize,
                                boolean burstAligned);
 
-    private native int write(long streamPtr, ByteBuffer buffer, int numFrames);
+    private native int write(long streamPtr, ByteBuffer buffer, int byteOffset, int numFrames);
+
+    private native int getXRunCount(long streamPtr);
+    // Diagnostic queue depth only; not the guest's compatibility cursor.
+    private native long getPendingFrames(long streamPtr);
 
     private native void start(long streamPtr);
 

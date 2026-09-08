@@ -45,6 +45,7 @@ struct Room {
   int type = 1;
   int shape = 1;
   int subtype = 0;
+  int flags = -1;  // Native descriptor flags; -1 for legacy packets.
 };
 
 struct MapState {
@@ -116,6 +117,25 @@ struct RunInfo {
   bool received = false;
 };
 
+struct PickupHistoryEntry { int id = 0; int time = 0; };
+struct ProgressState {
+  std::vector<PickupHistoryEntry> history;
+  std::vector<CollectedItem> pickups;
+  std::string achievements, challenges, bosses;
+  std::vector<int> events;
+  std::vector<int> completion;
+  int total_hits = -1;
+  int save_slot = 0;
+  bool readonly = true;
+  bool received = false;
+};
+
+struct MapDrawCommand {
+  int actor=0, frame=0;
+  std::string animation;
+  double x=0,y=0,scale_x=1,scale_y=1,red=1,green=1,blue=1,alpha=1;
+};
+struct NativeMapState { std::vector<MapDrawCommand> commands; bool received=false; };
 struct LiveState {
   uint64_t last_sequence = 0;
   uint64_t game_frame = 0;
@@ -127,11 +147,13 @@ struct LiveState {
   Health health;
   Stats stats;
   MapState map;
+  NativeMapState native_map;
   InventoryState inventory;
   RunInfo run;
+  ProgressState progress;
 };
 
-enum class PacketTopic : uint8_t { kNone, kStatus, kMap, kInventory, kRun };
+enum class PacketTopic : uint8_t { kNone, kStatus, kMap, kInventory, kRun, kProgress, kNativeMap };
 
 bool PercentDecode(std::string_view input, std::string* output);
 bool ApplyStatePacket(const char* bytes, size_t size, LiveState* state,

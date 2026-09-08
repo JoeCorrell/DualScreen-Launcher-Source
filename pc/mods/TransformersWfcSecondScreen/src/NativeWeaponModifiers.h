@@ -28,6 +28,9 @@ struct NativeWeaponModifiers {
 };
 // Run at the individual weapon's mutation boundary after AI/fire quiescence.
 bool NativeCaptureWeaponModifiers(DWORD thread,void* pawn,void* weapon,NativeWeaponModifiers* output);
+// Read-only compatibility check against an authored tuning record. Does not
+// compare transient timers/default flags and never clones/replaces live state.
+bool NativeWeaponModifiersMatchData(const NativeWeaponModifiers& live,void* data);
 inline bool SameWeaponModifierIdentity(const NativeWeaponModifiers& a,const NativeWeaponModifiers& b) {
   if (!a.captured || !b.captured || !a.context.captured || !b.context.captured ||
       a.heat!=b.heat || a.heat_index!=b.heat_index || a.heat_maximum!=b.heat_maximum || a.array.count<0 || a.array.count>64 ||
@@ -42,6 +45,12 @@ inline bool SameWeaponModifierIdentity(const NativeWeaponModifiers& a,const Nati
   }
   return true;
 }
+inline bool SameWeaponModifierRuntime(const NativeWeaponModifiers& a,const NativeWeaponModifiers& b) {
+  if(!SameWeaponModifierIdentity(a,b))return false;
+  for(int32_t i=0;i<a.array.count;++i)
+    if(a.modifiers[i].flags!=b.modifiers[i].flags || a.modifiers[i].timer!=b.modifiers[i].timer)return false;
+  return true;
+}
 // Restore only the exact, still-owned live modifier objects. A cloned, removed,
 // retuned or reordered set is incompatible, not something to guess/copy into.
 // Caller must arm its rollback journal before this potentially dirty operation.
@@ -51,12 +60,18 @@ NativePlayerServiceResult NativeRestoreWeaponModifiers(const NativeWeaponModifie
 // Live modifiers are never replaced/reset. PrepareNativeWeaponHeat must pass
 // first; Begin/Finish must run in one game-thread pulse, before control transfer.
 // A successful begin keeps new clones rooted and journaled until Finish.
+// Every successful Begin, including an already-initialized no-op, requires
+// exactly one successful Finish. A failed dirty Finish retains recovery
+// ownership; neither Begin nor a second successful Finish may reuse it.
 struct NativeWeaponModifierInitialization {
   NativeWeaponModifiers before{};
   NativeWeaponModifiers initialized{};
   UnrealObjectCloneArray clones{};
   void* player_data=nullptr;
   uint32_t player_data_index=0;
+  // Includes capacity-only initialization: the nested allocation journal
+  // alone cannot protect a transaction that never allocates any modifiers.
+  const NativeWeaponModifierInitialization* journal_address=nullptr;
   bool capacity_seeded=false;
 };
 NativePlayerServiceResult NativeBeginWeaponModifierInitialization(DWORD thread,void* pawn,

@@ -343,16 +343,27 @@ local function getDealChances()
     return totalChance * devilShare, totalChance * (1.0 - devilShare)
 end
 
+local function sendNativeMap()
+    local snapshot = safe("", function() return IsaacSecondScreenNativeMap() end)
+    local count, records = snapshot:match("^(%d+)|(.*)$")
+    if count then send("D", { count, records }) end
+end
+
 local function sendMap()
     local level = game:GetLevel()
     local roomList = level:GetRooms()
     local rooms = {}
+    local nativeFlags = {}
+    local native = safe("", function() return IsaacSecondScreenRoomFlags() end)
+    for listIndex, flags in native:gmatch("(%d+),(%d+)") do
+        nativeFlags[tonumber(listIndex)] = tonumber(flags)
+    end
     for index = 0, roomList.Size - 1 do
         local descriptor = roomList:Get(index)
         local displayFlags = safe(0, function() return descriptor.DisplayFlags end)
         -- The map deliberately uses the game's own knowledge flag. Descriptor
         -- existence alone is never enough to reveal a secret or undiscovered room.
-        if displayFlags > 0 then
+        if displayFlags > 0 and nativeFlags[index] ~= nil then
             local data = safe(nil, function() return descriptor.Data end)
             rooms[#rooms + 1] = table.concat({
                 tostring(safe(-1, function() return descriptor.GridIndex end)),
@@ -362,6 +373,7 @@ local function sendMap()
                 tostring(safe(1, function() return data.Type end)),
                 tostring(safe(1, function() return data.Shape end)),
                 tostring(safe(0, function() return data.Subtype end)),
+                tostring(nativeFlags[index]),
             }, ",")
         end
     end
@@ -375,6 +387,7 @@ local function sendMap()
         #rooms,
         joinRecords(rooms),
     })
+    sendNativeMap()
 end
 
 local function sendRun(player)
@@ -402,6 +415,59 @@ local function sendRun(player)
     })
 end
 
+local pickupJournal = {}
+local pickupSeen = {}
+local jsonCodec = safe(nil, function() return require("json") end)
+
+local function mergeHistory(history)
+    local occurrences = {}
+    for idText, timeText in history:gmatch("(%d+),(%d+)") do
+        local id, time = tonumber(idText), tonumber(timeText)
+        if id > 0 and id <= 65535 and time <= 2147483647 then
+            local event = idText .. "," .. timeText
+            occurrences[event] = (occurrences[event] or 0) + 1
+            local key = event .. "," .. occurrences[event]
+            if not pickupSeen[key] and #pickupJournal < 4096 then
+                pickupSeen[key] = true
+                pickupJournal[#pickupJournal + 1] = { id = id, time = time, key = key, order = #pickupJournal + 1 }
+            end
+        end
+    end
+    table.sort(pickupJournal, function(a, b)
+        if a.time ~= b.time then return a.time < b.time end
+        -- Keep the native order of acquisitions sharing a game tick.
+        return a.order < b.order
+    end)
+    local records = {}
+    for _, entry in ipairs(pickupJournal) do records[#records + 1] = entry.id .. "," .. entry.time end
+    return table.concat(records, ";")
+end
+
+local function sendProgress()
+    local snapshot = safe("", function() return IsaacSecondScreenNativeState() end)
+    if snapshot == "" then return end
+    local fields = {}
+    for field in (snapshot .. "|"):gmatch("(.-)|") do fields[#fields + 1] = field end
+    if #fields ~= 8 then return end
+    fields[9] = fields[8]
+    fields[1] = mergeHistory(fields[1])
+    fields[8] = safe(-1, function() return IsaacSecondScreenHits(-1) end)
+    send("P", fields)
+end
+
+local function saveHits()
+    local hits = safe(-1, function() return IsaacSecondScreenHits(-1) end)
+    if hits < 0 then return end
+    local seed = safe("", function() return game:GetSeeds():GetStartSeedString() end)
+    if seed ~= "" then
+        if jsonCodec then
+            DualScreenIsaac:SaveData(jsonCodec.encode({seed=seed,hits=hits,pickups=pickupJournal}))
+        else
+            DualScreenIsaac:SaveData(seed .. "|" .. tostring(hits))
+        end
+    end
+end
+
 function DualScreenIsaac:onUpdate()
     local frame = game:GetFrameCount()
     local player = getPlayer()
@@ -420,7 +486,9 @@ function DualScreenIsaac:onUpdate()
     if frame % 30 == 0 then
         sendInventory(player)
         sendRun(player)
+        sendProgress()
     end
+    if frame % 300 == 0 then saveHits() end
 end
 
 function DualScreenIsaac:onNewRoom()
@@ -439,12 +507,45 @@ function DualScreenIsaac:onNewLevel()
     end
 end
 
-function DualScreenIsaac:onGameStarted()
+function DualScreenIsaac:onGameStarted(continued)
     bridgeWarningShown = false
     openBridge()
+    local hits = 0
+    pickupJournal = {}
+    pickupSeen = {}
+    if continued and self:HasData() then
+        local data = self:LoadData()
+        local seed, saved = data:match("^(.-)|(%d+)$")
+        local decoded = safe(nil, function() return jsonCodec.decode(data) end)
+        if type(decoded) == "table" and decoded.seed == game:GetSeeds():GetStartSeedString() then
+            seed, saved = decoded.seed, decoded.hits
+            local records = {}
+            if type(decoded.pickups) == "table" then
+                for index, entry in ipairs(decoded.pickups) do
+                    if index > 4096 then break end
+                    if type(entry) == "table" and type(entry.id) == "number" and type(entry.time) == "number" then
+                        records[#records + 1] = tostring(entry.id) .. "," .. tostring(entry.time)
+                    end
+                end
+            end
+            mergeHistory(table.concat(records, ";"))
+        end
+        if seed == game:GetSeeds():GetStartSeedString() then hits = math.max(0, tonumber(saved) or 0) end
+    end
+    safe(-1, function() return IsaacSecondScreenHits(math.min(hits, 100000000)) end)
+    local player = getPlayer()
+    if player then
+        sendStatus(player)
+        sendMap()
+        sendInventory(player)
+        sendRun(player)
+        sendProgress()
+        saveHits()
+    end
 end
 
-function DualScreenIsaac:onGameExit()
+function DualScreenIsaac:onGameExit(shouldSave)
+    if shouldSave then saveHits() end
     sendNoRun()
 end
 

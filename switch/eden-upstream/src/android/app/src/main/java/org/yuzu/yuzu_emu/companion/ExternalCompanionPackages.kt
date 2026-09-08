@@ -7,6 +7,7 @@ import android.util.AtomicFile
 import android.view.View
 import android.widget.TextView
 import com.dualscreen.companion.api.CompanionHost
+import com.dualscreen.companion.api.CompanionHostV2
 import com.dualscreen.companion.api.CompanionControllerTarget
 import com.dualscreen.companion.api.SignedModuleArchive
 import com.dualscreen.companion.api.ModuleCodeCache
@@ -19,6 +20,8 @@ import java.util.UUID
 import org.json.JSONObject
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.activities.PlzaControllerBridge
+import org.yuzu.yuzu_emu.activities.BotwControllerBridge
+import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.Log
 
 /** Signed external native + DEX + assets, pinned together for a complete gameplay session. */
@@ -53,6 +56,11 @@ object ExternalCompanionPackages {
         require(manifest.length() in 1..262144) { "Invalid module manifest size" }
         val json = JSONObject(manifest.readText())
         require(json.getInt("schema") == 1 && json.getInt("hostAbi") == HOST_ABI) { "This mod needs a different launcher runtime ABI" }
+        json.optJSONArray("hostFeatures")?.let { features ->
+            repeat(features.length()) { index ->
+                require(features.getString(index) == "query64-rgba-v1") { "This mod requires a newer launcher feature" }
+            }
+        }
         require(json.getString("titleId") == title(expectedTitle)) { "This package is for another game" }
         require(json.getString("version").matches(Regex("[A-Za-z0-9._-]{1,64}")) && json.getLong("revision") > 0)
         require(json.getString("entryClass").matches(Regex("com\\.dualscreen\\.mods\\.[A-Za-z0-9_.]+")))
@@ -124,7 +132,7 @@ object ExternalCompanionPackages {
     }
 
     @Synchronized fun activate(context: Context, id: String) {
-        val pkg = installed(context, id) ?: error("Install this game's signed .dsmod package using Install mods first")
+        val pkg = installed(context, id) ?: error("Automatic dual-screen mod setup has not finished. Return to the launcher and retry payload setup.")
         if (loaded?.pkg?.dir == pkg.dir) return
         require(!NativeLibrary.isRunning()) { "A mod update takes effect after the game is closed" }
         loaded = prepare(context, pkg)
@@ -145,14 +153,24 @@ object ExternalCompanionPackages {
     @Synchronized fun createView(context: Context, id: String): View {
         val current = loaded?.takeIf { it.pkg.title == title(id) }
         if (current == null) return TextView(context).apply { text = "Dual-screen mod is not loaded. Return to the launcher and install its signed package."; textSize = 24f }
-        val host = object : CompanionHost {
+        val host = object : CompanionHostV2 {
             override fun snapshot(output: ByteBuffer) = if (loaded?.pkg?.dir == current.pkg.dir) NativeLibrary.fillPlzaCompanionSnapshot(output) else 0
             override fun action(operation: Int, item: Int, target: Int) = if (loaded?.pkg?.dir == current.pkg.dir) NativeLibrary.performPlzaCompanionItemAction(operation, item, target) else 15
             override fun romfsAsset(path: String) = if (loaded?.pkg?.dir == current.pkg.dir) NativeLibrary.externalCompanionAsset(path) else null
             override fun openAsset(path: String): InputStream = File(current.pkg.dir, "assets/${SignedModuleArchive.safePath(path)}").inputStream()
             override fun log(level: Int, message: String) { when (level) { 2 -> Log.error(message); 1 -> Log.warning(message); else -> Log.info(message) } }
-            override fun attach(target: CompanionControllerTarget) = PlzaControllerBridge.attach(target)
-            override fun detach(target: CompanionControllerTarget) = PlzaControllerBridge.detach(target)
+            override fun query(kind: Int, input: String) = if (loaded?.pkg?.dir == current.pkg.dir) NativeLibrary.externalCompanionQuery(kind, input) else "{}"
+            override fun action64(operation: Int, argument: Long) = loaded?.pkg?.dir == current.pkg.dir && NativeLibrary.externalCompanionAction64(operation, argument)
+            override fun romfsRevision() = if (loaded?.pkg?.dir == current.pkg.dir) NativeLibrary.getDualScreenRomfsRevision() else ""
+            override fun userDataDirectory() = DirectoryInitialization.userDirectory
+            override fun attach(target: CompanionControllerTarget) {
+                if (current.pkg.title == "01007EF00011E000") BotwControllerBridge.attach(target)
+                else PlzaControllerBridge.attach(target)
+            }
+            override fun detach(target: CompanionControllerTarget) {
+                if (current.pkg.title == "01007EF00011E000") BotwControllerBridge.detach(target)
+                else PlzaControllerBridge.detach(target)
+            }
         }
         return current.loader.loadClass(current.pkg.json.getString("entryClass"))
             .getConstructor(Context::class.java, CompanionHost::class.java).newInstance(context, host) as View

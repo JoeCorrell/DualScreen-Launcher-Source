@@ -46,6 +46,8 @@ bool array_header_mismatch = false;
 void* plan_items[1] = {};
 bool lifecycle_reentry_checks = false;
 bool callback_requeues = false;
+bool retain_set_roots=false, reference_writes=true;
+unsigned dirty_set_callback=0;
 uintptr_t observed_enqueue_argument = 0;
 alignas(4) uint8_t engine_fixture[0x50] = {}, context_fixture[0x30] = {};
 void* current_world_fixture = world.bytes;
@@ -88,6 +90,10 @@ void ResetCallback(void* script_this) {
   Put(shooter.bytes, 0x30, 0);
 }
 void PlanningCallback() {
+  if (retain_set_roots) {
+    assert(Read(runner.bytes,0x38)==reinterpret_cast<uintptr_t>(action_set.bytes));
+    assert(Read(runner.bytes,0x34)==reinterpret_cast<uintptr_t>(goal_set.bytes));
+  }
   if (lifecycle_reentry_checks) {
     assert(NativeAiBeginPlanHandoff(controller.bytes) == NativeAiPlanningResult::kRejected);
     assert(NativeAiDrainStoppedPlan(controller.bytes) == NativeAiPlanningResult::kRejected);
@@ -98,6 +104,9 @@ void PlanningCallback() {
     assert(NativeAiRequestReplan(controller.bytes, 1) == NativeAiPlanningResult::kRejected);
   }
   if (callback_requeues) Put(runner.bytes, 0x44, reinterpret_cast<uintptr_t>(pending_plan.bytes));
+  if (dirty_set_callback==1) action_set.valid=false;
+  if (dirty_set_callback==2) Put(runner.bytes,0x34,0);
+  if (dirty_set_callback==3) reference_writes=false;
 }
 void* ResolveGameClass(void*, void*) { return weapon_class.bytes + 16; }
 uint32_t __attribute__((fastcall)) CastGame(void* object, void*, void* type) {
@@ -214,6 +223,16 @@ void VerifyRetainedExecutable(const char* path) {
 }  // namespace
 
 namespace wfcds {
+uint32_t UnrealObjectIndex(void* p) {
+  for(size_t i=0;i<sizeof(objects)/sizeof(objects[0]);++i)
+    if(objects[i]->bytes==p && objects[i]->valid) return static_cast<uint32_t>(i+1);
+  return 0;
+}
+void* UnrealObjectAt(int32_t index) {
+  return index>=0 && static_cast<size_t>(index)<sizeof(objects)/sizeof(objects[0]) && objects[index]->valid
+      ? objects[index]->bytes:nullptr;
+}
+bool UnrealObjectReferenceWritesReady(){return reference_writes;}
 bool UnrealObjectValid(void* p) { auto* o = Find(p); return o && o->valid; }
 bool UnrealObjectIsA(void* p, const wchar_t* type) {
   auto* o = Find(p);
@@ -717,23 +736,36 @@ int main(int argc, char** argv) {
     assert(NativeAiPlanHandoffReady(controller.bytes));
     g_planning_mutating = true; assert(!NativeAiPlanHandoffReady(controller.bytes)); g_planning_mutating = false;
     assert(RunnerInState(runner.bytes, 4));
-    assert(NativeAiSetActionSet(controller.bytes, nullptr) == NativeAiPlanningResult::kApplied);
-    assert(Read(runner.bytes, 0x38) == 0);
+    retain_set_roots=true;
     assert(NativeAiSetActionSet(controller.bytes, action_set.bytes) == NativeAiPlanningResult::kApplied);
     assert(observed_bind_owner == reinterpret_cast<uintptr_t>(controller.bytes + 16));
     assert(observed_bind_set == reinterpret_cast<uintptr_t>(action_set.bytes + 16));
-    assert(NativeAiSetGoalSet(controller.bytes, nullptr) == NativeAiPlanningResult::kApplied);
-    assert(Read(runner.bytes, 0x34) == 0 && Read(runner.bytes, 0x3C) == 0);
     assert(NativeAiSetGoalSet(controller.bytes, goal_set.bytes) == NativeAiPlanningResult::kApplied);
     assert(observed_bind_owner == reinterpret_cast<uintptr_t>(controller.bytes + 16));
     assert(observed_bind_set == reinterpret_cast<uintptr_t>(goal_set.bytes + 16));
     assert(Read(runner.bytes, 0x3C) == 0xFFFFFFFFu); // Empty Goals.Length - 1.
+    retain_set_roots=false;
     assert(NativeAiResumePlanRunner(controller.bytes) == NativeAiPlanningResult::kApplied);
     assert(!NativeAiPlanHandoffReady(controller.bytes));
   }
   assert(action_binds == 3000 && action_unbinds == 3000);
   assert(goal_binds == 3000 && goal_unbinds == 3000);
   plan_state(4, 4);
+  for(unsigned dirty=1;dirty<=3;++dirty) {
+    dirty_set_callback=dirty;
+    assert(NativeAiSetActionSet(controller.bytes,action_set.bytes)==NativeAiPlanningResult::kStateMismatch);
+    dirty_set_callback=0;action_set.valid=true;reference_writes=true;
+    Put(runner.bytes,0x34,reinterpret_cast<uintptr_t>(goal_set.bytes));
+  }
+  reference_writes=false;
+  const auto bind_count=action_binds;
+  assert(NativeAiSetActionSet(controller.bytes,action_set.bytes)==NativeAiPlanningResult::kRejected);
+  assert(action_binds==bind_count);reference_writes=true;
+  // Explicit removal remains supported by the low-level API; rebinding a
+  // retained set in GameBridge no longer uses this removal path.
+  assert(NativeAiSetGoalSet(controller.bytes,nullptr)==NativeAiPlanningResult::kApplied);
+  assert(Read(runner.bytes,0x34)==0 && Read(runner.bytes,0x3C)==0);
+  assert(NativeAiSetGoalSet(controller.bytes,goal_set.bytes)==NativeAiPlanningResult::kApplied);
   Put(runner.bytes, 0x44, reinterpret_cast<uintptr_t>(pending_plan.bytes));
   assert(NativeAiBeginPlanHandoff(controller.bytes) == NativeAiPlanningResult::kRejected);
   assert(NativeAiDrainStoppedPlan(controller.bytes) == NativeAiPlanningResult::kRejected);

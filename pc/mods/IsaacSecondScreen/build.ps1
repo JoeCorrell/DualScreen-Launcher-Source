@@ -72,6 +72,8 @@ if (Test-Path -LiteralPath $researchLua -PathType Leaf) {
 $sources = @(
     (Join-Path $sourceRoot 'Proxy.cpp'),
     (Join-Path $sourceRoot 'LuaBridge.cpp'),
+    (Join-Path $sourceRoot 'NativeState.cpp'),
+    (Join-Path $sourceRoot 'NativeMap.cpp'),
     (Join-Path $sourceRoot 'Mod.cpp'),
     (Join-Path $sourceRoot 'BuildIdentity.cpp'),
     (Join-Path $sourceRoot 'Protocol.cpp'),
@@ -239,7 +241,7 @@ if (-not $SkipLauncherPayloadUpdate) {
             })
         }
     $manifest = [ordered]@{
-        version = 'isaac-native-j460-2026.09.04.15'
+        version = 'isaac-native-j460-2026.09.07.02'
         files = $files
         remove = @('resources/scripts/isaac_second_screen.dll')
     }
@@ -251,3 +253,5 @@ if (-not $SkipLauncherPayloadUpdate) {
 $outputHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $output).Hash.ToLowerInvariant()
 Write-Host "Built $output"
 Write-Host "architecture=i386 bytes=$((Get-Item -LiteralPath $output).Length) sha256=$outputHash"
+
+

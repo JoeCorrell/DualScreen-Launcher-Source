@@ -25,14 +25,17 @@ struct CharacterRoleMappingRestorePoint {
   bool valid = false;
 };
 
-// Resolves and installs all required exact UFunction executor detours. The
+// Validates native controller getters, weapon pickup/exposure role decisions,
+// plus the remaining executor/cast
+// adapters, then installs them as one guarded set. Shipping migration of the
+// remaining script adapters is NOT complete; do not relax those gates. The
 // supplied live instances are used only to walk their declaring-class fields;
 // no process-wide GObjects scan is performed. Call on the game thread.
 bool PrepareCharacterRoleAdapter(void* player_controller_instance,
                                  void* ai_controller_instance,
                                  void* ai_pawn_instance,
                                  bool validate_only = false);
-// Clears the mapping first, then restores every installed executor detour in
+// Clears the mapping first, then restores every installed native/executor detour in
 // reverse order. Call before ShutdownUnrealBridge. Returns false if an executor
 // no longer contained our hook.
 bool ShutdownCharacterRoleAdapter();
@@ -79,20 +82,22 @@ bool QuiesceCharacterRoleProxy();
 bool ConsumeLogicalPlayerDeathNotification();
 void ResetCharacterRoleProxy();
 
-// SaveActiveCheckpoint cannot serialize a player-controlled TnAiPawn. The
-// executor hook retains the first request while a cross-role mapping is live.
+// Legacy deferred writer bookkeeping, NOT a checkpoint-capture barrier.
+// SaveActiveCheckpoint writes data captured earlier by GenerateCheckpointData;
+// restoring the physical player at write time does not repair that capture.
+// The executor hook retains the first request while a cross-role mapping is live.
 // GameBridge consumes it, performs the normal verified squad transaction back
 // to the physical TnPlayerPawn, then arms one exact reflected replay.
 bool ConsumeDeferredCheckpointNativeRestore(
     DeferredCheckpointRequest* output);
 bool MarkDeferredCheckpointNativeGraphVerified(
-    bool native_player_graph_valid);
+    const DeferredCheckpointRequest& request, bool native_player_graph_valid);
 bool BeginDeferredCheckpointReplay(DeferredCheckpointRequest* output);
 // Executes the retained manager request through the exact hooked base
 // UFunction. Returns true only when the hook admitted the request, the
 // original executor returned, and the one-shot gate returned to idle.
 bool ReplayDeferredCheckpoint();
-void AbortDeferredCheckpointReplay();
+void AbortDeferredCheckpointReplay(const DeferredCheckpointRequest& request);
 void FailDeferredCheckpointClosed();
 bool DeferredCheckpointPending();
 bool DeferredCheckpointFailedClosed();

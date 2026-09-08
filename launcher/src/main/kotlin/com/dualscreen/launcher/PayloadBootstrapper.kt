@@ -35,6 +35,9 @@ private const val TRUSTED_PAYLOAD_REPOSITORY =
     "https://github.com/JoeCorrell/DualScreen-Launcher-Payloads"
 private const val REMOTE_MANIFEST_NAME = "payload-bootstrap.json"
 
+internal fun shouldCheckPayloadCatalog(force: Boolean, lastCheck: Long, now: Long, interval: Long) =
+    force || lastCheck == 0L || now - lastCheck >= interval
+
 internal fun payloadOverallFraction(
     completedPackBytes: Long,
     totalPackBytes: Long,
@@ -196,7 +199,7 @@ internal class PayloadBootstrapper(private val context: Context) {
             else -> null
         }
         val now = SystemClock.elapsedRealtime()
-        val shouldCheckRemote = force || now - lastRemoteCheckAtMs >= REMOTE_CHECK_INTERVAL_MS
+        val shouldCheckRemote = shouldCheckPayloadCatalog(force, lastRemoteCheckAtMs, now, REMOTE_CHECK_INTERVAL_MS)
         if (shouldCheckRemote) {
             lastRemoteCheckAtMs = now
             runCatching { withContext(Dispatchers.IO) { fetchRemoteManifest(embedded) } }
@@ -622,6 +625,8 @@ internal class PayloadBootstrapper(private val context: Context) {
     private fun friendlyName(name: String): String = when {
         name.startsWith("runtime-components") -> "tested Windows runtime"
         name.startsWith("game-mods") -> "dual-screen game mods"
+        name.startsWith("botw-module") -> "Breath of the Wild dual-screen mod"
+        name.startsWith("plza-module") -> "Pokémon Legends: Z-A dual-screen mod"
         else -> name
     }
 

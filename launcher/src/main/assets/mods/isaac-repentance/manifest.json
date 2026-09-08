@@ -1,15 +1,15 @@
 {
-    "version":  "isaac-native-j460-2026.09.04.15",
+    "version":  "isaac-native-j460-2026.09.07.02",
     "files":  [
                   {
                       "source":  "native/winmm.dll",
                       "target":  "winmm.dll",
-                      "sha256":  "bc75bdedac103f616fbe3191a29ab90d9b6276ff6bb949302b5c54e691d7c3bf"
+                      "sha256":  "ccfbf5d00114131c537f54ae291c3576c64b7999d86c900c68d082107cc433e4"
                   },
                   {
                       "source":  "mod/main.lua",
                       "target":  "mods/DualScreenIsaac/main.lua",
-                      "sha256":  "edb5104246aa950954689e50bde6128bdbcc05c4ce0f01b554fa9246325375e1"
+                      "sha256":  "ff0dccb55df5004785acaf1f8424c66d26fbb7e81c6b1442d83cffb42089d416"
                   },
                   {
                       "source":  "mod/metadata.xml",
@@ -19,12 +19,12 @@
                   {
                       "source":  "assets/catalog.tsv",
                       "target":  "resources/scripts/isaac_second_screen_assets/catalog.tsv",
-                      "sha256":  "6ee8f79ed3423fe110eab76fa3f92e09ba2cb524d10d7f8588833d6ac0438ad3"
+                      "sha256":  "7dfec903e7b2beae75f051b139ef258605c4b53b6bae1df058a00cb3cdc6082c"
                   },
                   {
                       "source":  "assets/custom/background.png",
                       "target":  "resources/scripts/isaac_second_screen_assets/custom/background.png",
-                      "sha256":  "51da1491a693162e376c3700f75cad0a329daf43f51b4ee5c09f8df6cc8fd005"
+                      "sha256":  "10fba09bdb5f160cfa54b145ad43321868a912675c7fc3bf842d141d9b778b79"
                   },
                   {
                       "source":  "assets/custom/buttons/items_button_blank.png",
@@ -94,7 +94,7 @@
                   {
                       "source":  "assets/custom/stats_background.png",
                       "target":  "resources/scripts/isaac_second_screen_assets/custom/stats_background.png",
-                      "sha256":  "fb45af413ee096809eff560d20908c025474fc5824b71c49d1ed950d181fc5db"
+                      "sha256":  "10fba09bdb5f160cfa54b145ad43321868a912675c7fc3bf842d141d9b778b79"
                   },
                   {
                       "source":  "assets/custom/sticky_note.png",
@@ -5792,6 +5792,496 @@
                       "sha256":  "268b650a7e46023dc1f0bc142e103f43de616ee3f4571ac9f5808e81dc6834ac"
                   },
                   {
+                      "source":  "assets/game/gfx/ui/boss/portrait_100.0_widow.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_100.0_widow.png",
+                      "sha256":  "03aa8cca58b42f5d7079741c40f08b443be3eb3d95a5f8ef34c9bf613e2a6dbd"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_100.1_thewretched.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_100.1_thewretched.png",
+                      "sha256":  "9cae40f8c352bf5722c8a4b8f42f78dd1d2f0d22db932113e23b5ad65f5575f7"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_101.0_daddylonglegs.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_101.0_daddylonglegs.png",
+                      "sha256":  "d7749d67e99ede29eed7a0a2f0b0c4f3af715b8f74d205a708eb5d80fd58bf36"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_101.1_triachnid.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_101.1_triachnid.png",
+                      "sha256":  "28b1b663547d2d99b519614579922b7e4fd894015a170e54076f9ba6074ae2d6"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_102.0_isaac.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_102.0_isaac.png",
+                      "sha256":  "5d9135b9124ab2673891db85a8633f229c3690452e055c32a73cdcc0a79cd685"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_102.1_bluebaby.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_102.1_bluebaby.png",
+                      "sha256":  "93c52870ffb4f56fb2df97a0daf5f6fcc6007d11a43e044a0f46b6a25eff4f2c"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_19.0_larryjr.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_19.0_larryjr.png",
+                      "sha256":  "796638062bdc0a8158e8691fb9e5a01dde1b08b723e7d3e7e3b9ec6bd866e37f"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_19.1_thehollow.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_19.1_thehollow.png",
+                      "sha256":  "9a8417509501ef8c7756403e95f43757b1eb47acdfaaef7a4509b7d07ec8da03"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_19.100_tufftwins.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_19.100_tufftwins.png",
+                      "sha256":  "a7484820666a7795471bf157d68c705f655e9cb04ae16988ea13fc27d6298876"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_20.0_monstro.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_20.0_monstro.png",
+                      "sha256":  "b5505b3c4a44fae64962b505d94d8146632e26a0c2217e0635f7e2bccedcfc39"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_260.0_thehaunt.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_260.0_thehaunt.png",
+                      "sha256":  "da016738700db2e7f92c533643503c2760f7a3059a2345998c8a3d0755a4e8f8"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_261.0_dingle.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_261.0_dingle.png",
+                      "sha256":  "6c83a775cb8d11b4176aa3b9db1995d1288712db6fbec4d5d991f0c1eeb96b18"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_262.0_megamaw.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_262.0_megamaw.png",
+                      "sha256":  "c6b09416e06f5ca59eccc57fd373ae5abe1ed506038d9c9615d4ae903ac67801"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_263.0_megamaw2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_263.0_megamaw2.png",
+                      "sha256":  "a2847bfb6ba2e41bf693fb9ffe7d8a620bf22a1e56149aab13fabe61c442eb95"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_264.0_megafatty.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_264.0_megafatty.png",
+                      "sha256":  "f00677bf3698d321fdab545fda8900b605ba63f89f2b1417b7a1b7edb6bfb77d"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_265.0_fatty2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_265.0_fatty2.png",
+                      "sha256":  "3a934d8ee7e60db6bfe3d9ba81c3c09d0fef426086044c455fd24cf17d450218"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_266.0_mamagurdy.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_266.0_mamagurdy.png",
+                      "sha256":  "95a7f01b9cd60d12b78302048e5ad5bd6c287563ddd061cb41b7ecc05d2d72aa"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_267.0_darkone.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_267.0_darkone.png",
+                      "sha256":  "0616da69af9dafd893bb913a2eb0e176105647b7c9e59d391c914c66ff86dd6b"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_268.0_darkone2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_268.0_darkone2.png",
+                      "sha256":  "1a5ec1cfdfb0a488b6b726dbd346f4908b40fafde7e76371b66eb858edc2cdaa"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_269.0_polycephalus.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_269.0_polycephalus.png",
+                      "sha256":  "96c5c36d632f7b767a48e9d3f5644aaac7bd4ae3cd231f4ced4b926323861d05"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_269.1_polycephalus2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_269.1_polycephalus2.png",
+                      "sha256":  "6fc9bbedf2c464f5a9dc3e61158259edef25abcd87e38ed9eb6d3446cfcca9a9"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_270.0_megafred.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_270.0_megafred.png",
+                      "sha256":  "b1cc575d1bbbb031fc702c9f23e7d4b51eb0f1625c8a9d09607169998134c953"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_273.0_thelamb.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_273.0_thelamb.png",
+                      "sha256":  "0df9c255ee254658e5ba1dea3ac41ff51f1d05ce2f8ec5980334d1340db57c83"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_274.0_megasatan.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_274.0_megasatan.png",
+                      "sha256":  "6d67c2d78a5738933c407bb0eae7f97df5e8b6ad306d147d1d68b26c8a9aa26b"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_276.0_gurglings.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_276.0_gurglings.png",
+                      "sha256":  "1ea7a996ba82ff80eedd947a088a9c86c71671abd2f3cf86a85605cf348bba28"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_28.0_chub.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_28.0_chub.png",
+                      "sha256":  "8b8879874fdc19341a47bf4ddd8295482db82fa3c8fb904e8857dc04bc80e372"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_28.1_chad.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_28.1_chad.png",
+                      "sha256":  "e2e79fec18ec572e8eaeb3b27a3087ff6efa9331d2cc9bb6788d19bfa8617f54"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_28.2_carrionqueen.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_28.2_carrionqueen.png",
+                      "sha256":  "e39579ad8f171bfc496fe0884a00cda9e521fb78df7317b9be036d1450268fb8"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_36.0_gurdy.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_36.0_gurdy.png",
+                      "sha256":  "548aa2cf9c4950bc51b723566e652b85856baf103276b3a65f4b99722fdfef7d"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_401.0_thestain.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_401.0_thestain.png",
+                      "sha256":  "076040e60c470bff637a25e11c8a7dfafa2848637564c37d3ebbb92eb4c87857"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_402.0_brownie.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_402.0_brownie.png",
+                      "sha256":  "288151625c8011d3016ad28be9579da329e763ad4869993ac26cb64bafac7e57"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_403.0_theforsaken.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_403.0_theforsaken.png",
+                      "sha256":  "4ca2bd483ff957cd202255a9d7217014affa86c9cffd10f7f8439ee31c2319b5"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_404.0_littlehorn.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_404.0_littlehorn.png",
+                      "sha256":  "83b4591804e53d02d6f88d89a0b9b08a74f7fcf9474bb20f568d336e29cc2c67"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_405.0_ragman.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_405.0_ragman.png",
+                      "sha256":  "3871b9d908d230901965ab3c6e50a648bdfb662a9b4de45905d42aa8dc37a805"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_406.0_ultragreed.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_406.0_ultragreed.png",
+                      "sha256":  "9b172194ddbacab2ac2aa2912bb368fe5fe912137a285d90c919ca10790da6ff"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_407.0_hush.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_407.0_hush.png",
+                      "sha256":  "9a52136cec86193ba580561802e57ad1c15fb181b6ace1da4f34c8d1764610e0"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_43.0_monstro2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_43.0_monstro2.png",
+                      "sha256":  "967e53750c23ca4305c0e7528858b496452f25f36bd054a06669a5b16c2a1e43"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_43.1_gish.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_43.1_gish.png",
+                      "sha256":  "fc62f0faf6dbd913a521b0a791c0743d4e355bfc1bffcf25577f09a595273b21"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_45.0_mom.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_45.0_mom.png",
+                      "sha256":  "09c19c186035393af7dec62234a1f80b64eae86fbaec18c8d74f2ca9a2f7d568"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_62.0_pin.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_62.0_pin.png",
+                      "sha256":  "78bc1c94b14c6022e2fbecc5f915b1694e4d56d83dfb407e39f8eb86fe759b48"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_62.1_scolex.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_62.1_scolex.png",
+                      "sha256":  "dfd14529be190a032bd63734cfa3863fe41bf00bb7098d06b27d532986e4014a"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_63.0_famine.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_63.0_famine.png",
+                      "sha256":  "88de9200bd02680e179e93e52e7d82d177bbf3ea179a23d45513c900e38b4b92"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_64.0_pestilence.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_64.0_pestilence.png",
+                      "sha256":  "cc435014010424aeff17c17b448447e82588618cfb64a61aa29234988adea3c6"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_65.0_war.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_65.0_war.png",
+                      "sha256":  "26d2647f137b66c7684fca9827acd85cc43ffa70cce120efa670544ec66895f6"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_65.1_conquest.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_65.1_conquest.png",
+                      "sha256":  "d4f7f3207a47ae46a6687cf0a39c2089080fbfb99472c9bc51923af5ab28e1b2"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_66.0_death.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_66.0_death.png",
+                      "sha256":  "e93e258c1ae1b87e841fd7dab2a4930a75367f073a1daf17e41903af4781099f"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_67.0_dukeofflies.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_67.0_dukeofflies.png",
+                      "sha256":  "08148bd0ab865dc5e3912e835b9af29d815c6163e286207f5d45f37de5faacaa"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_67.1_thehusk.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_67.1_thehusk.png",
+                      "sha256":  "931359426bc8c8b5e0c409449b67095ecd76557cbe103037c2901e2076a4cc28"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_68.0_peep.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_68.0_peep.png",
+                      "sha256":  "e7d068e574df8bb650980794192fcaba837d37680c1b6845c3aa3c9a388ee2de"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_68.1_bloat.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_68.1_bloat.png",
+                      "sha256":  "5fef92f5bde20089ecc2866784f81a61c009c61d28be0867a123acc93fd09c12"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_69.0_loki.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_69.0_loki.png",
+                      "sha256":  "a4ff40fea8096c6b9a6ef80575a2fdc3ad663e9312c0d8c1f2471399c094fb04"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_69.1_lokii.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_69.1_lokii.png",
+                      "sha256":  "e36f03244a7603aad1d6052ae5133c8391e52d0241d4f3c815b48b75ba156ef9"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_71.0_fistula.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_71.0_fistula.png",
+                      "sha256":  "209054a462d940beafd5ab83fda815eb8e4cd7613e264a7f5a29b2339cc3092e"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_71.1_teratoma.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_71.1_teratoma.png",
+                      "sha256":  "59e3e6277bd32d95106af2eafea3f9f2be1fab9802a7b28001440631661e4852"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_74.0_blastocyst.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_74.0_blastocyst.png",
+                      "sha256":  "64df1f2333ce3a335d72de5deaac1d483e2134471cd997a6da34e22488f84dc0"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_78.0_momsheart.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_78.0_momsheart.png",
+                      "sha256":  "63a6f847138fea6b671baf5917b5e9ad33cc6bda002bd849ccbdb3add501dd4a"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_78.1_itlives.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_78.1_itlives.png",
+                      "sha256":  "f1b63b92683ec33e6ee92a48879b98ad5212d6dcca37306f093d4bcc9c28c7ac"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_79.0_gemini.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_79.0_gemini.png",
+                      "sha256":  "1aed5acd4f156273d8113b1b6d943f1655f8359660f1c084ca2dbefd3f8f248e"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_79.1_steven.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_79.1_steven.png",
+                      "sha256":  "6aa9a58a89abcf3bb8ff5e1637e6590f0d6d85762dece74245b5bf2e309f8abe"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_79.2_blightedovum.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_79.2_blightedovum.png",
+                      "sha256":  "113248f2fdb15388dffa65a1695d3d7a8658d095922eddec3dfbcbe959019daf"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_81.0_thefallen.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_81.0_thefallen.png",
+                      "sha256":  "9f08759cd98a805e56bd9ded02c996fb463657b3a36f205f1e9cea5a609ee569"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_82.0_headlesshorseman.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_82.0_headlesshorseman.png",
+                      "sha256":  "07298c928746c5521cd312bd2203692af2feecf1c16a61fe5826f4d7400b64d7"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_84.0_satan.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_84.0_satan.png",
+                      "sha256":  "114bcf370b8428b1e426f1e00968245d47e338b04ba6e1f14ecd8344934ba271"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_900.0_reapcreep.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_900.0_reapcreep.png",
+                      "sha256":  "b38557f75db2c7ae568d8e56f13c0eaed926c45c9fd123681e17b7d233185875"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_901.0_beelzeblub.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_901.0_beelzeblub.png",
+                      "sha256":  "61cc0b6e32877d9ece0125b9285b147b048019f8a936bda849d4b65c3499783d"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_902.0_rainmaker.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_902.0_rainmaker.png",
+                      "sha256":  "6ffcb3a2cf74164eac4454a4fb66c8038316798d0e64a1214baac57a7afb3c25"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_902.0_wormwood.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_902.0_wormwood.png",
+                      "sha256":  "ff1d82f9c078561b8bc060b18354c2945df541e11f846722a0aae0a12f6502f5"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_903.0_visage.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_903.0_visage.png",
+                      "sha256":  "758fb983812f2e4e27194fd880d9ddafa9fbd00dbdc375bbe5aac97b5ea6c6df"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_904.0_siren.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_904.0_siren.png",
+                      "sha256":  "da11593fecd4085571ff5248eba78b9a5173be5a41092b3d6c0a77095daea28a"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_905.0_heretic.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_905.0_heretic.png",
+                      "sha256":  "a6885d6225d16ae2f3bf4d585e378786a73d5d6810b4300f9b997c8a88d7c7dc"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_906.0_hornfel.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_906.0_hornfel.png",
+                      "sha256":  "27ff2af6a6a494109ae1842327a510604ea2ff77aa9767fb7fab3943573287bc"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_907.0_gideon.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_907.0_gideon.png",
+                      "sha256":  "45924f8dc600be41304e15f213eb87c54073f3c0c311af8663f3d724486610f4"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_908.0_babyplum.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_908.0_babyplum.png",
+                      "sha256":  "15d2ede49d2ac317a8282391e67b6f9bcc67d006e40ada8bd55c08f90f6a08a8"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_909.0_scourge.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_909.0_scourge.png",
+                      "sha256":  "4076fc2782b37b3bc79a4f02f085eeb8cd988542a7469c9907593435d091119b"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_910.0_chimera.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_910.0_chimera.png",
+                      "sha256":  "bb88dabbb37a28a088810f212ea049595f16c3514b2727daf6e6080089181f5e"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_911.0_rotgut.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_911.0_rotgut.png",
+                      "sha256":  "a7f6c40cd86d5fcd28bf9fa6ae33b1f9e1f44fc672d2737c243b45d4ebf3e065"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_97.0_maskofinfamy.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_97.0_maskofinfamy.png",
+                      "sha256":  "eeea420a49d53b4a79c164bc1b13851cfa248f9aa7f3d74f93f3612af566b474"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_99.0_gurdyjr.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_99.0_gurdyjr.png",
+                      "sha256":  "e2495895645d5459e17fdfd088ad49b8127235676f61a44b55dea59a0ece3095"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_bighorn.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_bighorn.png",
+                      "sha256":  "11475ab86bff4202e92c3ae99e83db71fd8b19b7d1e7d4818677eda17b28bf57"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_bumbino.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_bumbino.png",
+                      "sha256":  "c15284f1cd897d44cc444edc728f30d0bdb59de8b07feb32908d8bbaa57f9df1"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_clog.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_clog.png",
+                      "sha256":  "c8874b98ac0f190b19dd1753ec6962cea86f15bfb4a83d20000284728f19ad66"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_clutch.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_clutch.png",
+                      "sha256":  "e99fd55e40552fe0e3b4568bec5073000e820f26a6d8ea15c6bc74cb36c50982"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_colostomia.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_colostomia.png",
+                      "sha256":  "2e58940944098568183b1ff32e59d6a0ef10f7fb0fc5812a529521bdc53ed368"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_dangle.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_dangle.png",
+                      "sha256":  "429d86dd39b2762d58b09ce3b5e4c0df2489df357571ebaaf1c38378f7e42e93"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_delirium.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_delirium.png",
+                      "sha256":  "b3a5677d7f908a6f31e5277f76b23921fa279ae13085827fc137e52d8d12e245"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_dogma.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_dogma.png",
+                      "sha256":  "0d93533c701c65de7179f077db21278137bdf12e86c5e97222ef0f6d00ce234e"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_hornyboys.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_hornyboys.png",
+                      "sha256":  "24d3b6de37a27e7e03614105e4f07e89297be5610f0169f82552ceef5ba32157"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_matriarch.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_matriarch.png",
+                      "sha256":  "3254f337d97095946408b2db2389df09e1093ee354995bf7cb4778aa2237b16c"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_minmin.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_minmin.png",
+                      "sha256":  "b6d62a953a3607f60ab35b04a6c062962f326463f758e40720cd045fb48b2800"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_mother.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_mother.png",
+                      "sha256":  "35dd9d6556945b4ec7768c2665fa51c85b1237280c6976fe7d7ef7e9cd5ed7c4"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_raglich.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_raglich.png",
+                      "sha256":  "1a7fae71e0ec65f7d364ad7489f29d750590a688c9bd8218b8363d7a63384d77"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_ragmega.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_ragmega.png",
+                      "sha256":  "081c8d8c4aa124aec676d42bed5d0e1047f1a1b4a7e02eb0499319c5145a4385"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_shell.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_shell.png",
+                      "sha256":  "5a06e6121c4e1e704546261aa364526fb12f12b2f4c656ac3c0d8b61c737a329"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_singe.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_singe.png",
+                      "sha256":  "662923d0569420a3ba217dcf78ba1977a443336096eced445db7738874a4376a"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_sistersvis.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_sistersvis.png",
+                      "sha256":  "cf999e9f0bbb6f2b022df22a8577b2fd98d975fcc2b0eaf45a6c3894807c93f7"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_thefrail.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_thefrail.png",
+                      "sha256":  "eadb21c1e54c045f89e263781c7625547c61a14c5409a9c4561241ee360dae52"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_turdlet.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_turdlet.png",
+                      "sha256":  "b671ecc3a6b99d8454085579fa3f30a2539ba0c8c631188dd12027fd76bc4c22"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/boss/portrait_turdlings.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/boss/portrait_turdlings.png",
+                      "sha256":  "7a2eb9cf0d7c5d0145f6bf97d7a0bdd201631e56b7e95d93151db022b4428e21"
+                  },
+                  {
                       "source":  "assets/game/gfx/ui/hudpickups.anm2",
                       "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/hudpickups.anm2",
                       "sha256":  "dc20619b4b439ae446903f3267f455ac30ac054444c1445b3a95041913306835"
@@ -5810,6 +6300,16 @@
                       "source":  "assets/game/gfx/ui/minimap_icons.png",
                       "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/minimap_icons.png",
                       "sha256":  "bfab5775465620bc0175368b73c0daa91a0e74a2caebf778e749ae1b06a2cd3a"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/minimap1.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/minimap1.png",
+                      "sha256":  "6a3dcad8095fa46f51d5c33381bdab36a451f33bc177f3ed63c93c17c07c2371"
+                  },
+                  {
+                      "source":  "assets/game/gfx/ui/minimap2.png",
+                      "target":  "resources/scripts/isaac_second_screen_assets/game/gfx/ui/minimap2.png",
+                      "sha256":  "2b25403a2c6f54db64e6dcf2daf02c6d2bc01cd5db98c7132b29a5d9097c4d03"
                   },
                   {
                       "source":  "assets/game/gfx/ui/stage/playerportrait_apollyon.png",

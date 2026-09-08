@@ -20,6 +20,10 @@ _WfcCallObjectGotoState:
 
     # TnAiWeaponAimer.Initialize: EDI script aimer, EAX script pawn, plain RET.
     .globl _WfcCallEdiEax
+    # The vehicle factory uses the same EAX/no-stack convention and returns
+    # a compiled UObject pointer in EAX. Keep a correctly typed C entry alias.
+    .globl _WfcCallEaxPointer
+_WfcCallEaxPointer:
 _WfcCallEdiEax:
     pushl %ebp
     movl %esp, %ebp
@@ -126,5 +130,22 @@ _WfcAssignFString:
     movl 12(%ebp), %ecx
     pushl 16(%ebp)
     call *8(%ebp)
+    leave
+    ret
+
+    # TnWeaponOwnerAnimator.Initialize: compiled destination in EDX, primary
+    # interface record in EDI, additive record in ESI; no stack arguments.
+    .globl _WfcCallWeaponAnimatorInitialize
+_WfcCallWeaponAnimatorInitialize:
+    pushl %ebp
+    movl %esp, %ebp
+    pushl %edi
+    pushl %esi
+    movl 12(%ebp), %edx
+    movl 16(%ebp), %edi
+    movl 20(%ebp), %esi
+    call *8(%ebp)
+    popl %esi
+    popl %edi
     leave
     ret

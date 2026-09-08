@@ -21,6 +21,15 @@
             android:theme="@style/Theme.DualScreenLauncher.Fullscreen" />
 
         <activity
+            android:name=".session.CompanionDisplayCoverActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:resizeableActivity="true"
+            android:taskAffinity="com.dualscreen.launcher.companion.cover"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation|uiMode"
+            android:theme="@style/Theme.DualScreenLauncher.CompanionCover" />
+
+        <activity
             android:name=".LauncherActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation|uiMode"
             android:exported="true"

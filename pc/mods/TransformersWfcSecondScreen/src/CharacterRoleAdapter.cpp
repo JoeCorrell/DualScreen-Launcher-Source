@@ -14,65 +14,26 @@
 #include "NativeWeaponShooter.h"
 #include "NativeAiMovement.h"
 #include "NativeAiAiming.h"
+#include "NativeRolePawn.h"
+#include "NativeWeaponExposure.h"
+#include "NativePawnDamage.h"
+#include "NativePawnTargeting.h"
+#include "NativePawnDowned.h"
+#include "NativeGameDeath.h"
+#include "NativePawnTransform.h"
+#include "NativePlayerCombat.h"
+#include "NativeMeleeTargetGuard.h"
 #include "UnrealBridge.h"
 
 namespace wfcds {
 namespace {
 
 enum class HookId : size_t {
-  kPlayerGetTransformerPawn,
-  kAiGetTransformerPawn,
-  kAiGetIsAiBuddy,
-  kAiSetIsAiBuddy,
-  kPlayerPawnTransform,
-  kPawnStartVehicle,
-  kGameKilled,
-  kRespawnDied,
-  kWeaponGivenTo,
-  kWeaponOnPreServerFire,
-  kWeaponDropFrom,
-  kAiPawnHandleFlashBangDamage,
-  kAiPawnOnBlockDamage,
-  kAiPawnGetTargetLocation,
-  kAiPawnGetAdjustedAimFor,
-  kAiPawnHasSameKillTarget,
-  kAiPawnClientStartDowned,
-  kAiPawnClientStopDowned,
-  kPlayerPawnClientStartDowned,
-  kPlayerPawnClientStopDowned,
   kSaveActiveCheckpoint,
   kCount,
 };
 
-enum class CastPatchId : size_t {
-  kAdjustVehicleStick,
-  kIsAbleToFire,
-  kAbortMelee,
-  kPlayerWalkingMelee,
-  kShouldRecordPlayerRecord,
-  kTargetingIsOwnerJumping,
-  kTargetingSetMeleeAssistTarget,
-  kFineAimStart,
-  kFineAimStop,
-  kFineAimCheckSnipingOverheat,
-  kFineAimNotifyTakeHit,
-  kOnSetPawn,
-  kNavigatePlayerPawn,
-  kSpawnFinderPlayerPawn,
-  kConstrainCameraPlayerPawn,
-  kOrbitCameraPlayerPawn,
-  kFlyingCameraPlayerPawn,
-  kLocationCameraPlayerPawn,
-  kNormalizedDownedHealthPlayerPawn,
-  kLocalPlayerFinderPlayerPawn,
-  kCount,
-};
-
 constexpr size_t kHookCount = static_cast<size_t>(HookId::kCount);
-constexpr size_t kCastPatchCount =
-    static_cast<size_t>(CastPatchId::kCount);
-constexpr uint32_t kCurrentPawnCastOpcodeOffset = 6u;
-constexpr uint8_t kDynamicCastOpcode = 0x2Eu;
 static_assert(sizeof(void*) == sizeof(LONG),
               "The WFC role adapter requires the 32-bit executor ABI");
 static_assert(sizeof(float) == 4,
@@ -83,10 +44,6 @@ struct HookState {
   UnrealFunctionExecDetour detour = {};
 };
 
-struct CastPatchState {
-  UnrealFunctionHandle function = {};
-  UnrealScriptObjectOperandPatch patch = {};
-};
 
 struct PublishedRoleMapping {
   CharacterRoleMapping value = {};
@@ -98,7 +55,6 @@ struct PublishedRoleMapping {
 };
 
 std::array<HookState, kHookCount> g_hooks = {};
-std::array<CastPatchState, kCastPatchCount> g_cast_patches = {};
 std::atomic<uint32_t> g_mapping_sequence{0};
 std::atomic<void*> g_player_controller{nullptr};
 std::atomic<void*> g_player_controlled_ai_pawn{nullptr};
@@ -117,7 +73,6 @@ uint32_t g_pawn_controller_offset = 0;
 uint32_t g_actor_location_offset = 0;
 uint32_t g_current_form_offset = 0;
 uint32_t g_vehicle_form_offset = 0;
-uint32_t g_weapon_instigator_offset = 0;
 uint32_t g_ai_weapon_shooter_offset = 0;
 uint32_t g_ai_weapon_aimer_offset = 0;
 uint32_t g_ai_enemy_offset = 0;
@@ -126,20 +81,6 @@ uint32_t g_pawn_inventory_offset = 0;
 uint32_t g_shooter_owner_offset = 0;
 uint32_t g_aimer_owner_offset = 0;
 uint32_t g_aimer_controller_offset = 0;
-UnrealFunctionHandle g_base_client_start_downed = {};
-UnrealFunctionHandle g_base_client_stop_downed = {};
-UnrealFunctionHandle g_player_controller_start_downed = {};
-UnrealFunctionHandle g_player_controller_stop_downed = {};
-UnrealFunctionHandle g_ai_controller_start_downed = {};
-UnrealFunctionHandle g_ai_controller_stop_downed = {};
-UnrealFunctionHandle g_player_controller_adjusted_aim = {};
-UnrealPreparedObjectStructStructCall g_prepared_adjusted_aim = {};
-uint32_t g_adjusted_aim_weapon_offset = 0;
-uint32_t g_adjusted_aim_start_offset = 0;
-uint32_t g_game_killed_player_offset = 0;
-uint32_t g_game_killed_pawn_offset = 0;
-uint32_t g_respawn_died_controller_offset = 0;
-uint32_t g_weapon_given_to_pawn_offset = 0;
 uint32_t g_checkpoint_index_offset = 0;
 uint32_t g_checkpoint_callback_offset = 0;
 UnrealScriptDelegate g_checkpoint_callback;
@@ -511,6 +452,19 @@ PublishedRoleMapping PublishMapping(PublishedRoleMapping mapping) {
       mapping.ai_controlled_player_pawn_index, std::memory_order_relaxed);
   g_mapping_generation.store(mapping.generation, std::memory_order_relaxed);
   g_mapping_sequence.fetch_add(1, std::memory_order_release);
+  PublishNativeRolePawnControllers(mapping.value.player_controller,
+                                  mapping.value.mapped_ai_controller);
+  PublishNativeWeaponExposurePawns(mapping.value.player_controlled_ai_pawn,
+                                   mapping.value.ai_controlled_player_pawn);
+  PublishNativePawnDamagePlayer(mapping.value.player_controlled_ai_pawn);
+  PublishNativePawnTargetingPlayer(mapping.value.player_controlled_ai_pawn);
+  PublishNativePawnDownedPawns(mapping.value.player_controlled_ai_pawn,
+                              mapping.value.ai_controlled_player_pawn);
+  PublishNativeGameDeathPawns(mapping.value.player_controlled_ai_pawn,
+                             mapping.value.ai_controlled_player_pawn);
+  PublishNativePlayerCombatPawns(mapping.value.player_controlled_ai_pawn,
+                                mapping.value.ai_controlled_player_pawn);
+  PublishNativePawnTransformGuard(mapping.value.ai_controlled_player_pawn);
   return mapping;
 }
 
@@ -524,15 +478,6 @@ void CallOriginal(HookId id, void* context, void* unused_edx, void* frame,
   UnrealFunctionExec original =
       g_hooks[HookIndex(id)].detour.original_executor;
   if (original) original(context, unused_edx, frame, result);
-}
-
-void* FrameObjectParameter(void* frame, uint32_t offset) {
-  if (!frame) return nullptr;
-  void* locals = *reinterpret_cast<void**>(
-      static_cast<uint8_t*>(frame) + 0x10);
-  return locals ? *reinterpret_cast<void**>(
-                      static_cast<uint8_t*>(locals) + offset)
-                : nullptr;
 }
 
 bool FrameIntParameter(void* frame, uint32_t offset, int32_t* output) {
@@ -563,418 +508,114 @@ CrossRole CrossRoleForPawn(void* pawn, CharacterRoleMapping* output = nullptr) {
   return CrossRole::kNative;
 }
 
+bool ResolveNativeWeaponExposure(void* pawn) {
+  return CrossRoleForPawn(pawn) == CrossRole::kLogicalPlayer;
+}
+
 // TWFC.exe+0xDE6900 copies all reflected parameters into a newly constructed
 // child FFrame before calling this UFunction's +0x68 executor, and performs
 // reflected local/out cleanup after it returns. These are UFunction Func-slot
 // hooks, not native bytecode-token handlers, so an adapted call may return
 // without advancing FFrame.Code. Non-adapted calls receive the untouched frame.
 
-void WFCDS_UNREAL_EXEC_CALL PlayerGetTransformerPawnHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context != g_player_controller.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kPlayerGetTransformerPawn, context, unused_edx,
-                 frame, result);
-    return;
-  }
+void* ResolveNativeRolePawn(void* context, bool ai) {
   CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControllerPairLive(mapping, context)) {
-    if (result) {
-      *static_cast<void**>(result) =
-          mapping.player_controlled_ai_pawn;
-    }
-    return;
-  }
-  CallOriginal(HookId::kPlayerGetTransformerPawn, context, unused_edx, frame,
-               result);
+  if (!LoadActiveMappingValue(&mapping)) return nullptr;
+  if (ai) return AiControllerPairLive(mapping, context)
+      ? mapping.ai_controlled_player_pawn : nullptr;
+  return PlayerControllerPairLive(mapping, context)
+      ? mapping.player_controlled_ai_pawn : nullptr;
 }
 
-void WFCDS_UNREAL_EXEC_CALL AiGetTransformerPawnHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context != g_mapped_ai_controller.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiGetTransformerPawn, context, unused_edx, frame,
-                 result);
-    return;
-  }
+void* ResolveNativeDownedController(void* pawn, bool ai) {
   CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      AiControllerPairLive(mapping, context)) {
-    if (result) {
-      *static_cast<void**>(result) =
-          mapping.ai_controlled_player_pawn;
-    }
-    return;
-  }
-  CallOriginal(HookId::kAiGetTransformerPawn, context, unused_edx, frame,
-               result);
+  if (!LoadActiveMappingValue(&mapping)) return nullptr;
+  if (ai) return AiControlledPlayerPawnPairLive(mapping, pawn)
+      ? mapping.mapped_ai_controller : nullptr;
+  return PlayerControlledAiPawnPairLive(mapping, pawn)
+      ? mapping.player_controller : nullptr;
 }
 
-void WFCDS_UNREAL_EXEC_CALL AiGetIsAiBuddyHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context != g_mapped_ai_controller.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiGetIsAiBuddy, context, unused_edx, frame, result);
-    return;
-  }
+bool ResolveNativePlayerCombat(void* pawn, bool activating_melee) {
   CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      AiControllerPairLive(mapping, context)) {
-    if (result) *static_cast<uint32_t*>(result) = 1u;
-    return;
-  }
-  CallOriginal(HookId::kAiGetIsAiBuddy, context, unused_edx, frame, result);
+  if (CrossRoleForPawn(pawn, &mapping) != CrossRole::kLogicalPlayer) return false;
+  if (!activating_melee) return true;
+  // Native Melee uses unguarded vehicle visibility and PickedTargets[3]
+  // accesses. A valid controller pair alone does not prove those resources
+  // survived a scripted transition. Read/validate, never construct substitutes.
+  void* vehicle = RawObjectLink(pawn, g_vehicle_form_offset);
+  void* mesh = nullptr;
+  void* owner = nullptr;
+  void* targeting = nullptr;
+  void* cylinder = nullptr;
+  void* victim = nullptr;
+  uint32_t mesh_offset = 0, targeting_offset = 0, cylinder_offset = 0, victim_offset = 0;
+  UnrealStructArrayView picked;
+  if (!vehicle || !UnrealObjectIsA(vehicle, L"TnVehicleForm") ||
+      !UnrealResolveObjectPropertyOffset(vehicle, L"_MeshComponent", &mesh_offset) || mesh_offset != 0x48 ||
+      !UnrealReadObjectProperty(vehicle, L"_MeshComponent", &mesh) ||
+      !mesh || !UnrealObjectIsA(mesh, L"SkeletalMeshComponent") ||
+      !UnrealReadObjectProperty(mesh, L"Owner", &owner) || owner != pawn ||
+      !UnrealResolveObjectPropertyOffset(mapping.player_controller, L"PlayerTargeting", &targeting_offset) || targeting_offset != 0x608 ||
+      !UnrealReadObjectProperty(mapping.player_controller, L"PlayerTargeting", &targeting) ||
+      !targeting || !UnrealObjectIsA(targeting, L"TnPlayerTargeting") ||
+      !UnrealReadStructArrayProperty(targeting, L"PickedTargets", &picked) ||
+      picked.count < 4 || picked.element_size != 8 || picked.data != RawObjectLink(targeting, 0x34) ||
+      !UnrealResolveStructFieldOffset({picked.data, picked.element_size, picked.struct_definition},
+          L"TargetActor", L"ObjectProperty", 4, &victim_offset) || victim_offset != 0 ||
+      !UnrealReadStructArrayObjectField(picked, 3, L"TargetActor", &victim) ||
+      (victim && !UnrealObjectIsA(victim, L"Actor")) ||
+      !UnrealResolveObjectPropertyOffset(pawn, L"CylinderComponent", &cylinder_offset) || cylinder_offset != 0x3F8 ||
+      !UnrealReadObjectProperty(pawn, L"CylinderComponent", &cylinder) ||
+      !cylinder || !UnrealObjectIsA(cylinder, L"CylinderComponent")) return false;
+  return PlayerControlledAiPawnPairLive(mapping, pawn);
 }
 
-void WFCDS_UNREAL_EXEC_CALL AiSetIsAiBuddyHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context != g_mapped_ai_controller.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiSetIsAiBuddy, context, unused_edx, frame, result);
-    return;
-  }
+bool ResolveNativeMeleeTarget(void* pawn, void* targeting, void* victim) {
+  // Only the game-thread native hook calls this cache. It owns no game data.
+  static NativeMeleeTargetGuard cache;
   CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      AiControllerPairLive(mapping, context)) {
-    // TnPlayerPawn has no TnAiPawn::_IsAiBuddy storage. The controller remains
-    // a buddy for the lifetime of this mapping, so writes must not fall through.
-    return;
-  }
-  CallOriginal(HookId::kAiSetIsAiBuddy, context, unused_edx, frame, result);
+  if (CrossRoleForPawn(pawn, &mapping) != CrossRole::kLogicalPlayer) return false;
+  const auto generation = g_mapping_generation.load(std::memory_order_acquire);
+  return NativeMeleeTargetSafe(&cache, GetCurrentThreadId(), generation,
+          pawn, mapping.player_controller, targeting, victim) &&
+      generation == g_mapping_generation.load(std::memory_order_acquire) &&
+      PlayerControlledAiPawnPairLive(mapping, pawn);
 }
 
-void WFCDS_UNREAL_EXEC_CALL PlayerPawnTransformHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_ai_controlled_player_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kPlayerPawnTransform, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (!LoadActiveMappingValue(&mapping) ||
-      !AiControlledPlayerPawnPairLive(mapping, context)) {
-    CallOriginal(HookId::kPlayerPawnTransform, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  // A TnPlayerPawn cannot safely use any native TnAi vehicle strategy because
-  // those strategies directly access TnAiPawn-only avoidance storage. Keep the
-  // former physical player in its verified robot form while it is driven by
-  // the bounded squad proxy. This hook is transformation-only, avoiding the
-  // previous class-wide TnAiController.Tick detour on every AI every frame.
-  if (result) *static_cast<uint32_t*>(result) = 0u;
+bool ValidateNativeDeath(void* pawn, void* controller, NativeDeathIdentity identity) {
+  PublishedRoleMapping mapping;
+  if (!identity.generation || !LoadActiveMapping(&mapping) ||
+      mapping.generation != identity.generation) return false;
+  // GameInfo.Killed executes ScoreKill/NotifyKilled before this decision.
+  // Those callbacks may detach a dying pawn. Retain the captured victim, but
+  // reject object recycling, a new mapping or reassignment to another actor.
+  const bool player = identity.role == NativeDeathRole::kPlayer;
+  if (!player && identity.role != NativeDeathRole::kAi) return false;
+  if (pawn != (player ? mapping.value.player_controlled_ai_pawn : mapping.value.ai_controlled_player_pawn) ||
+      controller != (player ? mapping.value.player_controller : mapping.value.mapped_ai_controller) ||
+      !PublishedObjectValid(pawn, player ? mapping.player_controlled_ai_pawn_index : mapping.ai_controlled_player_pawn_index) ||
+      !PublishedObjectValid(controller, player ? mapping.player_controller_index : mapping.mapped_ai_controller_index)) return false;
+  void* current_controller = RawObjectLink(pawn, g_pawn_controller_offset);
+  void* current_pawn = RawObjectLink(controller, g_controller_pawn_offset);
+  return (!current_controller || current_controller == controller) && (!current_pawn || current_pawn == pawn);
 }
 
-void WFCDS_UNREAL_EXEC_CALL PawnStartVehicleHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context ==
-      g_ai_controlled_player_pawn.load(std::memory_order_relaxed)) {
-    CharacterRoleMapping mapping;
-    if (LoadActiveMappingValue(&mapping) &&
-        AiControlledPlayerPawnPairLive(mapping, context))
-      return;
-  }
-  CallOriginal(HookId::kPawnStartVehicle, context, unused_edx, frame, result);
+NativeDeathIdentity CaptureNativeDeath(void* pawn, void* controller) {
+  PublishedRoleMapping mapping;
+  if (!LoadActiveMapping(&mapping) || !mapping.generation) return {};
+  NativeDeathIdentity identity;
+  if (pawn == mapping.value.player_controlled_ai_pawn && controller == mapping.value.player_controller)
+    identity = {NativeDeathRole::kPlayer, mapping.generation};
+  else if (pawn == mapping.value.ai_controlled_player_pawn && controller == mapping.value.mapped_ai_controller)
+    identity = {NativeDeathRole::kAi, mapping.generation};
+  // Engine.Pawn.Died supplies Controller(Owner) if Controller was detached
+  // already. Accept that exact retained victim identity, never a new owner.
+  return ValidateNativeDeath(pawn, controller, identity) ? identity : NativeDeathIdentity{};
 }
 
-void WFCDS_UNREAL_EXEC_CALL GameKilledHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  void* killed_controller =
-      FrameObjectParameter(frame, g_game_killed_player_offset);
-  void* killed_pawn = FrameObjectParameter(frame, g_game_killed_pawn_offset);
-  CharacterRoleMapping mapping;
-  const bool logical_player_died =
-      CrossRoleForPawn(killed_pawn, &mapping) == CrossRole::kLogicalPlayer &&
-      killed_controller == mapping.player_controller;
-
-  if (logical_player_died)
-    g_logical_player_death.store(true, std::memory_order_release);
-
-  CallOriginal(HookId::kGameKilled, context, unused_edx, frame, result);
-  if (!logical_player_died || !UnrealObjectValid(context) ||
-      !UnrealObjectValid(mapping.player_controller))
-    return;
-  void* respawn_helper = nullptr;
-  if (UnrealReadObjectProperty(context, L"RespawnHelper", &respawn_helper) &&
-      respawn_helper && UnrealObjectValid(respawn_helper)) {
-    UnrealCallVoidObject(respawn_helper, L"Died", L"C",
-                         mapping.player_controller);
-  }
-}
-
-void WFCDS_UNREAL_EXEC_CALL RespawnDiedHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  void* dead_controller =
-      FrameObjectParameter(frame, g_respawn_died_controller_offset);
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      dead_controller == mapping.mapped_ai_controller &&
-      AiControllerPairLive(mapping, dead_controller)) {
-    // TnGame.Killed identifies the physical TnPlayerPawn. While that actor is
-    // the logical AI buddy it must not enter the player respawn pipeline.
-    return;
-  }
-  CallOriginal(HookId::kRespawnDied, context, unused_edx, frame, result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL WeaponGivenToHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  void* pawn = FrameObjectParameter(frame, g_weapon_given_to_pawn_offset);
-  const CrossRole role = CrossRoleForPawn(pawn);
-  CallOriginal(HookId::kWeaponGivenTo, context, unused_edx, frame, result);
-  if (role == CrossRole::kLogicalPlayer)
-    UnrealCallVoidByte(context, L"SetWeaponDataType", L"Type", 1u);
-  else if (role == CrossRole::kLogicalAi)
-    UnrealCallVoidByte(context, L"SetWeaponDataType", L"Type", 2u);
-}
-
-void WFCDS_UNREAL_EXEC_CALL WeaponOnPreServerFireHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  void* logical_player =
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed);
-  void* logical_ai =
-      g_ai_controlled_player_pawn.load(std::memory_order_relaxed);
-  if ((!logical_player && !logical_ai) || !g_weapon_instigator_offset) {
-    CallOriginal(HookId::kWeaponOnPreServerFire, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  // OnPreServerFire is global and can run at every enemy shot. Instigator is
-  // an Engine.Actor field with an immutable exact-build offset, so reject all
-  // unrelated weapons before entering reflection or the mapping seqlock.
-  void* instigator = RawObjectLink(context, g_weapon_instigator_offset);
-  if (instigator != logical_player && instigator != logical_ai) {
-    CallOriginal(HookId::kWeaponOnPreServerFire, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  const CrossRole role = CrossRoleForPawn(instigator);
-  if (role == CrossRole::kLogicalPlayer) {
-    UnrealCallVoid(instigator, L"ExposeSelf");
-    return;
-  }
-  if (role == CrossRole::kLogicalAi) return;
-  CallOriginal(HookId::kWeaponOnPreServerFire, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL WeaponDropFromHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  void* instigator = nullptr;
-  UnrealReadObjectProperty(context, L"Instigator", &instigator);
-  const CrossRole role = CrossRoleForPawn(instigator);
-  int32_t clip = 0;
-  int32_t reserve = 0;
-  if (role == CrossRole::kLogicalPlayer) {
-    UnrealReadIntProperty(context, L"AmmoClipCount", &clip);
-    UnrealReadIntProperty(context, L"ReserveAmmoCount", &reserve);
-  }
-  CallOriginal(HookId::kWeaponDropFrom, context, unused_edx, frame, result);
-  if (role == CrossRole::kNative || !result) return;
-  void* dropped_pickup = *static_cast<void**>(result);
-  void* dropped_weapon = nullptr;
-  if (!dropped_pickup ||
-      !UnrealReadObjectProperty(dropped_pickup, L"Inventory",
-                                &dropped_weapon) ||
-      !dropped_weapon || !UnrealObjectIsA(dropped_weapon, L"TnWeapon"))
-    return;
-  if (role == CrossRole::kLogicalPlayer) {
-    UnrealWriteIntProperty(dropped_weapon, L"AmmoClipCount", clip);
-    UnrealWriteIntProperty(dropped_weapon, L"ReserveAmmoCount", reserve);
-  } else {
-    UnrealCallVoid(dropped_weapon, L"SetupAmmoForDefaultPlayerPickup");
-  }
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnHandleFlashBangDamageHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnHandleFlashBangDamage, context, unused_edx,
-                 frame, result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context))
-    return;
-  CallOriginal(HookId::kAiPawnHandleFlashBangDamage, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnOnBlockDamageHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnOnBlockDamage, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context))
-    return;
-  CallOriginal(HookId::kAiPawnOnBlockDamage, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnGetTargetLocationHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnGetTargetLocation, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context)) {
-    // Engine.Actor.GetTargetLocation's base implementation returns Location.
-    // Preserve that usable targeting/homing result while the AI-only
-    // WeaponAimer owner is intentionally absent under the player controller.
-    if (result)
-      std::memcpy(result,
-                  static_cast<uint8_t*>(context) + g_actor_location_offset,
-                  sizeof(float) * 3);
-    return;
-  }
-  CallOriginal(HookId::kAiPawnGetTargetLocation, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnGetAdjustedAimForHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnGetAdjustedAimFor, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context)) {
-    // Exact FFrame construction at TWFC.exe+0x40D950 stores the reflected
-    // locals/parameter buffer at +0x10. Forward the original W and
-    // StartFireLoc to PlayerController.GetAdjustedAimFor so aim assist and the
-    // live camera/controller rotation remain authoritative.
-    void* locals = frame ? *reinterpret_cast<void**>(
-                               static_cast<uint8_t*>(frame) + 0x10)
-                         : nullptr;
-    if (locals && result) {
-      void* weapon = *reinterpret_cast<void**>(
-          static_cast<uint8_t*>(locals) + g_adjusted_aim_weapon_offset);
-      std::memset(result, 0, sizeof(int32_t) * 3);
-      UnrealCallPreparedObjectStructStructResult(
-          mapping.player_controller, g_prepared_adjusted_aim, weapon,
-          static_cast<uint8_t*>(locals) + g_adjusted_aim_start_offset, result);
-    }
-    return;
-  }
-  CallOriginal(HookId::kAiPawnGetAdjustedAimFor, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnHasSameKillTargetHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-          g_player_controlled_ai_pawn.load(std::memory_order_relaxed) &&
-      context !=
-          g_ai_controlled_player_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnHasSameKillTarget, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      (PlayerControlledAiPawnPairLive(mapping, context) ||
-       AiControlledPlayerPawnPairLive(mapping, context))) {
-    if (result) *static_cast<uint32_t*>(result) = 0u;
-    return;
-  }
-  CallOriginal(HookId::kAiPawnHasSameKillTarget, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnClientStartDownedHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnClientStartDowned, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context)) {
-    // Match TnPlayerPawn's controller-first ordering, then execute the exact
-    // common TnPawn notification/state transition once.
-    UnrealCallExactVoid(mapping.player_controller,
-                        g_player_controller_start_downed);
-    UnrealCallExactVoid(context, g_base_client_start_downed);
-    return;
-  }
-  CallOriginal(HookId::kAiPawnClientStartDowned, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL AiPawnClientStopDownedHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_player_controlled_ai_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kAiPawnClientStopDowned, context, unused_edx, frame,
-                 result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      PlayerControlledAiPawnPairLive(mapping, context)) {
-    UnrealCallExactVoid(mapping.player_controller,
-                        g_player_controller_stop_downed);
-    UnrealCallExactVoid(context, g_base_client_stop_downed);
-    return;
-  }
-  CallOriginal(HookId::kAiPawnClientStopDowned, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL PlayerPawnClientStartDownedHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_ai_controlled_player_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kPlayerPawnClientStartDowned, context, unused_edx,
-                 frame, result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      AiControlledPlayerPawnPairLive(mapping, context)) {
-    // Match TnAiPawn's base-first ordering. Calling the TnPlayerPawn body here
-    // would execute its hard TnPlayerController cast against an AI controller.
-    UnrealCallExactVoid(context, g_base_client_start_downed);
-    UnrealCallExactVoid(mapping.mapped_ai_controller,
-                        g_ai_controller_start_downed);
-    return;
-  }
-  CallOriginal(HookId::kPlayerPawnClientStartDowned, context, unused_edx,
-               frame, result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL PlayerPawnClientStopDownedHook(
-    void* context, void* unused_edx, void* frame, void* result) {
-  if (context !=
-      g_ai_controlled_player_pawn.load(std::memory_order_relaxed)) {
-    CallOriginal(HookId::kPlayerPawnClientStopDowned, context, unused_edx,
-                 frame, result);
-    return;
-  }
-  CharacterRoleMapping mapping;
-  if (LoadActiveMappingValue(&mapping) &&
-      AiControlledPlayerPawnPairLive(mapping, context)) {
-    UnrealCallExactVoid(context, g_base_client_stop_downed);
-    UnrealCallExactVoid(mapping.mapped_ai_controller,
-                        g_ai_controller_stop_downed);
-    return;
-  }
-  CallOriginal(HookId::kPlayerPawnClientStopDowned, context, unused_edx,
-               frame, result);
+void NotifyNativePlayerDeath() {
+  g_logical_player_death.store(true, std::memory_order_release);
 }
 
 void WFCDS_UNREAL_EXEC_CALL SaveActiveCheckpointHook(
@@ -1012,17 +653,23 @@ void WFCDS_UNREAL_EXEC_CALL SaveActiveCheckpointHook(
       CallOriginal(HookId::kSaveActiveCheckpoint, context, unused_edx, frame,
                    result);
       return;
-    case CheckpointInterceptResult::kRunDeferredOriginal:
+    case CheckpointInterceptResult::kRunDeferredOriginal: {
+      DeferredCheckpointRequest replay_token;
+      if (!g_checkpoint_gate.CaptureReplayToken(&replay_token)) {
+        g_checkpoint_gate.FailClosed();
+        return;
+      }
       CallOriginal(HookId::kSaveActiveCheckpoint, context, unused_edx, frame,
                    result);
       if (!g_checkpoint_gate.CompleteReplay(
-              reinterpret_cast<uintptr_t>(context), manager_index, true))
+              replay_token, true))
         Log(LogLevel::kError,
-            "[Checkpoint] deferred save returned with an invalid replay token; checkpoint gate remains closed");
+            "[Checkpoint] deferred writer returned with a stale or invalid replay token; completion not acknowledged");
       else
         Log(LogLevel::kInfo,
-            "[Checkpoint] deferred save replay completed on the verified native player graph");
+            "[Checkpoint] deferred writer invocation returned on the verified native player graph; disk completion remains owned by the game");
       return;
+    }
     case CheckpointInterceptResult::kDeferred:
       if (!UnrealReadFrameDelegateParameter(frame, g_checkpoint_callback_offset,
                                              &g_checkpoint_callback)) {
@@ -1059,25 +706,8 @@ struct HookSpec {
   UnrealFunctionExec replacement;
 };
 
-struct CastPatchSpec {
-  void* instance;
-  const wchar_t* owner_path;
-  const wchar_t* function_name;
-  uint32_t opcode_offset;
-};
-
 bool RestoreInstalledAdapters() {
   bool restored_all = true;
-  for (size_t remaining = g_cast_patches.size(); remaining > 0;
-       --remaining) {
-    CastPatchState& cast_patch = g_cast_patches[remaining - 1];
-    if (!cast_patch.patch.installed) continue;
-    if (!UnrealRestoreScriptObjectOperandPatch(&cast_patch.patch)) {
-      restored_all = false;
-      continue;
-    }
-    cast_patch.function = {};
-  }
   for (size_t remaining = g_hooks.size(); remaining > 0; --remaining) {
     HookState& hook = g_hooks[remaining - 1];
     if (!hook.detour.installed) continue;
@@ -1087,6 +717,14 @@ bool RestoreInstalledAdapters() {
     }
     hook.function = {};
   }
+  if (!RemoveNativePlayerCombat()) restored_all = false;
+  if (!RemoveNativePawnTransform()) restored_all = false;
+  if (!RemoveNativeGameDeath()) restored_all = false;
+  if (!RemoveNativePawnDowned()) restored_all = false;
+  if (!RemoveNativePawnTargeting()) restored_all = false;
+  if (!RemoveNativePawnDamage()) restored_all = false;
+  if (!RemoveNativeWeaponExposure()) restored_all = false;
+  if (!RemoveNativeRolePawnGetters()) restored_all = false;
   return restored_all;
 }
 
@@ -1097,11 +735,10 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
                                  void* ai_pawn_instance,
                                  bool validate_only) {
   if (g_ready) return true;
+  if (NativeRolePawnGettersInstalled() || NativeWeaponExposureInstalled() || NativePawnDamageInstalled() ||
+      NativePawnTargetingInstalled() || NativePawnDownedInstalled() || NativeGameDeathInstalled() || NativePawnTransformInstalled() || NativePlayerCombatInstalled()) return false;
   for (const HookState& hook : g_hooks) {
     if (hook.detour.installed) return false;
-  }
-  for (const CastPatchState& cast_patch : g_cast_patches) {
-    if (cast_patch.patch.installed) return false;
   }
   if (!UnrealBridgeReady() ||
       !UnrealObjectValid(player_controller_instance) ||
@@ -1242,91 +879,30 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
   }
 
   const std::array<HookSpec, kHookCount> specs = {{
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"get_TransformerPawn", &PlayerGetTransformerPawnHook},
-      {ai_controller_instance, L"TransGame.TnAiController",
-       L"get_TransformerPawn", &AiGetTransformerPawnHook},
-      {ai_controller_instance, L"TransGame.TnAiController",
-       L"get_IsAiBuddy", &AiGetIsAiBuddyHook},
-      {ai_controller_instance, L"TransGame.TnAiController",
-       L"set_IsAiBuddy", &AiSetIsAiBuddyHook},
-      {original_player_pawn, L"TransGame.TnPlayerPawn", L"Transform",
-       &PlayerPawnTransformHook},
-      {original_player_pawn, L"TransGame.TnPawn", L"StartVehicle",
-       &PawnStartVehicleHook},
-      {nullptr, L"TransGame.TnGame", L"Killed", &GameKilledHook},
-      {nullptr, L"TransGame.TnRespawnHelper", L"Died", &RespawnDiedHook},
-      {nullptr, L"TransGame.TnWeapon", L"GivenTo", &WeaponGivenToHook},
-      {nullptr, L"TransGame.TnWeapon", L"OnPreServerFire",
-       &WeaponOnPreServerFireHook},
-      {nullptr, L"TransGame.TnWeapon", L"DropFrom", &WeaponDropFromHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"HandleFlashBangDamage",
-       &AiPawnHandleFlashBangDamageHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"OnBlockDamage",
-       &AiPawnOnBlockDamageHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"GetTargetLocation",
-       &AiPawnGetTargetLocationHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"GetAdjustedAimFor",
-       &AiPawnGetAdjustedAimForHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"HasSameKillTarget",
-       &AiPawnHasSameKillTargetHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"ClientStartDowned",
-       &AiPawnClientStartDownedHook},
-      {ai_pawn_instance, L"TransGame.TnAiPawn", L"ClientStopDowned",
-       &AiPawnClientStopDownedHook},
-      {original_player_pawn, L"TransGame.TnPlayerPawn",
-       L"ClientStartDowned", &PlayerPawnClientStartDownedHook},
-      {original_player_pawn, L"TransGame.TnPlayerPawn", L"ClientStopDowned",
-       &PlayerPawnClientStopDownedHook},
       {nullptr, L"HM_Engine.CheckpointManager", L"SaveActiveCheckpoint",
        &SaveActiveCheckpointHook},
   }};
-  const std::array<CastPatchSpec, kCastPatchCount> cast_specs = {{
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"AdjustStickInputForVehicleUnderMouseControl",
-       kCurrentPawnCastOpcodeOffset},
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"IsAbleToFire", kCurrentPawnCastOpcodeOffset},
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"AbortMelee", kCurrentPawnCastOpcodeOffset},
-      {player_controller_instance,
-       L"TransGame.TnPlayerController.PlayerWalking", L"Melee",
-       kCurrentPawnCastOpcodeOffset},
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"ShouldRecordPlayerRecord", kCurrentPawnCastOpcodeOffset},
-      {player_targeting, L"TransGame.TnPlayerTargeting", L"IsOwnerJumping",
-       0x6u},
-      {player_targeting, L"TransGame.TnPlayerTargeting",
-       L"SetMeleeAssistTarget", 0x4u},
-      {fine_aim_manager, L"TransGame.TnFineAimManager", L"StartFineAim",
-       0x26u},
-      {fine_aim_manager, L"TransGame.TnFineAimManager", L"StopFineAim",
-       0x28u},
-      {fine_aim_manager, L"TransGame.TnFineAimManager",
-       L"CheckSnipingOverheat", 0x13u},
-      {fine_aim_manager, L"TransGame.TnFineAimManager", L"NotifyTakeHit",
-       0x13u},
-      {player_controller_instance, L"TransGame.TnPlayerController",
-       L"OnSetPawn", kCurrentPawnCastOpcodeOffset},
-      {nullptr, L"TransGame.TnAiActionNavigate", L"TryTeleportToLastAnchor",
-       0x8Bu},
-      {nullptr, L"TransGame.TnSpawnPointFinder", L"FindNearAnyPlayer",
-       0x27u},
-      {nullptr, L"TransGame.TnConstrainRotationByActorCameraBehavior",
-       L"SetActor", 0x6u},
-      {nullptr, L"TransGame.TnOrbitRotationCameraBehavior", L"SetActor",
-       0x6u},
-      {nullptr, L"TransGame.TnFlyingFollowCameraBehavior",
-       L"AdjustStickInputForVehicleUnderMouseControl", 0x6u},
-      {nullptr, L"TransGame.TnLocationOffsetCameraBehavior", L"SetActor",
-       0x6u},
-      {nullptr, L"TransGame.TnHudDataObserverNormalizedDownedHealth",
-       L"CheckData", 0x6u},
-      {nullptr, L"TransGame.TnLocalPlayerFinderOwner", L"FindLocalPlayers",
-       0x6u},
-  }};
+  // All prior cooked casts now have individually validated native adapters.
+  // Never substitute a global class/IsA override for their scoped checks.
+  // RespawnHelper.Died is inlined into shipping TnGame.Killed. The mandatory
+  // NativeGameDeath adapter below owns that player/AI decision and its native
+  // OnDeath dispatch; a reflected Died executor would not intercept this path.
 
-  bool metadata_valid = true;
+  const HMODULE native_image = GetModuleHandleW(nullptr);
+  bool metadata_valid = ValidateNativeRolePawnCode(native_image) &&
+      ValidateNativeWeaponExposureCode(native_image) && ValidateNativePawnDamage(native_image) &&
+      ValidateNativePawnTargeting(native_image) && ValidateNativePawnDowned(native_image) && ValidateNativeGameDeath(native_image) &&
+      ValidateNativePlayerCombat(native_image) && ValidateNativePawnTransform(native_image) &&
+      player_controller_pawn_offset == 0x1C8 && player_pawn_controller_offset == 0x1D4 &&
+      player_vehicle_form_offset == 0x580 &&
+      NativePawnLocationDispatchSupported(native_image, original_player_pawn) &&
+      NativePawnLocationDispatchSupported(native_image, ai_pawn_instance) &&
+      NativePawnTransformDispatchSupported(native_image, original_player_pawn) &&
+      NativePawnTransformDispatchSupported(native_image, ai_pawn_instance) &&
+      actor_location_offset == 0xD8 &&
+      weapon_instigator_offset == 0x94;
+  if (!metadata_valid)
+    Log(LogLevel::kError, "[RoleAdapter] native controller pawn/buddy role image mismatch");
   for (size_t index = 0; index < specs.size(); ++index) {
     const HookSpec& spec = specs[index];
     if ((spec.instance && UnrealResolveExactScriptFunctionForObject(
@@ -1338,118 +914,17 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
                                &g_hooks[index].function)))
       continue;
     Log(LogLevel::kError,
-        "[RoleAdapter] exact function resolution failed at hook %lu",
-        static_cast<unsigned long>(index));
+        "[RoleAdapter] exact function resolution failed at hook %lu (%ls.%ls); native port required",
+        static_cast<unsigned long>(index), spec.owner_path, spec.function_name);
     metadata_valid = false;
   }
 
-  for (size_t index = 0; index < cast_specs.size(); ++index) {
-    const CastPatchSpec& spec = cast_specs[index];
-    if ((spec.instance && UnrealResolveExactScriptFunctionForObject(
-                              spec.instance, spec.owner_path,
-                              spec.function_name,
-                              &g_cast_patches[index].function)) ||
-        (!spec.instance && UnrealResolveExactScriptFunction(
-                               0, spec.owner_path, spec.function_name,
-                               &g_cast_patches[index].function)))
-      continue;
-    Log(LogLevel::kError,
-        "[RoleAdapter] exact cast function resolution failed at patch %lu",
-        static_cast<unsigned long>(index));
-    metadata_valid = false;
-  }
   if (!metadata_valid) {
     g_hooks.fill({});
-    g_cast_patches.fill({});
     return false;
   }
 
-  if (!UnrealResolveExactScriptFunctionForObject(
-          ai_pawn_instance, L"TransGame.TnPawn", L"ClientStartDowned",
-          &g_base_client_start_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          ai_pawn_instance, L"TransGame.TnPawn", L"ClientStopDowned",
-          &g_base_client_stop_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          player_controller_instance, L"TransGame.TnPlayerController",
-          L"StartDowned", &g_player_controller_start_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          player_controller_instance, L"TransGame.TnPlayerController",
-          L"StopDowned", &g_player_controller_stop_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          ai_controller_instance, L"TransGame.TnAiController", L"StartDowned",
-          &g_ai_controller_start_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          ai_controller_instance, L"TransGame.TnAiController", L"StopDowned",
-          &g_ai_controller_stop_downed) ||
-      !UnrealResolveExactScriptFunctionForObject(
-          player_controller_instance, L"Engine.PlayerController",
-          L"GetAdjustedAimFor", &g_player_controller_adjusted_aim)) {
-    Log(LogLevel::kError,
-        "[RoleAdapter] exact downed lifecycle resolution failed");
-    g_hooks.fill({});
-    g_cast_patches.fill({});
-    g_base_client_start_downed = {};
-    g_base_client_stop_downed = {};
-    g_player_controller_start_downed = {};
-    g_player_controller_stop_downed = {};
-    g_ai_controller_start_downed = {};
-    g_ai_controller_stop_downed = {};
-    g_player_controller_adjusted_aim = {};
-    g_prepared_adjusted_aim = {};
-    return false;
-  }
-
-
-  uint32_t adjusted_aim_weapon_offset = 0;
-  uint32_t adjusted_aim_start_offset = 0;
-  uint32_t controller_aim_start_offset = 0;
-  void* adjusted_aim_vector_definition = nullptr;
-  void* controller_aim_vector_definition = nullptr;
-  const UnrealFunctionHandle& ai_adjusted_aim =
-      g_hooks[HookIndex(HookId::kAiPawnGetAdjustedAimFor)].function;
-  if (!UnrealResolveExactObjectParameterOffset(
-          ai_adjusted_aim, L"W", &adjusted_aim_weapon_offset) ||
-      !UnrealResolveExactStructParameterLayout(
-          ai_adjusted_aim, L"StartFireLoc", sizeof(float) * 3,
-          &adjusted_aim_start_offset, &adjusted_aim_vector_definition) ||
-      !UnrealResolveExactStructParameterLayout(
-          g_player_controller_adjusted_aim, L"StartFireLoc",
-          sizeof(float) * 3, &controller_aim_start_offset,
-          &controller_aim_vector_definition) ||
-      adjusted_aim_vector_definition != controller_aim_vector_definition ||
-      !UnrealPrepareObjectStructStructCall(
-          player_controller_instance, g_player_controller_adjusted_aim, L"W",
-          L"StartFireLoc", sizeof(float) * 3, sizeof(int32_t) * 3,
-          &g_prepared_adjusted_aim)) {
-    Log(LogLevel::kError,
-        "[RoleAdapter] exact adjusted-aim parameter layout validation failed");
-    g_hooks.fill({});
-    g_cast_patches.fill({});
-    g_base_client_start_downed = {};
-    g_base_client_stop_downed = {};
-    g_player_controller_start_downed = {};
-    g_player_controller_stop_downed = {};
-    g_ai_controller_start_downed = {};
-    g_ai_controller_stop_downed = {};
-    g_player_controller_adjusted_aim = {};
-    g_prepared_adjusted_aim = {};
-    return false;
-  }
-
-  if (!UnrealResolveExactObjectParameterOffset(
-          g_hooks[HookIndex(HookId::kGameKilled)].function,
-          L"KilledPlayer", &g_game_killed_player_offset) ||
-      !UnrealResolveExactObjectParameterOffset(
-          g_hooks[HookIndex(HookId::kGameKilled)].function,
-          L"KilledPawn", &g_game_killed_pawn_offset) ||
-      !UnrealResolveExactObjectParameterOffset(
-          g_hooks[HookIndex(HookId::kRespawnDied)].function, L"C",
-          &g_respawn_died_controller_offset) ||
-      !UnrealResolveExactObjectParameterOffset(
-          g_hooks[HookIndex(HookId::kWeaponGivenTo)].function, L"ThisPawn",
-          &g_weapon_given_to_pawn_offset) ||
-      !UnrealResolveExactIntParameterOffset(
+  if (!UnrealResolveExactIntParameterOffset(
           g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
           L"CheckpointIndex", &g_checkpoint_index_offset) ||
       !UnrealResolveExactDelegateParameterOffset(
@@ -1461,27 +936,12 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
     Log(LogLevel::kError,
         "[RoleAdapter] exact role-event parameter layout validation failed");
     g_hooks.fill({});
-    g_cast_patches.fill({});
-    g_prepared_adjusted_aim = {};
     return false;
   }
 
   // Preflight discovers every hook/call layout without patching an executor
   // or publishing a role map. Do not wait until after AI/input quiescence to
   // discover an unrelated missing role hook.
-  bool casts_valid = true;
-  for (size_t index = 0; index < cast_specs.size(); ++index) {
-    if (UnrealValidateScriptObjectOperand(g_cast_patches[index].function,
-          cast_specs[index].opcode_offset, kDynamicCastOpcode, player_pawn_class))
-      continue;
-    casts_valid = false;
-    Log(LogLevel::kError,
-        "[RoleAdapter] read-only cast validation failed patch=%lu owner=%ls function=%ls offset=%lu",
-        static_cast<unsigned long>(index), cast_specs[index].owner_path,
-        cast_specs[index].function_name,
-        static_cast<unsigned long>(cast_specs[index].opcode_offset));
-  }
-  if (!casts_valid) return false;
   if (validate_only) return true;
 
   // Publish immutable hot-path offsets before installing any executor. The
@@ -1491,7 +951,6 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
   g_actor_location_offset = actor_location_offset;
   g_current_form_offset = player_current_form_offset;
   g_vehicle_form_offset = player_vehicle_form_offset;
-  g_weapon_instigator_offset = weapon_instigator_offset;
   g_ai_weapon_shooter_offset = ai_weapon_shooter_offset;
   g_ai_weapon_aimer_offset = ai_weapon_aimer_offset;
   g_ai_enemy_offset = ai_enemy_offset;
@@ -1500,9 +959,47 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
   g_shooter_owner_offset = shooter_owner_offset;
   g_aimer_owner_offset = aimer_owner_offset;
   g_aimer_controller_offset = aimer_controller_offset;
-  g_adjusted_aim_weapon_offset = adjusted_aim_weapon_offset;
-  g_adjusted_aim_start_offset = adjusted_aim_start_offset;
 
+  // Do not activate the pawn/buddy hooks until every remaining role/cast/
+  // lifecycle contract passed. They cannot make sibling pawn layouts safe.
+  if (!InstallNativeRolePawnGetters(native_image, GetCurrentThreadId(),
+                                    &ResolveNativeRolePawn)) {
+    Log(LogLevel::kError, "[RoleAdapter] native pawn/buddy role installation failed");
+    return false;
+  }
+  if (!InstallNativeWeaponExposure(native_image, GetCurrentThreadId(),
+                                   &ResolveNativeWeaponExposure)) {
+    Log(LogLevel::kError, "[RoleAdapter] native weapon pickup/drop/exposure installation failed");
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativePawnDamage(native_image, GetCurrentThreadId())) {
+    Log(LogLevel::kError,"[RoleAdapter] native pawn damage installation failed");
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativePawnTargeting(native_image, GetCurrentThreadId(), &ResolveNativeWeaponExposure)) {
+    Log(LogLevel::kError,"[RoleAdapter] native pawn targeting installation failed");
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativePawnDowned(native_image, GetCurrentThreadId(), &ResolveNativeDownedController)) {
+    Log(LogLevel::kError,"[RoleAdapter] native pawn downed lifecycle installation failed");
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativeGameDeath(native_image, GetCurrentThreadId(), &CaptureNativeDeath, &ValidateNativeDeath, &NotifyNativePlayerDeath)) {
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativePawnTransform(native_image, GetCurrentThreadId())) {
+    RestoreInstalledAdapters();
+    return false;
+  }
+  if (!InstallNativePlayerCombat(native_image, GetCurrentThreadId(), &ResolveNativePlayerCombat, &ResolveNativeMeleeTarget)) {
+    RestoreInstalledAdapters();
+    return false;
+  }
   for (size_t index = 0; index < specs.size(); ++index) {
     if (UnrealInstallFunctionExecDetour(g_hooks[index].function,
                                         specs[index].replacement,
@@ -1514,13 +1011,11 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
     const bool rolled_back = RestoreInstalledAdapters();
     if (rolled_back) {
       g_hooks.fill({});
-      g_cast_patches.fill({});
       g_controller_pawn_offset = 0;
       g_pawn_controller_offset = 0;
       g_actor_location_offset = 0;
       g_current_form_offset = 0;
       g_vehicle_form_offset = 0;
-      g_weapon_instigator_offset = 0;
       g_ai_weapon_shooter_offset = 0;
       g_ai_weapon_aimer_offset = 0;
       g_ai_enemy_offset = 0;
@@ -1529,50 +1024,11 @@ bool PrepareCharacterRoleAdapter(void* player_controller_instance,
       g_shooter_owner_offset = 0;
       g_aimer_owner_offset = 0;
       g_aimer_controller_offset = 0;
-      g_adjusted_aim_weapon_offset = 0;
-      g_adjusted_aim_start_offset = 0;
       g_checkpoint_index_offset = 0;
-      g_prepared_adjusted_aim = {};
     }
     return false;
   }
 
-
-  for (size_t index = 0; index < cast_specs.size(); ++index) {
-    CastPatchState& state = g_cast_patches[index];
-    if (UnrealInstallScriptObjectOperandPatch(
-            state.function, cast_specs[index].opcode_offset,
-            kDynamicCastOpcode, player_pawn_class, player_base_pawn_class,
-            &state.patch))
-      continue;
-    Log(LogLevel::kError,
-        "[RoleAdapter] Script cast patch installation failed at patch %lu",
-        static_cast<unsigned long>(index));
-    const bool rolled_back = RestoreInstalledAdapters();
-    if (rolled_back) {
-      g_hooks.fill({});
-      g_cast_patches.fill({});
-      g_controller_pawn_offset = 0;
-      g_pawn_controller_offset = 0;
-      g_actor_location_offset = 0;
-      g_current_form_offset = 0;
-      g_vehicle_form_offset = 0;
-      g_weapon_instigator_offset = 0;
-      g_ai_weapon_shooter_offset = 0;
-      g_ai_weapon_aimer_offset = 0;
-      g_ai_enemy_offset = 0;
-      g_pawn_weapon_offset = 0;
-      g_pawn_inventory_offset = 0;
-      g_shooter_owner_offset = 0;
-      g_aimer_owner_offset = 0;
-      g_aimer_controller_offset = 0;
-      g_adjusted_aim_weapon_offset = 0;
-      g_adjusted_aim_start_offset = 0;
-      g_checkpoint_index_offset = 0;
-      g_prepared_adjusted_aim = {};
-    }
-    return false;
-  }
 
   PublishMapping({});
   g_checkpoint_gate.Reset();
@@ -1589,13 +1045,11 @@ bool ShutdownCharacterRoleAdapter() {
   const bool restored_all = RestoreInstalledAdapters();
   if (restored_all) {
     g_hooks.fill({});
-    g_cast_patches.fill({});
     g_controller_pawn_offset = 0;
     g_pawn_controller_offset = 0;
     g_actor_location_offset = 0;
     g_current_form_offset = 0;
     g_vehicle_form_offset = 0;
-    g_weapon_instigator_offset = 0;
     g_ai_weapon_shooter_offset = 0;
     g_ai_weapon_aimer_offset = 0;
     g_ai_enemy_offset = 0;
@@ -1604,20 +1058,6 @@ bool ShutdownCharacterRoleAdapter() {
     g_shooter_owner_offset = 0;
     g_aimer_owner_offset = 0;
     g_aimer_controller_offset = 0;
-    g_base_client_start_downed = {};
-    g_base_client_stop_downed = {};
-    g_player_controller_start_downed = {};
-    g_player_controller_stop_downed = {};
-    g_ai_controller_start_downed = {};
-    g_ai_controller_stop_downed = {};
-    g_player_controller_adjusted_aim = {};
-    g_prepared_adjusted_aim = {};
-    g_adjusted_aim_weapon_offset = 0;
-    g_adjusted_aim_start_offset = 0;
-    g_game_killed_player_offset = 0;
-    g_game_killed_pawn_offset = 0;
-    g_respawn_died_controller_offset = 0;
-    g_weapon_given_to_pawn_offset = 0;
     g_checkpoint_index_offset = 0;
   }
   return restored_all;
@@ -1728,9 +1168,9 @@ bool ConsumeDeferredCheckpointNativeRestore(
 }
 
 bool MarkDeferredCheckpointNativeGraphVerified(
-    bool native_player_graph_valid) {
+    const DeferredCheckpointRequest& request, bool native_player_graph_valid) {
   return g_ready && g_checkpoint_gate.MarkNativeGraphVerified(
-                        CharacterRoleMappingActive(),
+                        request, CharacterRoleMappingActive(),
                         native_player_graph_valid);
 }
 
@@ -1754,8 +1194,8 @@ bool ReplayDeferredCheckpoint() {
           g_hooks[HookIndex(HookId::kSaveActiveCheckpoint)].function,
           L"CheckpointIndex", request.checkpoint_index,
           L"WriteDataCompleteCallback", g_checkpoint_callback) ||
-      g_checkpoint_gate.pending() || g_checkpoint_gate.failed_closed()) {
-    g_checkpoint_gate.AbortReplay();
+      !g_checkpoint_gate.ReplayCompleted(request)) {
+    g_checkpoint_gate.AbortReplay(request);
     return false;
   }
   g_checkpoint_callback = {};
@@ -1763,8 +1203,8 @@ bool ReplayDeferredCheckpoint() {
   return true;
 }
 
-void AbortDeferredCheckpointReplay() {
-  g_checkpoint_gate.AbortReplay();
+void AbortDeferredCheckpointReplay(const DeferredCheckpointRequest& request) {
+  g_checkpoint_gate.AbortReplay(request);
 }
 
 void FailDeferredCheckpointClosed() {

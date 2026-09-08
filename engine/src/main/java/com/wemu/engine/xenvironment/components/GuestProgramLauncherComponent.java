@@ -504,6 +504,8 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
      */
     private void applyCpuAffinity() {
         if (pid <= 0 || container == null) return;
+        if (shortcut != null && "1".equals(shortcut.getExtra(
+                com.wemu.engine.core.CpuAffinityPolicy.BEFORE_LAUNCH))) return;
 
         String list = container.getExtra("affinityCores");
         if (list == null || list.isEmpty()) return;
@@ -541,6 +543,15 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         ProcessHelper.setProcessAffinity(pid, mask);
     }
 
+    private int beforeLaunchAffinityMask() {
+        if (shortcut == null || !"1".equals(shortcut.getExtra(
+                com.wemu.engine.core.CpuAffinityPolicy.BEFORE_LAUNCH))) return 0;
+        String list = shortcut.getExtra("affinityCores", container.getExtra("affinityCores"));
+        int mask = com.wemu.engine.core.CpuAffinityPolicy.mask(list);
+        if (mask == 0) throw new IllegalStateException("Invalid opt-in CPU affinity list: " + list);
+        return mask;
+    }
+
     /*
      * There was a `checkDependencies()` here and it is gone.
      *
@@ -559,6 +570,7 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
 
     @Override
     public void stop() {
+        setDeviceSleeping(false);
         int launcherPid;
         String[] stopCommand;
         String[] stopEnvironment;
@@ -1021,6 +1033,12 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         ensureManagedSteamPrefixCurrent(execEnvVars, winePath, rootDir);
 
         String emulator = getEffectiveEmulator();
+        if (shortcut != null && "0".equals(
+                shortcut.getExtra(SharedBox64RuntimeState.AC2_WOWBOX64_KEY))) {
+            ProcessHelper.emitDiagnostic("AC II translator selected: " + emulator
+                    + "; HODLL=" + ("fexcore".equalsIgnoreCase(emulator) ? "libwow64fex.dll" : "wowbox64.dll")
+                    + "; WEMU ARM64EC routing restored");
+        }
 
         String command = "";
         String overriddenCommand = execEnvVars.get("GUEST_PROGRAM_LAUNCHER_COMMAND");
@@ -1073,11 +1091,12 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
             return execWithManagedSteamPrefixPolicies(
                     execEnvVars,
                     managedOfficialSteamRuntime,
-                    () -> ProcessHelper.exec(
+                    () -> ProcessHelper.execWithAffinity(
                             finalArgv,
                             execEnvVars.toStringArray(),
                             workingDir,
-                            this::onLauncherProcessExited));
+                            this::onLauncherProcessExited,
+                            beforeLaunchAffinityMask()));
         }
 
         rememberShutdownContext(winePath, execEnvVars, rootDir);
@@ -1085,11 +1104,12 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
         return execWithManagedSteamPrefixPolicies(
                 execEnvVars,
                 managedOfficialSteamRuntime,
-                () -> ProcessHelper.exec(
+                () -> ProcessHelper.execWithAffinity(
                         finalCommand,
                         execEnvVars.toStringArray(),
                         rootDir,
-                        this::onLauncherProcessExited));
+                        this::onLauncherProcessExited,
+                        beforeLaunchAffinityMask()));
     }
 
     /**
@@ -1608,6 +1628,23 @@ public class GuestProgramLauncherComponent extends EnvironmentComponent {
     public void suspendProcess() {
         synchronized (lock) {
             if (pid != -1) ProcessHelper.suspendProcess(pid);
+        }
+    }
+
+    private final com.wemu.engine.core.PrefixSuspendState deviceSleep =
+            new com.wemu.engine.core.PrefixSuspendState();
+
+    public void setDeviceSleeping(boolean sleeping) {
+        synchronized (lock) {
+            com.wemu.engine.core.PrefixSuspendState.Signal signal = (processId, suspend) -> {
+                if (suspend) ProcessHelper.suspendProcess(processId);
+                else ProcessHelper.resumeProcess(processId);
+            };
+            if (sleeping && !stopping) {
+                deviceSleep.suspend(new File("/proc"), shutdownWinePrefix, signal);
+            } else {
+                deviceSleep.resume(new File("/proc"), signal);
+            }
         }
     }
 

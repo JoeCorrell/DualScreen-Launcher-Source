@@ -83,6 +83,35 @@ public class WemuSession implements RuntimeSession {
 
     private XServer xServer;
     private XEnvironment environment;
+    private volatile boolean deviceSleeping;
+    private final java.util.concurrent.ExecutorService sleepExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread thread = new Thread(r, "GuestDeviceSleep");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    @Override
+    public void setDeviceSleeping(boolean sleeping) {
+        deviceSleeping = sleeping;
+        if (sleepExecutor.isShutdown()) return;
+        try {
+            sleepExecutor.execute(() -> {
+                synchronized (lifecycleLock) {
+                    applyDeviceSleepLocked();
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {
+            // Component stop releases owned stops if teardown won the race.
+        }
+    }
+
+    private void applyDeviceSleepLocked() {
+        if (environment == null || environmentStopped) return;
+        GuestProgramLauncherComponent guest =
+                environment.getComponent(GuestProgramLauncherComponent.class);
+        if (guest != null) guest.setDeviceSleeping(deviceSleeping && !stopRequested);
+    }
     private WinHandler winHandler;
     private GuestProgramLauncherComponent guestProgramLauncherComponent;
     private ALSAServerComponent alsaServerComponent;
@@ -386,12 +415,12 @@ public class WemuSession implements RuntimeSession {
          * because this is not the sync feature. Sync mirrors a chosen CPU list;
          * this refuses to overstate the machine.
          */
-        String pinned = container.getExtra("affinityCores");
+        String pinned = shortcut != null
+                ? shortcut.getExtra("affinityCores", container.getExtra("affinityCores"))
+                : container.getExtra("affinityCores");
         if (pinned != null && !pinned.isEmpty()) {
-            int cores = pinned.split(",").length;
-            // The launcher refuses to pin fewer than two, so a list that short
-            // will not be applied and must not be described either.
-            if (cores >= 2) return cores + ":" + pinned;
+            String topology = com.wemu.engine.core.CpuAffinityPolicy.topology(pinned);
+            if (!topology.isEmpty()) return topology;
         }
 
         String affinity = resolve("cpuList", container.getCPUList(true));
@@ -500,6 +529,7 @@ public class WemuSession implements RuntimeSession {
             running = true;
             try {
                 setupEnvironment(bootstrap.getStartupSelection());
+                applyDeviceSleepLocked();
             } catch (RuntimeException | Error failure) {
                 running = false;
                 stopEnvironmentLocked();
@@ -782,7 +812,11 @@ public class WemuSession implements RuntimeSession {
 
         if ("alsa".equals(audioDriver)) {
             envVars.put("ANDROID_ALSA_SERVER", rootPath + UnixSocketConfig.ALSA_SERVER_PATH);
-            envVars.put("ANDROID_ASERVER_USE_SHM", "true");
+            // The bundled ALSA plugin has one shared PCM slot and no write
+            // acknowledgement. A second transfer can overwrite samples while
+            // AAudio is still reading the first. Socket PCM preserves ownership
+            // and order, including when the audio thread is descheduled.
+            envVars.put("ANDROID_ASERVER_USE_SHM", "false");
             alsaServerComponent = new ALSAServerComponent(
                     UnixSocketConfig.createSocket(rootPath, UnixSocketConfig.ALSA_SERVER_PATH),
                     isEnabled(container, ContainerPerformanceOptions.BURST_ALIGNED_AUDIO));
@@ -1335,6 +1369,8 @@ public class WemuSession implements RuntimeSession {
      */
     @Override
     public void stop() {
+        deviceSleeping = false;
+        sleepExecutor.shutdown();
         stopRequested = true;
         /*
          * The bottom panel goes back to the console before the guest is torn

@@ -134,7 +134,8 @@ class AssetIntegrityTest {
     fun capturedComponentManifestPinsEveryRemoteArchive() {
         val manifest = JSONObject(File(assets, "components/manifest.json").readText())
             .getJSONArray("components")
-        assertThat(manifest.length()).isEqualTo(5)
+        // Includes the existing DXVK 2.6 compatibility archive alongside 3.0.
+        assertThat(manifest.length()).isEqualTo(6)
         for (index in 0 until manifest.length()) {
             val entry = manifest.getJSONObject(index)
             assertThat(entry.getString("source")).matches("[A-Za-z0-9._-]+\\.tgz")
@@ -213,7 +214,7 @@ class AssetIntegrityTest {
         val mod = File(assets, "mods/isaac-repentance")
         val payload = File(mod, "payload").canonicalFile
         val manifest = JSONObject(File(mod, "manifest.json").readText()).getJSONArray("files")
-        assertThat(manifest.length()).isEqualTo(1_209)
+        assertThat(manifest.length()).isEqualTo(1_309)
         val declared = linkedSetOf<String>()
         val targets = linkedSetOf<String>()
         for (entryIndex in 0 until manifest.length()) {
@@ -320,7 +321,8 @@ class AssetIntegrityTest {
         assertThat(manifest.getString("repository"))
             .isEqualTo("https://github.com/JoeCorrell/DualScreen-Launcher-Payloads")
         val packs = manifest.getJSONArray("packs")
-        assertThat(packs.length()).isEqualTo(2)
+        assertThat((0 until packs.length()).map { packs.getJSONObject(it).getString("root") })
+            .containsExactly("components", "mods", "botw", "plza")
         for (index in 0 until packs.length()) {
             val pack = packs.getJSONObject(index)
             assertThat(pack.getLong("bytes")).isGreaterThan(0)

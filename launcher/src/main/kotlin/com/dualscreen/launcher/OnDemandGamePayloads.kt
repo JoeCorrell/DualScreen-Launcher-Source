@@ -15,7 +15,7 @@ import org.json.JSONObject
 
 /** Download/check once before installation or launch, never in gameplay's frame path. */
 internal object OnDemandGamePayloads {
-    private val games = setOf("assassins-creed-ii")
+    private val games = setOf("assassins-creed-ii", "dishonored")
     private val lock = Any()
     fun manages(gameId: String): Boolean = gameId in games
 

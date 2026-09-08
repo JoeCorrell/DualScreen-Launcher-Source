@@ -1,5 +1,5 @@
 {
-    "version":  "launcher-2026.08.31-mod-sync-9",
+    "version":  "skyrim-1.5.97-2026.09.07-portrait-1",
     "files":  [
                   {
                       "source":  "dxgi.dll",
@@ -649,7 +649,7 @@
                   {
                       "source":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
                       "target":  "Data/SKSE/Plugins/SkyrimDualScreen.dll",
-                      "sha256":  "2e11738c6bbeeead2c7e8610d40bd6d6c42c3b137227af38b7c476b2bde6d0ed"
+                      "sha256":  "b9af34588fc2a449fc5215d2c219233add69112985638b055b82ba94466eab53"
                   }
               ]
 }

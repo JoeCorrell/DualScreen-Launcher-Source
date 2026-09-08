@@ -46,7 +46,10 @@ inline std::optional<Touch> ParseTouch(const char* bytes, size_t length) {
     if (count == 4 && !number(words[3], t.value)) return {};
     if (t.kind == TouchKind::Pinch) {
         if (count != 4 || t.value < 0.25f || t.value > 4.f) return {};
-    } else if (count == 4 && (t.kind != TouchKind::Hold || t.value < 0 || t.value > 60)) return {};
+    // CompanionGuestPanelMotionRouter sends elapsed seconds for BOTH terminal
+    // tap and hold packets. GamePanelPresentation omits it for ordinary taps.
+    // Accept both launcher encodings; never interpret duration as another action.
+    } else if (count == 4 && ((t.kind != TouchKind::Hold && t.kind != TouchKind::Tap) || t.value < 0 || t.value > 60)) return {};
     return t;
 }
 

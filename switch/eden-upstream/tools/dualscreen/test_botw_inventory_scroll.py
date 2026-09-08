@@ -22,8 +22,8 @@ def main():
     parser.add_argument('--gradle-cache', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
     args = parser.parse_args()
-    source = (Path(__file__).resolve().parents[2] /
-              'src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/BotwCompanionView.kt').read_text()
+    source = (Path(__file__).resolve().parents[3] /
+              'mods/botw/ui/src/main/java/com/dualscreen/mods/botw/BotwCompanionView.kt').read_text()
     constants = re.findall(r'        private const val GRID_\w+ =[ \t]*(?:\n            )?[^\n]+', source)
     state = source[source.index('    private var inventoryScrollY'):source.index('    private var controllerActive')]
     methods = '\n'.join(method(source, name) for name in [

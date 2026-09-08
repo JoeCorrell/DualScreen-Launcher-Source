@@ -19,6 +19,7 @@ fun gradleBuildConfigString(name: String): String =
 
 val remotelyManagedPayloads = listOf(
     "assassins-creed-ii",
+    "dishonored",
     "dead-island-de",
     "deus-ex-hrdc",
     "fallout3",

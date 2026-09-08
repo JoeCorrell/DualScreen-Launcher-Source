@@ -165,9 +165,9 @@ bool ParseMap(const std::vector<std::string_view>& fields, LiveState* state) {
   if (records.size() != count) return false;
   next.rooms.reserve(count);
   for (const std::string_view record : records) {
-    const auto values = Split(record, ',', 8);
+    const auto values = Split(record, ',', 9);
     Room room;
-    if (values.size() != 7 || !ParseInt(values[0], -1, 255, &room.grid) ||
+    if ((values.size() != 7 && values.size() != 8) || !ParseInt(values[0], -1, 255, &room.grid) ||
         !ParseInt(values[1], -1, 255, &room.safe_grid) ||
         !ParseInt(values[2], 0, std::numeric_limits<int>::max(),
                   &room.display_flags) ||
@@ -176,6 +176,7 @@ bool ParseMap(const std::vector<std::string_view>& fields, LiveState* state) {
         !ParseInt(values[5], 0, 16, &room.shape) ||
         !ParseInt(values[6], 0, 65535, &room.subtype))
       return false;
+    if (values.size() == 8 && !ParseInt(values[7], 0, std::numeric_limits<int>::max(), &room.flags)) return false;
     // Defense in depth: a malformed or modified state provider still cannot
     // disclose a descriptor the game has not marked for display.
     if (room.display_flags > 0 && room.grid >= 0) next.rooms.push_back(room);
@@ -329,6 +330,66 @@ bool ParseRun(const std::vector<std::string_view>& fields, LiveState* state) {
   return true;
 }
 
+bool ParseNativeMap(const std::vector<std::string_view>& fields,LiveState* state) {
+  if(fields.size()!=6) return false;
+  size_t count=0;
+  if(!ParseRecordCount(fields[4],2048,&count)) return false;
+  const auto records=fields[5].empty() ? std::vector<std::string_view>() : Split(fields[5],';',2049);
+  if(records.size()!=count) return false;
+  NativeMapState next;
+  for(auto record:records) {
+    const auto f=Split(record,',',12);
+    MapDrawCommand c;
+    if(f.size()!=11 || !ParseInt(f[0],0,2,&c.actor) || !PercentDecode(f[1],&c.animation) ||
+       c.animation.empty() || c.animation.size()>64 || !ParseInt(f[2],0,127,&c.frame) ||
+       !ParseDouble(f[3],-4096,4096,&c.x) || !ParseDouble(f[4],-4096,4096,&c.y) ||
+       !ParseDouble(f[5],0.001,100,&c.scale_x) || !ParseDouble(f[6],0.001,100,&c.scale_y) ||
+       !ParseDouble(f[7],0,1,&c.red) || !ParseDouble(f[8],0,1,&c.green) ||
+       !ParseDouble(f[9],0,1,&c.blue) || !ParseDouble(f[10],0,1,&c.alpha)) return false;
+    next.commands.push_back(std::move(c));
+  }
+  next.received=true;state->native_map=std::move(next);return true;
+}
+
+bool ParseProgress(const std::vector<std::string_view>& fields, LiveState* state) {
+  if (fields.size() != 12 && fields.size() != 13) return false;
+  ProgressState next;
+  auto bits = [](std::string_view value, size_t count, std::string& out) {
+    if (value.size() != count || value.find_first_not_of("01") != std::string_view::npos) return false;
+    out.assign(value); return true;
+  };
+  int readonly = 0;
+  if (!bits(fields[5],642,next.achievements) || !bits(fields[6],46,next.challenges) ||
+      !bits(fields[8],104,next.bosses) || !ParseInt(fields[9],0,1,&readonly) ||
+      !ParseInt(fields[10],0,3,&next.save_slot) ||
+      !ParseInt(fields[11],-1,100000000,&next.total_hits)) return false;
+  next.readonly = readonly != 0;
+  const auto history = fields[4].empty() ? std::vector<std::string_view>() : Split(fields[4],';',4097);
+  if (history.size()>4096) return false;
+  int previous = -1;
+  for (const auto record : history) {
+    const auto pair = Split(record,',',3);
+    PickupHistoryEntry entry;
+    if (pair.size()!=2 || !ParseInt(pair[0],1,65535,&entry.id) ||
+        !ParseInt(pair[1],0,2147483647,&entry.time) || entry.time < previous) return false;
+    previous=entry.time; next.history.push_back(entry);
+    CollectedItem pickup; pickup.id=entry.id; pickup.count=1; next.pickups.push_back(std::move(pickup));
+  }
+  const auto events=Split(fields[7],',',524);
+  if(events.size()!=523) return false;
+  for (const auto record : events) {
+    int value=0;
+    if(!ParseInt(record,std::numeric_limits<int>::min(),std::numeric_limits<int>::max(),&value)) return false;
+    next.events.push_back(value);
+  }
+  if(fields.size()==13) {
+    const auto marks=Split(fields[12],',',493);
+    if(marks.size()!=492) return false;
+    for(auto record:marks) { int value=0; if(!ParseInt(record,0,15,&value)) return false; next.completion.push_back(value); }
+  }
+  next.received=true; state->progress=std::move(next); return true;
+}
+
 }  // namespace
 
 bool PercentDecode(std::string_view input, std::string* output) {
@@ -373,10 +434,11 @@ bool ApplyStatePacket(const char* bytes, size_t size, LiveState* state,
   // Isaac can reload the mod's Lua state without restarting the process. The
   // producer sequence consequently starts at one again while the native panel
   // is still alive. Treat that first packet as a new authoritative stream.
-  if (sequence <= state->last_sequence) {
-    if (sequence != 1) return false;
-    *state = LiveState{};
-  }
+  const bool restart = sequence <= state->last_sequence;
+  if (restart && sequence != 1) return false;
+  LiveState restarted;
+  LiveState* destination = state;
+  if (restart) state = &restarted;
 
   PacketTopic parsed = PacketTopic::kNone;
   bool ok = false;
@@ -393,10 +455,18 @@ bool ApplyStatePacket(const char* bytes, size_t size, LiveState* state,
     ok = ParseRun(fields, state);
     parsed = PacketTopic::kRun;
   }
+  if (fields[1] == "D") {
+    ok = ParseNativeMap(fields,state); parsed=PacketTopic::kNativeMap;
+  }
+  if (fields[1] == "P") {
+    ok = ParseProgress(fields, state);
+    parsed = PacketTopic::kProgress;
+  }
   if (!ok) return false;
   state->last_sequence = sequence;
   state->game_frame = frame;
   state->last_packet_at = GetTickCount64();
+  if (restart) *destination = std::move(restarted);
   if (topic) *topic = parsed;
   return true;
 }

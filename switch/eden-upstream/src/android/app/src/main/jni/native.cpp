@@ -92,7 +92,7 @@ extern "C" {
 #include "hid_core/hid_types.h"
 #include "input_common/drivers/virtual_amiibo.h"
 #include "jni/arkham_companion.h"
-#include "jni/botw_companion.h"
+#include "core/companion/external_module.h"
 #include "jni/botw_romfs_assets.h"
 #include "jni/mk8d_companion.h"
 #include "core/companion/external_module.h"
@@ -712,27 +712,31 @@ extern "C" {
 
 jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwCompanionSnapshot(JNIEnv* env,
                                                                         jobject instance) {
+    auto lock = EmulationSession::GetInstance().LockSystemAccess();
     const std::string snapshot =
-        BotwCompanion::GetSnapshot(EmulationSession::GetInstance());
+        ExternalCompanion::Query(0, "");
     return env->NewStringUTF(snapshot.c_str());
 }
 
 jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwCompanionStatsSnapshot(JNIEnv* env,
                                                                              jobject instance) {
+    auto lock = EmulationSession::GetInstance().LockSystemAccess();
     const std::string snapshot =
-        BotwCompanion::GetSnapshot(EmulationSession::GetInstance(), true);
+        ExternalCompanion::Query(1, "");
     return env->NewStringUTF(snapshot.c_str());
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performBotwCompanionAction(
     JNIEnv* env, jobject instance, jint action, jlong argument) {
-    return BotwCompanion::PerformAction(EmulationSession::GetInstance(), action, argument)
+    auto lock = EmulationSession::GetInstance().LockSystemAccess();
+    return ExternalCompanion::Action64(action, argument)
                ? JNI_TRUE
                : JNI_FALSE;
 }
 
 jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwHeldPreview(JNIEnv* env, jobject) {
-    const auto snapshot = BotwCompanion::GetHeldPreview(EmulationSession::GetInstance());
+    auto lock = EmulationSession::GetInstance().LockSystemAccess();
+    const auto snapshot = ExternalCompanion::Query(2, "");
     return env->NewStringUTF(snapshot.c_str());
 }
 
@@ -742,7 +746,8 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getBotwMapDiscovery(
     if (known_regions && !text) return nullptr;
     const std::string revision = text ? text : "";
     if (text) env->ReleaseStringUTFChars(known_regions, text);
-    const auto snapshot = BotwCompanion::GetMapDiscovery(EmulationSession::GetInstance(), revision);
+    auto lock = EmulationSession::GetInstance().LockSystemAccess();
+    const auto snapshot = ExternalCompanion::Query(3, revision);
     return env->NewStringUTF(snapshot.c_str());
 }
 
@@ -985,6 +990,76 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_fillXcxCompanionSnapshot(
                                       static_cast<std::size_t>(capacity));
 }
 
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxConditions(
+    JNIEnv* env, jobject instance, jintArray condition_ids, jint ignored_types) {
+    if (!condition_ids || (ignored_types != 0 && ignored_types != 8)) return nullptr;
+    const auto count = env->GetArrayLength(condition_ids);
+    if (count < 1 || count > 128) return nullptr;
+    std::vector<jint> input(static_cast<size_t>(count));
+    env->GetIntArrayRegion(condition_ids, 0, count, input.data());
+    if (env->ExceptionCheck()) return nullptr;
+    std::vector<unsigned int> ids;
+    ids.reserve(input.size());
+    for (auto id : input) {
+        if (id < 0 || id > 8974) return nullptr;
+        ids.push_back(static_cast<unsigned int>(id));
+    }
+    const auto values = XcxCompanion::ReadConditions(EmulationSession::GetInstance(), ids, ignored_types);
+    if (values.size() != ids.size()) return nullptr;
+    const auto result = env->NewByteArray(count);
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, count, reinterpret_cast<const jbyte*>(values.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxProbeInventory(
+    JNIEnv* env, jobject instance) {
+    const auto bytes = XcxCompanion::ReadProbeInventory(EmulationSession::GetInstance());
+    if (bytes.empty()) return nullptr;
+    const auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+                           reinterpret_cast<const jbyte*>(bytes.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxEquipmentInventory(
+    JNIEnv* env, jobject instance, jint category) {
+    if (category < 1 || category > 7) return nullptr;
+    const auto bytes = XcxCompanion::ReadEquipmentInventory(EmulationSession::GetInstance(), category);
+    if (bytes.empty()) return nullptr;
+    const auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+                           reinterpret_cast<const jbyte*>(bytes.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxEquipment(
+    JNIEnv* env, jobject instance, jint character) {
+    if (character < 0 || character > 22) return nullptr;
+    const auto bytes = XcxCompanion::ReadEquipment(EmulationSession::GetInstance(), character);
+    if (bytes.empty()) return nullptr;
+    const auto result = env->NewByteArray(static_cast<jsize>(bytes.size()));
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, static_cast<jsize>(bytes.size()),
+                           reinterpret_cast<const jbyte*>(bytes.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
+jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxMapSegments(
+    JNIEnv* env, jobject instance, jint field) {
+    if (field < 1 || field > 19) return nullptr;
+    const auto bytes = XcxCompanion::ReadMapSegments(
+        EmulationSession::GetInstance(), static_cast<unsigned int>(field));
+    if (bytes.empty()) return nullptr;
+    const auto size = static_cast<jsize>(bytes.size());
+    const auto result = env->NewByteArray(size);
+    if (!result) return nullptr;
+    env->SetByteArrayRegion(result, 0, size, reinterpret_cast<const jbyte*>(bytes.data()));
+    return env->ExceptionCheck() ? nullptr : result;
+}
+
 jbyteArray Java_org_yuzu_yuzu_1emu_NativeLibrary_readXcxGameFlags(
     JNIEnv* env, jobject instance, jint bit_width, jintArray flag_ids) {
     if (!flag_ids) {
@@ -1027,6 +1102,16 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performXcxCompanionAction(
     return XcxCompanion::PerformAction(EmulationSession::GetInstance(), action, argument)
                ? JNI_TRUE
                : JNI_FALSE;
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_equipXcxItem(
+    JNIEnv* env, jobject instance, jint character, jint slot, jlong key) {
+    if (character < 0 || character > 22 || slot < 0 || slot > 11 || key < 0 ||
+        static_cast<u64>(key) > 0xFFFFFFFFULL) return JNI_FALSE;
+    return XcxCompanion::PerformAction(EmulationSession::GetInstance(),
+        6, // XcxCompanionPayload::Action::EquipItem
+        static_cast<int>(static_cast<u32>(key)), static_cast<u32>(character | (slot << 8)))
+        ? JNI_TRUE : JNI_FALSE;
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_performPlzaCompanionAction(

@@ -31,7 +31,7 @@ class Path {
 }
 ''')
     test=a.work/'MapTest.kt'
-    test.write_text('''package org.yuzu.yuzu_emu.activities
+    test.write_text('''package com.dualscreen.mods.botw
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -97,14 +97,14 @@ fun main(args:Array<String>) {
         jar('org.jetbrains.kotlin','kotlin-reflect','1.6.10'),
         jar('org.jetbrains.kotlin','kotlin-script-runtime','1.9.24'),
         jar('org.jetbrains.intellij.deps','trove4j','1.0.20200330')]
-    source=Path(__file__).resolve().parents[2]/'src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/BotwMapDiscovery.kt'
+    source=Path(__file__).resolve().parents[3]/'mods/botw/ui/src/main/java/com/dualscreen/mods/botw/BotwMapDiscovery.kt'
     classes=a.work/'classes'
     subprocess.run([str(a.java),'-Xmx384m','-cp',os.pathsep.join(compiler),
         'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler','-no-stdlib','-no-reflect',
         '-classpath',os.pathsep.join([std,annotations,json]),'-d',str(classes),
         str(source),str(stub),str(test)],check=True)
     subprocess.run([str(a.java),'-Xmx128m','-cp',os.pathsep.join([str(classes),std,json]),
-        'org.yuzu.yuzu_emu.activities.MapTestKt',str(fixture)],check=True)
+        'com.dualscreen.mods.botw.MapTestKt',str(fixture)],check=True)
 
 
 if __name__=='__main__':main()

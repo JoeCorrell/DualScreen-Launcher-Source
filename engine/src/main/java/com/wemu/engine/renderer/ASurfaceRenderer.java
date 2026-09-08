@@ -25,7 +25,7 @@ import com.wemu.engine.xserver.XServer;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -144,9 +144,14 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     private FrameRating hudRef = null;
     private final AtomicInteger skipFpsCount = new AtomicInteger(0);
 
-    private final HashMap<Integer, WindowSurface> windowSurfaces = new HashMap<>();
+    private final ConcurrentHashMap<Integer, WindowSurface> windowSurfaces = new ConcurrentHashMap<>();
+    // Lifecycle never acquires X locks while holding this lock. X workers may
+    // hold their normal locks before registering a surface control.
+    private final Object surfaceRegistrationLock = new Object();
     private final ArrayList<RenderableWindow> renderList = new ArrayList<>();
     private int renderListSize = 0;
+    private int[] sceneRows = new int[11 * 32];
+    private int sceneRowCount;
 
     private Window desktopWindow = null;
     private Rect cachedDesktopDst = null;
@@ -287,6 +292,10 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     // --- Surface lifecycle ---------------------------------------------------
 
     public boolean onSurfaceCreated(Surface surface) {
+        synchronized (surfaceRegistrationLock) { return createSurfaceLocked(surface); }
+    }
+
+    private boolean createSurfaceLocked(Surface surface) {
         currentSurface = surface;
         if (surfaceInitialized) {
             if (nativeReattachSurface(surface)) {
@@ -359,10 +368,14 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
          * That is a window that is running and cannot be seen — which is
          * exactly what a game "launching into the background" looks like.
          */
-        updateScene();
+        queueSurfaceSceneRefresh(false);
     }
 
     public void onSurfaceDestroyed() {
+        synchronized (surfaceRegistrationLock) { destroySurfaceLocked(); }
+    }
+
+    private void destroySurfaceLocked() {
         currentSurface = null;
         if (surfaceInitialized) {
             nativeDestroyScanout();
@@ -410,14 +423,17 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     // --- Scene ---------------------------------------------------------------
 
     public void updateScene() {
-        renderListSize = 0;
         try (XLock xl = xServer.lock(XServer.Lockable.WINDOW_MANAGER,
                                      XServer.Lockable.DRAWABLE_MANAGER)) {
+            if (!surfaceInitialized || currentSurface == null) return;
+            // Collection and submission share mutable scratch storage. Keep
+            // both under the existing X locks, in their established order.
+            renderListSize = 0;
             collectWindows(xServer.windowManager.rootWindow,
                     xServer.windowManager.rootWindow.getX(),
                     xServer.windowManager.rootWindow.getY());
+            pushRenderList();
         }
-        pushRenderList();
     }
 
     /**
@@ -484,7 +500,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
 
     private void pushRenderList() {
         notePrimaryWindow();
-        nativeBeginTransaction();
+        sceneRowCount = 0;
         HashSet<Integer> visibleIds = new HashSet<>();
 
         for (int i = 0; i < renderListSize; i++) {
@@ -536,7 +552,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
                 ws.lastDst.set(geom.dst);
                 ws.lastSrc.set(geom.src);
 
-                nativeUpdateWindow(contentId, shouldShow, i,
+                appendSceneWindow(contentId, shouldShow, i,
                         geom.src.left, geom.src.top, geom.src.right, geom.src.bottom,
                         geom.dst.left, geom.dst.top, geom.dst.right, geom.dst.bottom);
             }
@@ -547,11 +563,23 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
             WindowSurface ws = entry.getValue();
             if (ws.visible) {
                 ws.visible = false;
-                nativeUpdateWindow(entry.getKey(), false, ws.zOrder, 0, 0, 0, 0, 0, 0, 0, 0);
+                appendSceneWindow(entry.getKey(), false, ws.zOrder, 0, 0, 0, 0, 0, 0, 0, 0);
             }
         }
 
-        nativeApplyTransaction();
+        nativeUpdateWindows(sceneRows, sceneRowCount);
+    }
+
+    private void appendSceneWindow(int id, boolean visible, int z,
+                                   int sl, int st, int sr, int sb,
+                                   int dl, int dt, int dr, int db) {
+        int at = sceneRowCount * 11;
+        if (at + 11 > sceneRows.length)
+            sceneRows = java.util.Arrays.copyOf(sceneRows, sceneRows.length * 2);
+        sceneRows[at++] = id; sceneRows[at++] = visible ? 1 : 0; sceneRows[at++] = z;
+        sceneRows[at++] = sl; sceneRows[at++] = st; sceneRows[at++] = sr; sceneRows[at++] = sb;
+        sceneRows[at++] = dl; sceneRows[at++] = dt; sceneRows[at++] = dr; sceneRows[at] = db;
+        ++sceneRowCount;
     }
 
     /** Remembers the largest real, presented window on the primary monitor. */
@@ -638,6 +666,13 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     }
 
     private WindowSurface getOrCreateWindowSurface(int contentId, int w, int h, String debugName) {
+        synchronized (surfaceRegistrationLock) {
+            if (!surfaceInitialized || currentSurface == null) return null;
+            return registerWindowSurfaceLocked(contentId, w, h, debugName);
+        }
+    }
+
+    private WindowSurface registerWindowSurfaceLocked(int contentId, int w, int h, String debugName) {
         WindowSurface ws = windowSurfaces.get(contentId);
         if (ws != null && (ws.width != w || ws.height != h)) {
             windowSurfaces.remove(contentId);
@@ -1514,11 +1549,7 @@ public class ASurfaceRenderer implements WindowManager.OnWindowModificationListe
     private native void nativeRegisterWindowSC(long contentId, String debugName);
     private native void nativeUnregisterWindowSC(long contentId);
 
-    private native void nativeBeginTransaction();
-    private native void nativeApplyTransaction();
-    private native void nativeUpdateWindow(long contentId, boolean visible, int zOrder,
-                                           int srcL, int srcT, int srcR, int srcB,
-                                           int dstL, int dstT, int dstR, int dstB);
+    private native void nativeUpdateWindows(int[] packedRows, int count);
 
     private native boolean nativeSetWindowBuffer(long contentId, long ahbPtr, int fenceFd,
                                               long windowId, long serial, AHBImage ahbImage,

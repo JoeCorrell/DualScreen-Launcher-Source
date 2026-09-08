@@ -24,7 +24,9 @@ unsigned fail_write_number=0,mid_write_dirty=0;
 void SetThrowerCache(void* p){std::memcpy(thrower.bytes+0x34,&p,4);}
 void* GetThrowerCache(){void* p=nullptr;std::memcpy(&p,thrower.bytes+0x34,4);return p;}
 Object* Lookup(void* p){for(auto* o:objects)if(p==o->bytes && o->valid)return o;return nullptr;}
-uint32_t CacheOffset(){return kind==4 ? 0x440:kind ? kWeaponCacheSchemas[kind-1].known_offset:0;}
+uint32_t CacheOffset(){return kind ? kWeaponCacheSchemas[kind-1].known_offset:0;}
+void SetBeamCache(void* p){std::memcpy(weapon.bytes+0x394,&p,4);}
+void* GetBeamCache(){void* p=nullptr;std::memcpy(&p,weapon.bytes+0x394,4);return p;}
 void SetCache(void* p){if(kind)std::memcpy(weapon.bytes+CacheOffset(),&p,4);}
 void* GetCache(){void* p=nullptr;if(kind)std::memcpy(&p,weapon.bytes+CacheOffset(),4);return p;}
 bool Capture(NativeWeaponDataCache* out){return NativeCaptureWeaponDataCache(GetCurrentThreadId(),pawn.bytes,weapon.bytes,new_data.bytes,out);}
@@ -35,7 +37,7 @@ void Reset(unsigned k=1){
   context={};context.objects={pawn.bytes,weapon.bytes,lerper.bytes,world.bytes,old_data.bytes,controller.bytes,pawn.bytes};
   for(size_t i=0;i<context.objects.size();++i)context.indices[i]=Lookup(context.objects[i])->index;
   context.captured=true;context.thread=GetCurrentThreadId();context.interval={1,2,4,1};
-  SetCache(old_data.bytes);SetThrowerCache(old_data.bytes);assert(Capture(&saved));
+  SetCache(old_data.bytes);if(kind==4)SetBeamCache(old_data.bytes);SetThrowerCache(old_data.bytes);assert(Capture(&saved));
 }
 void Data(bool rollback=false){context.objects[4]=rollback ? old_data.bytes:new_data.bytes;context.indices[4]=Lookup(context.objects[4])->index;}
 void Reject(bool rollback=false){const auto w=weapon;const unsigned n=writes;
@@ -66,12 +68,13 @@ bool UnrealObjectIsA(void* p,const wchar_t* type){
   if(!Lookup(p))return false;
   if(p==thrower.bytes)return !std::wcscmp(type,L"TnGrenadeThrower");
   if(p==weapon.bytes){for(size_t i=0;i<kWeaponCacheSchemas.size();++i) {
-    if(!std::wcscmp(type,kWeaponCacheSchemas[i].pawn_class))return kind==i+1 || (ambiguous && i==2);
+    if(!std::wcscmp(type,kWeaponCacheSchemas[i].pawn_class))return kind==i+1 || (kind==4 && i==0) || (ambiguous && i==2);
     }
     return false;
   }
   if(p==old_data.bytes || p==new_data.bytes || p==other.bytes){
     if(!std::wcscmp(type,L"TnWeaponData"))return true;
+    if(kind==4 && !std::wcscmp(type,L"TnWeaponDataBeam"))return !(bad_type && p==new_data.bytes);
     if(kind && !std::wcscmp(type,kWeaponCacheSchemas[kind-1].data_class))return !(bad_type && p==new_data.bytes);
   }
   return false;
@@ -88,6 +91,7 @@ bool UnrealReadStructArrayObjectField(const UnrealStructArrayView&,int32_t i,con
 }
 bool UnrealResolveObjectPropertyOffset(void* p,const wchar_t* name,uint32_t* off){
   if(p==thrower.bytes && !std::wcscmp(name,L"GrenadeData")){*off=0x34;return true;}
+  if(p==weapon.bytes && kind==4 && !std::wcscmp(name,L"BeamData")){*off=0x394+(bad_layout ? 4:0);return true;}
   if(p!=weapon.bytes || !kind || std::wcscmp(name,kWeaponCacheSchemas[kind-1].field))return false;
   *off=CacheOffset()+(bad_layout ? 1:0);return true;
 }
@@ -95,15 +99,16 @@ bool UnrealReadObjectProperty(void* p,const wchar_t* name,void** out){uint32_t o
   if(p==weapon.bytes && !std::wcscmp(name,L"GrenadeThrower")){*out=thrower.bytes;return true;}
   if(p==thrower.bytes && !std::wcscmp(name,L"ThrowerPawn")){*out=thrower_owner;return true;}
   if(!UnrealResolveObjectPropertyOffset(p,name,&off))return false;
-  *out=p==thrower.bytes ? GetThrowerCache():GetCache();return true;
+  *out=p==thrower.bytes ? GetThrowerCache():(kind==4 && !std::wcscmp(name,L"BeamData")) ? GetBeamCache():GetCache();return true;
 }
 bool UnrealWriteObjectPropertyExpected(void* p,const wchar_t* name,void* expected,void* desired){
   uint32_t off=0;MEMORY_BASIC_INFORMATION info{};
-  if(!UnrealResolveObjectPropertyOffset(p,name,&off) || expected!=(p==thrower.bytes ? GetThrowerCache():GetCache()) || fail_write ||
+  void* current=nullptr;
+  if(!UnrealResolveObjectPropertyOffset(p,name,&off) || !UnrealReadObjectProperty(p,name,&current) || expected!=current || fail_write ||
       (fail_write_number && writes+1==fail_write_number) ||
       !VirtualQuery(p,&info,sizeof(info)) || !(info.Protect&PAGE_READWRITE))return false;
   assert(g_data_cache_busy && Lookup(desired));
-  if(p==thrower.bytes)SetThrowerCache(desired);else SetCache(desired);
+  if(p==thrower.bytes)SetThrowerCache(desired);else if(kind==4 && !std::wcscmp(name,L"BeamData"))SetBeamCache(desired);else SetCache(desired);
   ++writes;
   if(writes==1 && mid_write_dirty==1){timer_count=1;timer_object=thrower.bytes;}
   if(writes==1 && mid_write_dirty==2)++thrower.index;
@@ -117,12 +122,15 @@ int main(int argc,char** argv){
     code(0x109EAEB2,{0x89,0x87,0x84,0x03,0,0}); // script+384 -> raw BeamData+394
     code(0x109EE797,{0x89,0x87,0x94,0x03,0,0}); // script+394 -> raw GrenadeData+3A4
     code(0x10AB6F57,{0x89,0x87,0x88,0x03,0,0}); // script+388 -> raw GrenadeBagData+398
+    code(0x109F2CD2,{0x89,0x87,0x8c,0x03,0,0}); // script+38C -> raw RepairData+39C
+    code(0x109F2CFF,{0xe8,0x6c,0x81,0xff,0xff}); // Repair calls Beam.UpdateData
   }
   for(unsigned i=0;i<4000;++i){Reset(i%5);const auto original=weapon,original_thrower=thrower;Data();
     assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kApplied);
-    assert(writes==(kind==3 ? 2u:kind ? 1u:0u));auto expected=original,expected_thrower=original_thrower;
+    assert(writes==((kind==3 || kind==4) ? 2u:kind ? 1u:0u));auto expected=original,expected_thrower=original_thrower;
     if(kind==3){void* p=new_data.bytes;std::memcpy(expected_thrower.bytes+0x34,&p,4);}
     if(kind){void* p=new_data.bytes;std::memcpy(expected.bytes+CacheOffset(),&p,4);}
+    if(kind==4){void* p=new_data.bytes;std::memcpy(expected.bytes+0x394,&p,4);}
     assert(!std::memcmp(expected.bytes,weapon.bytes,sizeof(weapon.bytes)));
     assert(!std::memcmp(expected_thrower.bytes,thrower.bytes,sizeof(thrower.bytes)));
     const unsigned n=writes;assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kApplied && writes==n);
@@ -137,6 +145,23 @@ int main(int argc,char** argv){
   Reset(3);Data();fail_write_number=2;
   assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && writes==1 && GetThrowerCache()==old_data.bytes);
   fail_write_number=0;Data(true);assert(NativeRetargetWeaponDataCache(saved,true)==NativePlayerServiceResult::kApplied && GetCache()==old_data.bytes);
+  Reset(4);Data();fail_write_number=2;
+  assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && writes==1 && GetBeamCache()==old_data.bytes);
+  fail_write_number=0;Data(true);
+  assert(NativeRetargetWeaponDataCache(saved,true)==NativePlayerServiceResult::kApplied && GetCache()==old_data.bytes && GetBeamCache()==old_data.bytes);
+  Reset(4);Data();SetBeamCache(other.bytes);Reject();
+  Reset(4);Data();SetBeamCache(nullptr);Reject();
+  Reset(4);Data();bad_layout=true;Reject();
+  Reset(4);Data();ambiguous=true;Reject();
+  Reset(4);SetBeamCache(new_data.bytes);NativeWeaponDataCache split;assert(!Capture(&split));
+  Reset(4);Data();publish_failure=true;
+  assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && writes==1);
+  publish_failure=false;Data(true);
+  assert(NativeRetargetWeaponDataCache(saved,true)==NativePlayerServiceResult::kApplied && GetCache()==old_data.bytes && GetBeamCache()==old_data.bytes);
+  Reset(4);Data();mid_write_dirty=3;
+  assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && writes==1 && GetBeamCache()==old_data.bytes);
+  for(unsigned d=1;d<=7;++d){Reset(4);Data();dirty=d;
+    assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && !g_data_cache_busy);}
   for(unsigned d=1;d<=3;++d){Reset(3);Data();mid_write_dirty=d;
     assert(NativeRetargetWeaponDataCache(saved,false)==NativePlayerServiceResult::kStateMismatch && writes==1 && GetThrowerCache()==old_data.bytes);}
   Reset(3);Data();timer_count=1;timer_object=thrower.bytes;Reject();

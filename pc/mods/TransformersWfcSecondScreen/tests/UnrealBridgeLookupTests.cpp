@@ -564,12 +564,19 @@ int main(int argc,char** argv) {
   UnrealArrayView delegate_array{delegate_entries, 2, 2}, observed_array;
   Put(binding, 0x110, delegate_array);
   uint32_t observer_offset = 0;
+  assert(UnrealResolveArrayPropertyOffset(binding, L"NewEnemyObservers", &observer_offset) && observer_offset==0x110);
+  assert(!UnrealResolveArrayPropertyOffset(binding, L"OwnerRef", &observer_offset) && !observer_offset);
+  assert(!UnrealResolveArrayPropertyOffset(nullptr, L"NewEnemyObservers", &observer_offset));
+  assert(!UnrealResolveArrayPropertyOffset(binding, nullptr, &observer_offset));
+  assert(!UnrealResolveArrayPropertyOffset(binding, L"NewEnemyObservers", nullptr));
   assert(UnrealReadDelegateArrayProperty(binding, L"NewEnemyObservers", &observed_array, &observer_offset));
   assert(observer_offset == 0x110 && observed_array.count == 2 && observed_array.data == delegate_entries);
   for (auto layout : {uint32_t{2 | (12 << 10) | (0x110 << 20)},
                       uint32_t{1 | (4 << 10) | (0x110 << 20)},
                       uint32_t{1 | (12 << 10) | (0x18 << 20)}}) {
     Put(observers_field, 0x30, layout);
+    observer_offset=123;
+    assert(!UnrealResolveArrayPropertyOffset(binding, L"NewEnemyObservers", &observer_offset) && !observer_offset);
     assert(!UnrealReadDelegateArrayProperty(binding, L"NewEnemyObservers", &observed_array, &observer_offset));
     assert(!observed_array.data && !observer_offset);
   }
@@ -691,6 +698,25 @@ int main(int argc,char** argv) {
   assert(!UnrealResolveFloatPropertyOffset(nullptr,L"BaseEyeHeight",&eye_offset));
   assert(!UnrealResolveFloatPropertyOffset(binding,nullptr,&eye_offset));
   assert(!UnrealResolveFloatPropertyOffset(binding,L"BaseEyeHeight",nullptr));
+  // Native current-character copies consume reflected struct field layouts.
+  // Exercise the real resolver, not just the identity suite's schema fixture.
+  const UnrealStructValueView field_view{binding,sizeof(Object),classes[8]};
+  uint32_t field_offset=0;
+  assert(UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",L"FloatProperty",4,&field_offset) && field_offset==0x124);
+  assert(!UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",L"IntProperty",4,&field_offset) && field_offset==UINT32_MAX);
+  assert(!UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",L"FloatProperty",8,&field_offset));
+  assert(!UnrealResolveStructFieldOffset(field_view,L"MissingHeight",L"FloatProperty",4,&field_offset));
+  assert(!UnrealResolveStructFieldOffset(field_view,nullptr,L"FloatProperty",4,&field_offset));
+  assert(!UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",nullptr,4,&field_offset));
+  assert(!UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",L"FloatProperty",4,nullptr));
+  for(uint32_t size:{0u,0x124u,0x127u}) {
+    auto short_view=field_view;short_view.size=size;
+    assert(!UnrealResolveStructFieldOffset(short_view,L"BaseEyeHeight",L"FloatProperty",4,&field_offset));
+  }
+  const uint32_t field_metadata=*reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(eye_height)+0x30);
+  Put(eye_height,0x30,(field_metadata&~1023u)|2u);
+  assert(!UnrealResolveStructFieldOffset(field_view,L"BaseEyeHeight",L"FloatProperty",4,&field_offset));
+  Put(eye_height,0x30,field_metadata);
   // Capacity retuning uses a typed scalar CAS, never an unchecked write into
   // a cached-readable page or a neighboring field/array element.
   void* ammo_field=MakeObject(L"AmmoIncrease",11,classes[8]);Link(classes[8],ammo_field);
@@ -799,5 +825,5 @@ int main(int argc,char** argv) {
   assert(!UnrealCallVoidByteBool(collision_receiver,L"SetRBCollidesWithChannel",L"Channel",15,L"Value",true));
   assert(collision_calls==3000);
   TestObjectClones(argc>1 ? argv[1]:nullptr);
-  std::puts("UnrealBridgeLookupTests passed (including rooted clone-array allocation/rollback)");
+  std::puts("UnrealBridgeLookupTests passed (including rooted array/property clones, 2000 scalar commit/rollback cycles, copied-journal and callback/identity rejection; engine allocator/GC fixtures, not gameplay)");
 }

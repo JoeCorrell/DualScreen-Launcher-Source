@@ -10,7 +10,7 @@ def main():
     p.add_argument('--work', type=Path, required=True)
     a = p.parse_args()
     root = Path(__file__).resolve().parents[2]
-    source = root/'src/android/app/src/main/jni/botw_companion.cpp'
+    source = root.parent/'mods/botw/native/state.cpp'
     text = source.read_text()
     begin = text.index('std::optional<VAddr> ResolvePointerGetter(')
     end = text.index('std::optional<s32> ReadGameDataS32(', begin)

@@ -12,18 +12,60 @@ image base and are never used on another executable version.
   disassembly of that executable.
 - Structure/function source: CommonLibSSE-NG commit `b93280e`.
 
-## Retired character preview
+## Current character renderer: orientation fix (2026-09-07)
+
+`CustomPlayerPreview.cpp` is the active private NIF/DDS renderer. The older
+actor-clone path remains disabled. Two independent errors caused the portrait
+to look backwards or inside-out:
+
+1. The private view looks from -Y toward +Y, with Z up. The supplied Argonian
+   bind-pose face points +Y. `Inspect-Character` resolves its eyes to Y
+   7.356..8.171 while the head spans -7.052..13.841. The old -7 degree default
+   yaw viewed the back. The new 173 degree yaw turns the assembled skeleton
+   toward the camera, retaining the slight portrait angle and rotating normals
+   and tangents consistently. No per-part flip is applied.
+2. The view's Y/Z swap has determinant -1. With the D3D viewport, exterior
+   NIF triangles are counterclockwise on screen, but the rasterizer selected
+   clockwise fronts. It discarded outer faces and exposed inner/rear surfaces,
+   including mouth/eye geometry. `FrontCounterClockwise=TRUE` corrects this
+   while retaining back-face culling. Disabling culling or reversing only the
+   head would not fix the coordinate contract.
+
+Evidence: the older checkout's `.work/argonian-head-assets`, `nifly` source,
+CommonLib's `NiSkinInstance`, `NiSkinData` and `NiTransform` definitions, and
+existing 1.5.97 camera disassembly at RVA `0x00C66710`. Bone-world times
+skin-to-bone composition is already correct; a nonidentity rotation/translation
+inverse-bind regression confirms it. No game offsets or hooks were changed.
+
+The WARP regression renders a red exterior and green rear triangle through
+the production pipeline. Before the fix it sees green; afterward it sees red,
+and a 180 degree turn correctly sees green. It also checks that the default
+camera sees the +Y front without mirroring. The supplied Argonian eyes have
+80 outward and zero inward normal/winding matches. Optional head renders use
+diagnostic grey materials and geometric normals where FaceGen omits normals;
+they are not a textured device test.
+
+Review also fixed stale scene publication across world resets, out-of-order
+readbacks after ring wrap, incomplete GPU initialization retries, a missing
+model-space normal-map fallback, and unchecked DDS dimensions/mip counts/pixel
+layouts. Renderer regressions cover these paths except forced GPU allocation
+failure. The existing UI harness now verifies the intentional disabled-map
+navigation contract rather than expecting an unreachable page.
+
+Run `tests/Run-Tests.ps1 -Build` with the dependency root described in README.
+Local reproduction and build receipts are in `.work/skyrim-render-fix` at the
+workspace root. Gameplay/device acceptance remains a separate check.
+
+## Retired actor-clone preview (historical)
 
 The actor-clone preview was removed after device testing showed that sharing
 Skyrim's UI3D manager with a second live actor scene could destabilize camera,
-equipment, and render-resource ownership. The Character page is now a
-read-only status/objective/equipment view.
+equipment, and render-resource ownership. The Character page subsequently
+gained the private asset renderer described above.
 
-The configuration key and three bridge exports remain as no-op ABI shims so a
-mixed-version install fails safely or stays dormant. No character surface,
-point-cloud payload, scene traversal, clone update, camera control, GPU
-readback, or panel repaint loop is scheduled. The bridge version was bumped
-when the obsolete 4,096-point snapshot payload was removed.
+The obsolete 4,096-point snapshot payload was removed in an earlier bridge
+version. The configuration key and character exports now serve the private
+renderer; they no longer act as no-op shims. No live actor clone is scheduled.
 
 The rejected approaches remain explicit: never reparent the live player root,
 create a second gameplay Actor, open a hidden menu, capture the main

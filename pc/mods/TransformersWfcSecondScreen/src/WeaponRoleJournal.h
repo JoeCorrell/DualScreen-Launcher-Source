@@ -5,6 +5,7 @@
 #include "NativeWeaponDataCache.h"
 #include "NativeWeaponRoleData.h"
 #include "NativeWeaponAmmo.h"
+#include "NativeWeaponRetention.h"
 namespace wfcds {
 struct InventoryWeaponRole {
   void* weapon=nullptr;
@@ -22,6 +23,7 @@ struct InventoryWeaponRole {
   NativeWeaponDataCache data_cache{};
   NativeWeaponRoleData role_data{};
   NativeWeaponAmmo ammo{};
+  NativeWeaponRetention retention{};
 };
 // Identity/topology comparison only. Both snapshots must first pass the live
 // inventory reader. Heat can evolve during the intervening native AI ticks;
@@ -32,6 +34,8 @@ inline bool SameInventoryWeaponRoleIdentity(const InventoryWeaponRole& a,const I
       a.desired_data==b.desired_data && a.heat_state_captured==b.heat_state_captured &&
       a.weapon_heat==b.weapon_heat && a.weapon_heat_index==b.weapon_heat_index &&
       a.progress.captured==b.progress.captured &&
+      a.retention.captured==b.retention.captured &&
+      (!a.retention.captured || SameWeaponRetentionIdentity(a.retention,b.retention)) &&
       a.role_data.captured==b.role_data.captured &&
       (!a.role_data.captured || SameWeaponRoleDataIdentity(a.role_data,b.role_data)) &&
       a.ammo.captured==b.ammo.captured &&

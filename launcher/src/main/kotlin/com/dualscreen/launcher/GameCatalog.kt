@@ -1,6 +1,6 @@
 package com.dualscreen.launcher
 
-enum class LowerPanelMode { NATIVE_WINDOW, STARDEW, VALHEIM }
+enum class LowerPanelMode { NATIVE_WINDOW, STARDEW, VALHEIM, DIAGNOSTICS }
 
 data class FileRule(
     val path: String,
@@ -79,11 +79,33 @@ object GameCatalog {
             windowHints = listOf("skyrim", "skyrimse"),
         ),
         SupportedGame(
+            id = "crysis3",
+            title = "Crysis 3",
+            summary = "Read-only native touchscreen trial. Live fields remain under validation; gameplay actions disabled.",
+            requiredBuild = "Crysis 3 PC 1.2.1.1000 (verified 32-bit executable)",
+            executableCandidates = listOf("Bin32/Crysis3.exe"),
+            // Do not migrate saves from WEMU or expose the whole profile as a
+            // save folder until checkpoint/save-file semantics are verified.
+            saveDirectory = "",
+            requiredFiles = listOf("Bin32/Crysis3.exe", "C3/Scripts.pak", "C3/GameData.pak", "C3/UI.pak"),
+            fileRules = listOf(FileRule(
+                path = "Bin32/Crysis3.exe",
+                bytes = 86_636_544L,
+                sha256AnyOf = setOf(
+                    "f332e2fb466ec8ce44336a4af06cd498bb5a787d7352548c76f2e4ec008f5e8e",
+                    "fffd52e0c483b55f04e0048dff0c45dd445734cfcf6470aa3d84fbf84040e055",
+                ),
+            )),
+            panelMode = LowerPanelMode.NATIVE_WINDOW,
+            nativeDllOverrides = mapOf("dinput8" to "native,builtin"),
+            windowHints = listOf("crysis3", "crysis 3"),
+        ),
+        SupportedGame(
             id = "assassins-creed-ii",
             title = "Assassin's Creed II",
             storageName = "Assassins Creed II",
             summary = "Animus companion development build. Live integration is in progress.",
-            requiredBuild = "PC 32-bit executable (verified SHA256 23a73e5f2d03)",
+            requiredBuild = "Verified PC 32-bit executable, original or dev.18 landing patch",
             executableCandidates = listOf("AssassinsCreedIIGame.exe"),
             // AC II distributions store saves through different Ubisoft backends.
             // Preserve the existing prefix's saves until this build's path is verified.
@@ -91,11 +113,43 @@ object GameCatalog {
             requiredFiles = listOf("AssassinsCreedIIGame.exe", "DataPC.forge", "DataPC_extra.forge"),
             fileRules = listOf(FileRule(
                 path = "AssassinsCreedIIGame.exe",
-                bytes = 34_693_768L,
-                sha256 = "23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92",
+                // The exact landing-patch output adds a code section and has a
+                // different length. Both complete hashes remain mandatory;
+                // other modified executables still fail compatibility checks.
+                sha256AnyOf = setOf(
+                    "23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92",
+                    "e0520f85b2cb3ac10ce59c8073cebd5853ab6395b3d2303f368b9e3203595abd",
+                    "da55d92905936ecd79e287fc268ae4af59e242f8cbf6ab9b29a566847ff4f9a3",
+                    "e680e6109c39828b4f5e842d2b53fae388638a36800bdb17b5e9eb127efefb39",
+                    "89c7bbb81d44b5bed37b9e71302689742933e9732d918c1f1405619ebd58c088",
+                ),
+            )),
+            nativeDllOverrides = mapOf("dinput8" to "native,builtin", "dsound" to "builtin,native"),
+            windowHints = listOf("assassinscreediigame", "assassin's creed 2", "scimitarenginewindowclass"),
+        ),
+        SupportedGame(
+            id = "dishonored",
+            title = "Dishonored",
+            summary = "Dual-screen map, powers, equipment, and journal interface in development.",
+            requiredBuild = "Dishonored PC 32-bit, build 334700 (verified executable)",
+            executableCandidates = listOf("Binaries/Win32/Dishonored.exe"),
+            // Keep saves untouched until this distribution's backend is verified.
+            saveDirectory = "",
+            requiredFiles = listOf(
+                "Binaries/Win32/Dishonored.exe",
+                "DishonoredGame/CookedPCConsole/DishonoredGame.upk",
+                "DishonoredGame/Config/DefaultEngine.ini",
+            ),
+            fileRules = listOf(FileRule(
+                path = "Binaries/Win32/Dishonored.exe",
+                bytes = 18_008_064L,
+                sha256 = "67ced86b1675b8d27c742a84be41eaa7eba41c748a7f4ec1fe05d107d4f91ae5",
             )),
             nativeDllOverrides = mapOf("dinput8" to "native,builtin"),
-            windowHints = listOf("assassinscreediigame", "assassin's creed 2", "scimitarenginewindowclass"),
+            // Verified at 00637465-00637561 in this executable. Exclusive mode
+            // collapsed Wine's stacked desktop; keep the actual client at HD.
+            launchArguments = "-WINDOWED -ResX=1280 -ResY=720",
+            windowHints = listOf("dishonored"),
         ),
         SupportedGame(
             id = "fallout3",

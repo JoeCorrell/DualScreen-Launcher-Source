@@ -43,6 +43,7 @@ class GamePanelPresentation(
     private val game: SupportedGame,
 ) : Presentation(context, display) {
     private var nativeSurface: SurfaceView? = null
+    private var nativeTouchRouter: NativePanelTouchRouter? = null
     private var launchStatusView: TextView? = null
     private val hapticScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
@@ -53,6 +54,17 @@ class GamePanelPresentation(
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
         )
         when (game.panelMode) {
+            LowerPanelMode.DIAGNOSTICS -> {
+                SecondScreen.shutdown()
+                setContentView(TextView(context).apply {
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.rgb(133, 235, 234))
+                    setBackgroundColor(Color.rgb(7, 17, 20))
+                    text = "${game.title}\n\nCRASH DIAGNOSTICS\nNative companion not enabled"
+                    textSize = 22f
+                    launchStatusView = this
+                })
+            }
             LowerPanelMode.NATIVE_WINDOW -> {
                 // Native proxies use the UDP gesture bridge, not the managed
                 // mod WebSocket. Clear any connection left by a prior managed
@@ -110,6 +122,7 @@ class GamePanelPresentation(
                 }
 
                 override fun surfaceDestroyed(holder: SurfaceHolder) {
+                    nativeTouchRouter?.cancel()
                     SecondScreenOutput.requestDetach()
                 }
             })
@@ -129,8 +142,10 @@ class GamePanelPresentation(
         val router = NativePanelTouchRouter(
             context = context,
             stardewNative = game.id == STARDEW_GAME_ID,
-            rejectRepeatedCompletions = game.id == TRANSFORMERS_WFC_GAME_ID,
+            rejectRepeatedCompletions = game.id == TRANSFORMERS_WFC_GAME_ID || game.id == DISHONORED_GAME_ID || game.id == "crysis3",
+            continuousContacts = game.id == DISHONORED_GAME_ID || game.id == "crysis3",
         )
+        nativeTouchRouter = router
         root.setOnTouchListener(router)
         surface.setOnTouchListener(router)
         SecondScreenOutput.setOnStateListener { _, claimed ->
@@ -151,6 +166,8 @@ class GamePanelPresentation(
     }
 
     override fun dismiss() {
+        nativeTouchRouter?.cancel()
+        nativeTouchRouter = null
         SecondScreenOutput.setOnStateListener(null)
         SecondScreenOutput.requestDetach()
         nativeSurface = null
@@ -163,6 +180,7 @@ class GamePanelPresentation(
     private companion object {
         const val STARDEW_GAME_ID = "stardew-valley"
         const val TRANSFORMERS_WFC_GAME_ID = "transformers-wfc"
+        const val DISHONORED_GAME_ID = "dishonored"
     }
 }
 
@@ -170,6 +188,7 @@ private class NativePanelTouchRouter(
     context: Context,
     private val stardewNative: Boolean,
     private val rejectRepeatedCompletions: Boolean,
+    private val continuousContacts: Boolean,
 ) : View.OnTouchListener {
     private val completionGate = NativeGestureCompletionGate()
     private var downX = 0f
@@ -177,6 +196,8 @@ private class NativePanelTouchRouter(
     private var dragging = false
     private var pinching = false
     private var pinchGesture = false
+    private var contactSent = false
+    private var gestureActive = false
     private var width = 1f
     private var height = 1f
     private var pendingPinchLogScale = 0.0
@@ -193,7 +214,7 @@ private class NativePanelTouchRouter(
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(event: MotionEvent): Boolean = true
             override fun onLongPress(event: MotionEvent) {
-                if (!dragging && !pinching && !pinchGesture) {
+                if (gestureActive && !dragging && !pinching && !pinchGesture) {
                     send("hold", event.x, event.y, 0f)
                 }
             }
@@ -203,11 +224,13 @@ private class NativePanelTouchRouter(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                if (continuousContacts && !gestureActive) return false
                 pinching = true
                 pinchGesture = true
-                if (dragging) {
+                if (dragging || contactSent) {
                     send("cancel", detector.focusX, detector.focusY, 0f)
                     dragging = false
+                    contactSent = false
                 }
                 pendingPinchLogScale = 0.0
                 observedPinchLogScale = 0.0
@@ -225,6 +248,7 @@ private class NativePanelTouchRouter(
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (continuousContacts && !gestureActive) return false
                 val scaleFactor = detector.scaleFactor.toDouble()
                 if (!scaleFactor.isFinite() || scaleFactor <= 0.0) return false
 
@@ -239,6 +263,11 @@ private class NativePanelTouchRouter(
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
+                if (continuousContacts && !gestureActive) {
+                    pendingPinchLogScale = 0.0
+                    pinching = false
+                    return
+                }
                 pinchFocusX = detector.focusX
                 pinchFocusY = detector.focusY
                 sendPendingPinch(detector.eventTime, terminal = true)
@@ -265,20 +294,29 @@ private class NativePanelTouchRouter(
                 pinching = false
                 pinchGesture = false
                 pendingPinchLogScale = 0.0
+                gestureActive = !continuousContacts || !completionGate.isCompleted(event.downTime)
+                // Dishonored renders its own pressed state and resolves release
+                // against the same semantic target. Send the actual contact,
+                // including taps that never cross the drag threshold.
+                contactSent = continuousContacts && gestureActive && send("down", event.x, event.y, 0f)
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
                 // Even a two-finger contact too small for ScaleGestureDetector's
                 // minimum span must not turn into a one-finger tap on release.
                 pinchGesture = true
+                if (contactSent) {
+                    send("cancel", event.x, event.y, 0f)
+                    contactSent = false
+                }
             }
 
-            MotionEvent.ACTION_MOVE -> if (!pinching && !pinchGesture) {
+            MotionEvent.ACTION_MOVE -> if ((!continuousContacts || gestureActive) && !pinching && !pinchGesture) {
                 if (!dragging && hypot(event.x - downX, event.y - downY) >= DRAG_THRESHOLD) {
                     dragging = true
-                    send("down", downX, downY, 0f)
+                    if (!continuousContacts) send("down", downX, downY, 0f)
                 }
-                if (dragging) send("move", event.x, event.y, 0f)
+                if (contactSent || (dragging && !continuousContacts)) send("move", event.x, event.y, 0f)
             }
 
             MotionEvent.ACTION_UP -> {
@@ -292,24 +330,38 @@ private class NativePanelTouchRouter(
                 if (!rejectRepeatedCompletions ||
                     completionGate.accept(event.downTime, event.eventTime)
                 ) {
-                    if (dragging) send("up", event.x, event.y, 0f)
-                    else if (!pinchGesture) send("tap", event.x, event.y, 0f)
+                    if (continuousContacts) {
+                        if (contactSent && !pinchGesture) send("up", event.x, event.y, 0f)
+                    } else {
+                        if (dragging) send("up", event.x, event.y, 0f)
+                        else if (!pinchGesture) send("tap", event.x, event.y, 0f)
+                    }
                 }
                 dragging = false
                 pinching = false
                 pinchGesture = false
                 pendingPinchLogScale = 0.0
+                contactSent = false
+                gestureActive = false
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                if (dragging) send("cancel", event.x, event.y, 0f)
-                dragging = false
-                pinching = false
-                pinchGesture = false
-                pendingPinchLogScale = 0.0
+                cancel()
             }
         }
         return true
+    }
+
+    fun cancel() {
+        if (dragging || contactSent || (continuousContacts && gestureActive)) {
+            send("cancel", downX, downY, 0f)
+        }
+        dragging = false
+        pinching = false
+        pinchGesture = false
+        pendingPinchLogScale = 0.0
+        contactSent = false
+        gestureActive = false
     }
 
     /**
@@ -360,7 +412,10 @@ private class NativePanelTouchRouter(
         // Mirroring every scale packet as an X11 wheel event duplicates zoom
         // and can leak wheel input into the primary gameplay window. X11 does
         // not have our protocol's cancel verb, so release a drag explicitly.
-        when (kind) {
+        // Keep Dishonored and Crysis isolated even before window claiming and during
+        // transitions. An unclaimed waiting surface must never fall back to
+        // an X11 pointer event that can reach the primary game's active grab.
+        if (!continuousContacts) when (kind) {
             "pinch" -> Unit
             "cancel" -> SecondScreenOutput.injectTouch("up", nx, ny, value)
             else -> SecondScreenOutput.injectTouch(kind, nx, ny, value)
@@ -383,6 +438,8 @@ private class NativePanelTouchRouter(
 internal class NativeGestureCompletionGate {
     private var lastDownTime = Long.MIN_VALUE
     private var lastEventTime = Long.MIN_VALUE
+
+    fun isCompleted(downTime: Long): Boolean = downTime == lastDownTime
 
     fun accept(downTime: Long, eventTime: Long): Boolean {
         if (downTime == lastDownTime && eventTime == lastEventTime) return false

@@ -152,6 +152,22 @@ bool UnrealWriteBoolPropertyExpected(void* p,const wchar_t* name,bool expected,b
 }
 #include "NativeWeaponModifierInitializationTests.inc"
 int main(){
+  Reset();assert(NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  // Authored defaults are not live cooldowns. Comparing tuning must not reset
+  // either side's current event flags or elapsed/overshoot timers.
+  Flags(templates[0],0);Put(templates[2],0x44,0);
+  assert(NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  auto progressed=saved;progressed.modifiers[2].timer+=1;
+  assert(SameWeaponModifierIdentity(saved,progressed) && !SameWeaponModifierRuntime(saved,progressed));
+  progressed=saved;progressed.modifiers[0].flags[0]=!progressed.modifiers[0].flags[0];
+  assert(!SameWeaponModifierRuntime(saved,progressed));
+  Put(templates[0],0x30,99);assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();template_array.count=0;assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();Put(player_data,0x2C,0);assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();templates[0].owner=pawn.bytes;assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();templates[0].type="UnknownModifier";assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();saved.context.thread=0;assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));
+  Reset();g_modifiers_busy=true;assert(!NativeWeaponModifiersMatchData(saved,player_data.bytes));g_modifiers_busy=false;
   for(unsigned i=0;i<3000;++i){Reset(i%2 ? 5:64);const auto original=mods;ResetEvents();const auto before=mods;
     assert(NativeRestoreWeaponModifiers(saved)==NativePlayerServiceResult::kApplied);
     auto expected=before;

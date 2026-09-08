@@ -92,11 +92,6 @@ ASurfaceRendererContext::ASurfaceRendererContext(ANativeWindow* win, int cWidth,
 ASurfaceRendererContext::~ASurfaceRendererContext() {
     // Stop accepting new frames and drain the pool's condition waiters.
     beginShutdown();
-    if (currentTx) {
-        ST_DELETE(currentTx);
-        currentTx = nullptr;
-    }
-
     // Retire every live SurfaceControl via OnComplete callbacks so their slots
     // are released before we tear down the pool.
     std::vector<int64_t> contentIds;
@@ -637,46 +632,31 @@ bool ASurfaceRendererContext::attachTransactionCompleteCallback(void* transactio
     return true;
 }
 
-void ASurfaceRendererContext::beginTransaction() {
-    if (!currentTx) {
-        currentTx = ST_CREATE();
-    }
-}
-
-void ASurfaceRendererContext::applyTransaction() {
-    if (currentTx) {
-        ST_APPLY(currentTx);
-        ST_DELETE(currentTx);
-        currentTx = nullptr;
-    }
-}
-
-void ASurfaceRendererContext::updateWindow(int64_t contentId, bool visible, int zOrder,
-                                           int srcL, int srcT, int srcR, int srcB,
-                                           int dstL, int dstT, int dstR, int dstB) {
-    void* sc = nullptr;
-    {
-        std::lock_guard<std::mutex> lk(windowScMutex);
-        auto it = windowScMap.find(contentId);
-        if (it != windowScMap.end()) sc = it->second;
-    }
-    if (!sc) return;
-
-    void* tx = currentTx ? currentTx : ST_CREATE();
+void ASurfaceRendererContext::updateWindows(const int32_t* rows, size_t count) {
+    if (!rows || !count || shutdownStarted.load(std::memory_order_acquire)) return;
+    // Keep each SC alive until the transaction has acquired its references.
+    // Unregister/reattach cannot retire a control between lookup and setGeometry.
+    std::lock_guard<std::mutex> lk(windowScMutex);
+    void* tx = ST_CREATE();
     if (!tx) return;
-
-    ST_SETVIS(tx, sc, visible ? 1 : 0);
-    if (visible) {
-        ARect local_srcR{srcL, srcT, srcR, srcB};
-        ARect local_dstR{dstL, dstT, dstR, dstB};
-        ST_SETGEO(tx, sc, &local_srcR, &local_dstR, 0);
-        ST_SETZORDER(tx, sc, zOrder);
+    for (size_t i = 0; i < count; ++i) {
+        const int32_t* row = rows + i * 11;
+        auto it = windowScMap.find(static_cast<int64_t>(row[0]));
+        if (it == windowScMap.end()) continue;
+        void* sc = it->second;
+        const bool visible = row[1] != 0;
+        if (visible && (row[5] <= row[3] || row[6] <= row[4] ||
+                        row[9] <= row[7] || row[10] <= row[8])) continue;
+        ST_SETVIS(tx, sc, visible ? 1 : 0);
+        if (visible) {
+            ARect src{row[3], row[4], row[5], row[6]};
+            ARect dst{row[7], row[8], row[9], row[10]};
+            ST_SETGEO(tx, sc, &src, &dst, 0);
+            ST_SETZORDER(tx, sc, row[2]);
+        }
     }
-
-    if (!currentTx) {
-        ST_APPLY(tx);
-        ST_DELETE(tx);
-    }
+    ST_APPLY(tx);
+    ST_DELETE(tx);
 }
 
 void ASurfaceRendererContext::retireSurfaceControl(void* surfaceControl, ConvertedBufferSlot* currentSlot) {

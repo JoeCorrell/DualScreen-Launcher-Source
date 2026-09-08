@@ -6,8 +6,12 @@
 #include <limits>
 using namespace ac2ds;
 int main() {
-    for (const char* bad : {"pinch .5 .5 nan", "tap .5 .5 garbage", "tap -1 0", "up 0 2", "move inf 0", "tap 0", "pinch 0 0 9", "tap 0 0 2"})
+    for (const char* bad : {"pinch .5 .5 nan", "tap .5 .5 garbage", "tap -1 0", "up 0 2", "move inf 0", "tap 0", "pinch 0 0 9", "tap 0 0 -1", "tap 0 0 61", "move .5 .5 0"})
         assert(!ParseTouch(bad, std::strlen(bad)));
+    for (const char* packet : {"tap 0.43 0.11", "tap 0.43 0.11 0.074", "hold 0.43 0.11 0.312"}) {
+        auto touch = ParseTouch(packet, std::strlen(packet));
+        assert(touch && std::abs(touch->x - .43f) < 1e-6f && std::abs(touch->y - .11f) < 1e-6f);
+    }
     const char embedded[]{'t','a','p',' ',0,'0',' ','0'}; assert(!ParseTouch(embedded, sizeof(embedded)));
     const char* pinch = "pinch 0.5 0.5 1.25"; assert(ParseTouch(pinch, std::strlen(pinch))->value == 1.25f);
     MapViewport map; map.Pinch(2, .5f, .5f); assert(map.zoom == 2 && map.x == .5f);
@@ -35,5 +39,8 @@ int main() {
     s.markers = {visible, hidden}; assert(store.Publish(s)); assert(store.Read()->markers.size() == 1);
     s.revision++; s.mapVisibilityVerified = false; assert(store.Publish(s));
     assert(store.Read()->markers.empty() && !(store.Read()->capabilities & Map));
+    s.revision++;s.notoriety=75;assert(store.Publish(s));assert(!store.Read()->notoriety);
+    s.revision++;s.capabilities|=Player;assert(store.Publish(s));assert(store.Read()->notoriety==75);
+    s.revision++;s.phase=Phase::Loading;assert(store.Publish(s));assert(!store.Read()->notoriety);
     std::cout << "AC II lifecycle, stale command, ownership and isolated touch contracts passed\n";
 }

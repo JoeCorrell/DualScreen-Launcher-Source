@@ -8,6 +8,7 @@
 #include <cwchar>
 
 #include "Log.h"
+#include "NativeCampaignMenu.h"
 #include "NativeCampaignTravel.h"
 #include "UnrealBridge.h"
 
@@ -69,6 +70,10 @@ struct ResolvedCharacterCache {
 struct CampaignClassConfiguration {
   bool active = false;
   bool campaign_world_seen = false;
+  // Native lobby ModifyURL carries this exact integer as ?MapId; the new
+  // campaign GRI restores it in TnGame.InitGameReplicationInfo. UObject
+  // identity and a familiar squad roster are not a chapter identity.
+  int32_t map_id = -1;
   std::array<CharacterName, kSquadSize> mission_shells = {};
   std::array<CharacterName, kSquadSize> selected_characters = {};
   std::array<CharacterLoadout, kSquadSize> loadouts = {};
@@ -140,12 +145,9 @@ struct CampaignClassFlow {
 
 CampaignClassFlow g_flow;
 UnrealFunctionHandle g_select_character;
-UnrealFunctionHandle g_get_playable_characters;
 UnrealFunctionHandle g_is_character_unlocked;
 UnrealFunctionHandle g_find_iconic_character;
 UnrealFunctionHandle g_find_custom_character;
-UnrealFunctionHandle g_get_custom_characters;
-UnrealFunctionHandle g_get_current_character;
 UnrealFunctionHandle g_commit_character;
 UnrealFunctionHandle g_clear_character;
 UnrealFunctionHandle g_get_character_weapon_types;
@@ -161,11 +163,8 @@ UnrealFunctionHandle g_resolve_character_data;
 UnrealFunctionHandle g_spawn_ai_character;
 UnrealFunctionHandle g_get_ai_character_definition;
 UnrealFunctionExecDetour g_select_character_detour;
-UnrealFunctionExecDetour g_get_playable_characters_detour;
 UnrealFunctionExecDetour g_find_iconic_character_detour;
 UnrealFunctionExecDetour g_find_custom_character_detour;
-UnrealFunctionExecDetour g_get_custom_characters_detour;
-UnrealFunctionExecDetour g_get_current_character_detour;
 UnrealFunctionExecDetour g_commit_character_detour;
 UnrealFunctionExecDetour g_clear_character_detour;
 UnrealFunctionExecDetour g_get_character_weapon_types_detour;
@@ -429,6 +428,24 @@ bool CurrentGameForEngine(void* game_engine, void** output) {
          UnrealObjectValid(*output);
 }
 
+bool ReadCampaignMapId(void* world, int32_t* output) {
+  if (!output) return false;
+  *output = -1;
+  void* gri = nullptr;
+  void* after = nullptr;
+  if (!world || !UnrealObjectValid(world) ||
+      !UnrealReadObjectProperty(world, L"GRI", &gri) || !gri ||
+      !UnrealObjectIsA(gri, L"TnGameReplicationInfo")) return false;
+  const uint32_t index = UnrealObjectIndex(gri);
+  int32_t map = -1;
+  if (!index || !UnrealReadIntProperty(gri, L"SelectedMapID", &map) ||
+      map < 0 || UnrealObjectIndex(gri) != index ||
+      !UnrealReadObjectProperty(world, L"GRI", &after) || after != gri)
+    return false;
+  *output = map;
+  return true;
+}
+
 bool ObserveConfigurationWorld(void* game_engine, ULONGLONG now) {
   if (!g_configuration.active ||
       (g_flow.active && !g_flow.travel_forwarded))
@@ -438,6 +455,20 @@ bool ObserveConfigurationWorld(void* game_engine, ULONGLONG now) {
   void* game = nullptr;
   if (!CurrentGameForEngine(game_engine, &game)) return true;
   if (UnrealObjectIsA(game, L"TnCampaignGameBase")) {
+    void* world = nullptr;
+    int32_t map = -1;
+    // An uninitialized GRI is a travel gap, not evidence that the configured
+    // chapter ended. Substitution independently requires a matching live ID.
+    if (!UnrealReadObjectProperty(game, L"WorldInfo", &world) ||
+        !ReadCampaignMapId(world, &map)) return true;
+    if (map != g_configuration.map_id) {
+      Log(LogLevel::kWarning,
+          "[CampaignClass] retired stale chapter configuration selected-map=%ld live-map=%ld",
+          static_cast<long>(g_configuration.map_id), static_cast<long>(map));
+      g_configuration = {};
+      g_configuration_observe_at = 0;
+      return true;
+    }
     g_configuration.campaign_world_seen = true;
     return true;
   }
@@ -455,13 +486,17 @@ bool ObserveConfigurationWorld(void* game_engine, ULONGLONG now) {
 }
 
 bool ContextBelongsToConfiguredCampaign(void* context) {
-  if (!context || !UnrealObjectValid(context)) return false;
+  if (!g_configuration.active || g_configuration.map_id < 0 ||
+      !context || !UnrealObjectValid(context)) return false;
   void* world = nullptr;
   void* game = nullptr;
   if (!UnrealReadObjectProperty(context, L"WorldInfo", &world) || !world ||
       !UnrealObjectValid(world) ||
       !UnrealReadObjectProperty(world, L"Game", &game) || !game ||
       !UnrealObjectValid(game))
+    return false;
+  int32_t map = -1;
+  if (!ReadCampaignMapId(world, &map) || map != g_configuration.map_id)
     return false;
   if (g_flow.active && !g_flow.travel_forwarded)
     return game == g_flow.lobby_game;
@@ -825,6 +860,18 @@ bool ApplyConfiguredLoadout(const UnrealStructValueView& character,
 
 bool CommitConfiguration(const CharacterName& initial) {
   if (g_flow.roster_count < kSquadSize) return false;
+  void* world = nullptr;
+  void* game = nullptr;
+  void* gri = nullptr;
+  int32_t map = -1;
+  if (!PublishedObjectValid(g_flow.controller, g_flow.controller_index) ||
+      !PublishedObjectValid(g_flow.lobby_game, g_flow.lobby_game_index) ||
+      !UnrealReadObjectProperty(g_flow.controller, L"WorldInfo", &world) ||
+      !world || !UnrealReadObjectProperty(world, L"Game", &game) ||
+      game != g_flow.lobby_game ||
+      !UnrealReadObjectProperty(world, L"GRI", &gri) ||
+      gri != g_flow.game_replication_info || !ReadCampaignMapId(world, &map))
+    return false;
   size_t initial_slot = kSquadSize;
   for (size_t index = 0; index < kSquadSize; ++index)
     if (SameName(g_flow.squad[index], initial.text.data())) {
@@ -834,6 +881,7 @@ bool CommitConfiguration(const CharacterName& initial) {
   if (initial_slot >= kSquadSize) return false;
   CampaignClassConfiguration configuration;
   configuration.active = true;
+  configuration.map_id = map;
   configuration.initial_slot = initial_slot;
   for (size_t index = 0; index < kSquadSize; ++index) {
     configuration.mission_shells[index] = g_flow.roster[index];
@@ -1245,9 +1293,14 @@ bool AdmitNativeStartLevel(void* context) {
     return false;
   }
   if (g_flow.release_travel && !g_flow.travel_forwarded) {
+    if (g_configuration.active &&
+        !ContextBelongsToConfiguredCampaign(context)) {
+      AbortFlow("chapter changed before native travel release");
+    }
     g_flow.travel_forwarded = true;
     Log(LogLevel::kInfo,
-        "[CampaignClass] native selection complete; resuming original StartLevel");
+        "[CampaignClass] resuming original StartLevel configuration=%s",
+        g_configuration.active ? "validated" : "stock");
     return true;
   }
   // FinalCountdown can request StartLevel again before seamless travel has
@@ -1256,10 +1309,7 @@ bool AdmitNativeStartLevel(void* context) {
   return false;
 }
 
-void WFCDS_UNREAL_EXEC_CALL HookedGetPlayableCharacters(
-    void* context, void* unused_edx, void* frame, void* result) {
-  CallOriginal(g_get_playable_characters_detour, context, unused_edx, frame,
-               result);
+void NativeMenuPlayableCharacters(void* context, void* result) {
   if (g_stopping || !g_hooks_ready || !IsFlowThread() ||
       !g_flow.menu_open || g_flow.stage == SelectionStage::kComplete ||
       g_flow.stage == SelectionStage::kFailed || !result)
@@ -1288,26 +1338,13 @@ bool AssignCharacterNameResult(void* result, const CharacterName& name) {
          UnrealAssignWideStringValue(result, wide.data());
 }
 
-void WFCDS_UNREAL_EXEC_CALL HookedGetCustomCharacters(
-    void* context, void* unused_edx, void* frame, void* result) {
+bool NativeMenuCurrentCharacter(void* result) {
   const CharacterName* selected = CurrentLoadoutCharacter();
   if (!g_stopping && g_hooks_ready && IsFlowThread() &&
       g_flow.menu_open && IsLoadoutStage() && selected &&
       AssignCharacterNameResult(result, *selected))
-    return;
-  CallOriginal(g_get_custom_characters_detour, context, unused_edx, frame,
-               result);
-}
-
-void WFCDS_UNREAL_EXEC_CALL HookedGetCurrentCharacter(
-    void* context, void* unused_edx, void* frame, void* result) {
-  const CharacterName* selected = CurrentLoadoutCharacter();
-  if (!g_stopping && g_hooks_ready && IsFlowThread() &&
-      g_flow.menu_open && IsLoadoutStage() && selected &&
-      AssignCharacterNameResult(result, *selected))
-    return;
-  CallOriginal(g_get_current_character_detour, context, unused_edx, frame,
-               result);
+    return true;
+  return false;
 }
 
 void WFCDS_UNREAL_EXEC_CALL HookedClearCharacter(
@@ -1721,12 +1758,9 @@ bool RestoreHook(UnrealFunctionExecDetour* detour) {
 bool InstallHooks() {
   if (g_hooks_ready) return true;
   UnrealFunctionHandle select_character;
-  UnrealFunctionHandle get_playable_characters;
   UnrealFunctionHandle is_character_unlocked;
   UnrealFunctionHandle find_iconic_character;
   UnrealFunctionHandle find_custom_character;
-  UnrealFunctionHandle get_custom_characters;
-  UnrealFunctionHandle get_current_character;
   UnrealFunctionHandle commit_character;
   UnrealFunctionHandle clear_character;
   UnrealFunctionHandle get_character_weapon_types;
@@ -1770,9 +1804,6 @@ bool InstallHooks() {
           &select_character) ||
       !UnrealResolveExactScriptFunction(
           0, L"TransGame.TnCharacterScriptBinding",
-          L"GetPlayableCharacters", &get_playable_characters) ||
-      !UnrealResolveExactScriptFunction(
-          0, L"TransGame.TnCharacterScriptBinding",
           L"IsCharacterUnlocked", &is_character_unlocked) ||
       !UnrealResolveExactScriptFunction(
           0, L"TransGame.TnPlayerController", L"FindIconicCharacter",
@@ -1780,12 +1811,6 @@ bool InstallHooks() {
       !UnrealResolveExactScriptFunction(
           0, L"TransGame.TnPlayerController", L"FindCustomCharacter",
           &find_custom_character) ||
-      !UnrealResolveExactScriptFunction(
-          0, L"TransGame.TnCharacterScriptBinding", L"GetCustomCharacters",
-          &get_custom_characters) ||
-      !UnrealResolveExactScriptFunction(
-          0, L"TransGame.TnCharacterScriptBinding", L"GetCurrentCharacter",
-          &get_current_character) ||
       !UnrealResolveExactScriptFunction(
           0, L"TransGame.TnCharacterScriptBinding", L"CommitCharacter",
           &commit_character) ||
@@ -1905,7 +1930,6 @@ bool InstallHooks() {
   }
 
   g_select_character = select_character;
-  g_get_playable_characters = get_playable_characters;
   g_is_character_unlocked = is_character_unlocked;
   g_find_iconic_character = find_iconic_character;
   g_find_custom_character = find_custom_character;
@@ -1918,8 +1942,6 @@ bool InstallHooks() {
   g_find_custom_character_return_size = find_custom_return_size;
   g_find_custom_character_return_definition =
       find_custom_return_definition;
-  g_get_custom_characters = get_custom_characters;
-  g_get_current_character = get_current_character;
   g_commit_character = commit_character;
   g_clear_character = clear_character;
   g_get_character_weapon_types = get_character_weapon_types;
@@ -1959,15 +1981,9 @@ bool InstallHooks() {
         static_cast<unsigned long>(function.function_object_index));
     return false;
   };
-  if (!install_hook("GetPlayableCharacters",
-          g_get_playable_characters, &HookedGetPlayableCharacters,
-          &g_get_playable_characters_detour) ||
-      !install_hook("GetCustomCharacters",
-          g_get_custom_characters, &HookedGetCustomCharacters,
-          &g_get_custom_characters_detour) ||
-      !install_hook("GetCurrentCharacter",
-          g_get_current_character, &HookedGetCurrentCharacter,
-          &g_get_current_character_detour) ||
+  if (!InstallNativeCampaignMenu(GetModuleHandleW(nullptr), g_game_thread,
+                                 &NativeMenuCurrentCharacter,
+                                 &NativeMenuPlayableCharacters) ||
       !install_hook("CommitCharacter",
           g_commit_character, &HookedCommitCharacter,
           &g_commit_character_detour) ||
@@ -2036,12 +2052,6 @@ bool InstallHooks() {
         RestoreHook(&g_get_character_weapon_types_detour) && restored_all;
     restored_all = RestoreHook(&g_clear_character_detour) && restored_all;
     restored_all = RestoreHook(&g_commit_character_detour) && restored_all;
-    restored_all =
-        RestoreHook(&g_get_current_character_detour) && restored_all;
-    restored_all =
-        RestoreHook(&g_get_custom_characters_detour) && restored_all;
-    restored_all =
-        RestoreHook(&g_get_playable_characters_detour) && restored_all;
     if (!restored_all) {
       // At least one executor still targets this module. Keep every detour and
       // original-executor record intact for shutdown, and turn the remaining
@@ -2054,12 +2064,9 @@ bool InstallHooks() {
       return false;
     }
     g_select_character = {};
-    g_get_playable_characters = {};
     g_is_character_unlocked = {};
     g_find_iconic_character = {};
     g_find_custom_character = {};
-    g_get_custom_characters = {};
-    g_get_current_character = {};
     g_commit_character = {};
     g_clear_character = {};
     g_get_character_weapon_types = {};
@@ -2670,6 +2677,7 @@ bool CampaignClassSelectedCharacterName(const char* mission_shell,
 bool ShutdownCampaignClassSystem() {
   g_stopping = true;
   StopNativeCampaignTravel();
+  StopNativeCampaignMenu();
   ResetFlow();
   bool restored = true;
   restored = RestoreHook(&g_spawn_ai_character_detour) && restored;
@@ -2688,16 +2696,10 @@ bool ShutdownCampaignClassSystem() {
   restored = RestoreHook(&g_get_character_weapon_types_detour) && restored;
   restored = RestoreHook(&g_clear_character_detour) && restored;
   restored = RestoreHook(&g_commit_character_detour) && restored;
-  restored = RestoreHook(&g_get_current_character_detour) && restored;
-  restored = RestoreHook(&g_get_custom_characters_detour) && restored;
-  restored = RestoreHook(&g_get_playable_characters_detour) && restored;
   g_select_character = {};
-  g_get_playable_characters = {};
   g_is_character_unlocked = {};
   g_find_iconic_character = {};
   g_find_custom_character = {};
-  g_get_custom_characters = {};
-  g_get_current_character = {};
   g_commit_character = {};
   g_clear_character = {};
   g_get_character_weapon_types = {};

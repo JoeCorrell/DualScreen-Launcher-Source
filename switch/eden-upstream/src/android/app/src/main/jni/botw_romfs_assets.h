@@ -17,5 +17,7 @@ void Reset();
 uint64_t ExternalFileSize(EmulationSession&, const char* path);
 size_t ExternalReadFile(EmulationSession&, const char* path, uint64_t offset, void* output, size_t size);
 std::vector<u8> ExternalDecodeTexture(std::span<const u8> source, std::string_view name, bool first);
+std::vector<u8> ExternalDecodeRgba(std::span<const u8>, std::string_view, bool, uint32_t&, uint32_t&);
+std::vector<u8> ExternalEncodePng(std::span<const u8>, uint32_t, uint32_t);
 
 }

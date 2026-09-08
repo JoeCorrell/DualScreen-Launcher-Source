@@ -260,7 +260,9 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
                 GameInstallState.INSTALLING -> "Setup is running on the lower screen."
                 GameInstallState.UPDATING_MOD -> "The dual-screen mod is being updated."
                 GameInstallState.IMPORTING_SAVE -> "Save files are being imported."
-                GameInstallState.READY -> "Installed, modded, and ready to play."
+                GameInstallState.READY -> if (game.panelMode == LowerPanelMode.DIAGNOSTICS)
+                    "Installed for crash diagnosis. Native companion not enabled."
+                else "Installed, modded, and ready to play."
                 GameInstallState.ERROR -> "Open setup feedback for the exact error."
             },
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -270,6 +272,7 @@ private fun GameIdentityCard(game: SupportedGame, state: GameInstallState) {
         Text(
             when (game.panelMode) {
                 LowerPanelMode.NATIVE_WINDOW -> "NATIVE LOWER PANEL"
+                LowerPanelMode.DIAGNOSTICS -> "CRASH DIAGNOSTICS / MOD IN DEVELOPMENT"
                 LowerPanelMode.STARDEW -> "MANAGED LOWER PANEL"
                 LowerPanelMode.VALHEIM -> "MANAGED LOWER PANEL"
             },

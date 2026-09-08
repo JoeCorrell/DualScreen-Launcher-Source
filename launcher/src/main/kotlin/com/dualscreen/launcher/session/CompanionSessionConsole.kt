@@ -113,6 +113,7 @@ fun CompanionSessionHost(
     secondaryDisplayId: Int?,
     title: String,
     managedPanel: Boolean,
+    diagnosticsOnly: Boolean = false,
     controls: CompanionRuntimeControls?,
     metrics: CompanionSessionMetrics,
     log: CompanionSessionLog,
@@ -137,6 +138,7 @@ fun CompanionSessionHost(
             CompanionBottomPanel(
                 title = title,
                 managedPanel = managedPanel,
+                diagnosticsOnly = diagnosticsOnly,
                 controls = controls,
                 metrics = metrics,
                 log = log,
@@ -151,6 +153,7 @@ fun CompanionSessionHost(
 private fun CompanionBottomPanel(
     title: String,
     managedPanel: Boolean,
+    diagnosticsOnly: Boolean,
     controls: CompanionRuntimeControls?,
     metrics: CompanionSessionMetrics,
     log: CompanionSessionLog,
@@ -159,7 +162,7 @@ private fun CompanionBottomPanel(
 ) {
     var panelAvailable by remember { mutableStateOf(false) }
     var guestOwnsPanel by remember { mutableStateOf(false) }
-    var consoleVisible by remember { mutableStateOf(false) }
+    var consoleVisible by remember(diagnosticsOnly) { mutableStateOf(diagnosticsOnly) }
 
     DisposableEffect(router, managedPanel) {
         if (managedPanel) SecondScreen.start()
@@ -177,7 +180,7 @@ private fun CompanionBottomPanel(
     }
 
     SideEffect {
-        router.enabled = guestOwnsPanel && !consoleVisible && controls?.keyboard?.visible != true
+        router.enabled = !diagnosticsOnly && guestOwnsPanel && !consoleVisible && controls?.keyboard?.visible != true
         metrics.consoleVisible = consoleVisible
     }
 
@@ -186,7 +189,7 @@ private fun CompanionBottomPanel(
             .fillMaxSize()
             .onSizeChanged { router.resize(it.width, it.height) },
     ) {
-        if (panelAvailable) GuestPanelSurface()
+        if (panelAvailable && !diagnosticsOnly) GuestPanelSurface()
 
         when {
             consoleVisible -> CompositionLocalProvider(
@@ -194,10 +197,11 @@ private fun CompanionBottomPanel(
             ) {
                 SessionConsole(
                     title = title,
+                    diagnosticsOnly = diagnosticsOnly,
                     controls = controls,
                     metrics = metrics,
                     log = log,
-                    onShowGame = { consoleVisible = false },
+                    onShowGame = { if (!diagnosticsOnly) consoleVisible = false },
                     onExit = onExit,
                 )
             }
@@ -225,7 +229,7 @@ private fun CompanionBottomPanel(
             keyboardVisible = keyboard?.visible == true,
             onToggle = {
                 if (keyboard?.visible == true) keyboard.hide()
-                else consoleVisible = !consoleVisible
+                else if (!diagnosticsOnly) consoleVisible = !consoleVisible
             },
         )
     }
@@ -352,6 +356,7 @@ private fun BoxScope.PanelModeGesture(
 @Composable
 private fun SessionConsole(
     title: String,
+    diagnosticsOnly: Boolean,
     controls: CompanionRuntimeControls?,
     metrics: CompanionSessionMetrics,
     log: CompanionSessionLog,
@@ -360,7 +365,7 @@ private fun SessionConsole(
 ) {
     val colors = CompanionTheme.colors
     val space = CompanionTheme.space
-    var page by remember { mutableStateOf(ConsolePage.STATS) }
+    var page by remember(diagnosticsOnly) { mutableStateOf(if (diagnosticsOnly) ConsolePage.LOGS else ConsolePage.STATS) }
     val ready = controls != null
 
     Column(

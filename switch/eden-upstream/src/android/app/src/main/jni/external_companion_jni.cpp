@@ -45,8 +45,9 @@ void* MapMailbox(void*, uint64_t address, size_t size) {
     auto& system = EmulationSession::GetInstance().System();
     const auto mailbox = system.GetApplicationProcessCompanionMailbox();
     // Only the reserved mailbox is atomically mapped; game objects use checked reads.
-    if (!mailbox || address < mailbox || address - mailbox >= 0x1000 ||
-        size > 0x1000 - (address - mailbox) || !Valid(nullptr, address, size)) return nullptr;
+    const auto capacity=ExternalCompanion::MailboxCapacity();
+    if (!mailbox || !capacity || address < mailbox || address - mailbox >= capacity ||
+        size > capacity - (address - mailbox) || !Valid(nullptr, address, size)) return nullptr;
     return system.ApplicationMemory().GetPointerSilent(address);
 }
 void Log(uint32_t level, const char* message) {
@@ -68,8 +69,36 @@ uint8_t* Decode(const uint8_t* data, size_t size, const char* name, uint32_t fir
     if (!out) return nullptr;
     std::memcpy(out, png.data(), png.size()); *length = png.size(); return out;
 }
+uint8_t* CopyBuffer(const std::vector<u8>& bytes,size_t* length) {
+    *length=bytes.size(); if(bytes.empty()) return nullptr;
+    auto* result=static_cast<uint8_t*>(std::malloc(bytes.size()));
+    if(result) std::memcpy(result,bytes.data(),bytes.size()); else *length=0;
+    return result;
+}
+uint8_t* DecodeRgba(const uint8_t* data,size_t size,const char* name,uint32_t first,uint32_t* width,uint32_t* height,size_t* length) {
+    if(!data || !name || !width || !height || !length) return nullptr;
+    return CopyBuffer(DualScreenRomfsAssets::ExternalDecodeRgba({data,size},name,first!=0,*width,*height),length);
+}
+uint8_t* EncodePng(const uint8_t* data,size_t size,uint32_t width,uint32_t height,size_t* length) {
+    if(!data || !length) return nullptr;
+    return CopyBuffer(DualScreenRomfsAssets::ExternalEncodePng({data,size},width,height),length);
+}
 const DsHostApi Host{sizeof(DsHostApi), DS_COMPANION_ABI, nullptr, Session, Read, Write, Valid, MapMailbox, Log,
-    FileSize, ReadFile, Decode, std::free};
+    FileSize, ReadFile, Decode, std::free,DecodeRgba,EncodePng};
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_org_yuzu_yuzu_1emu_NativeLibrary_externalCompanionQuery(JNIEnv* env,jobject,jint kind,jstring input) {
+    std::string text;
+    if(input) { const char* raw=env->GetStringUTFChars(input,nullptr); if(!raw) return nullptr;
+        text=raw; env->ReleaseStringUTFChars(input,raw); }
+    auto lock=EmulationSession::GetInstance().LockSystemAccess();
+    const auto result=ExternalCompanion::Query(kind,text);
+    return env->NewStringUTF(result.c_str());
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_org_yuzu_yuzu_1emu_NativeLibrary_externalCompanionAction64(JNIEnv*,jobject,jint op,jlong argument) {
+    auto lock=EmulationSession::GetInstance().LockSystemAccess();
+    return ExternalCompanion::Action64(op,argument);
 }
 extern "C" JNIEXPORT jbyteArray JNICALL
 Java_org_yuzu_yuzu_1emu_NativeLibrary_externalCompanionAsset(JNIEnv* env, jobject, jstring file) {

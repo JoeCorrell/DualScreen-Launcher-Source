@@ -20,6 +20,8 @@ DEFAULT_OUTPUT = ROOT / "pc" / "mods" / "IsaacSecondScreen" / "assets" / "catalo
 ANIMATION_ACTORS = {
     "hudpickups",
     "minimap_icons",
+    "minimap1",
+    "minimap2",
     "ui_cardfronts",
     "ui_cardspills",
     "ui_hearts",
@@ -58,6 +60,8 @@ def main() -> int:
                         asset(entry.get("asset")),
                         encoded(entry.get("name")),
                         encoded(entry.get("description")),
+                        encoded(entry.get("kind", "")),
+                        encoded(" ".join(entry.get("cache", []))),
                     )
                 )
             )
@@ -89,6 +93,10 @@ def main() -> int:
             )
         )
 
+    for category, marker in (("achievements", "U"), ("challenges", "Q"), ("bosses", "B")):
+        for entry in root.get("progress", {}).get(category, []):
+            lines.append("\t".join((marker, str(entry["id"]), encoded(entry.get("name") or entry.get("text", "")), encoded(entry.get("requirement", "")), asset(entry.get("asset")))))
+
     for actor in sorted(ANIMATION_ACTORS):
         animations = root["animations"][actor]["animations"]
         for name in sorted(animations):
@@ -111,6 +119,8 @@ def main() -> int:
                             str(frame["y"]),
                             str(frame["w"]),
                             str(frame["h"]),
+                            str(frame.get("pivotX",0)),
+                            str(frame.get("pivotY",0)),
                         )
                     )
                 )

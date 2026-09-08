@@ -38,6 +38,15 @@ $testOptimization = if ($Configuration -eq 'Release') {
 }
 
 $stateTest = Join-Path $testRoot 'StateStoreTests.exe'
+$inlineRelocationTest = Join-Path $testRoot 'InlineHookRelocationTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\InlineHookRelocationTests.cpp'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $inlineRelocationTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'InlineHookRelocationTests compilation failed' }
+& $inlineRelocationTest
+if ($LASTEXITCODE -ne 0) { throw 'InlineHookRelocationTests failed' }
+
 & $compiler @($common + $testOptimization + @(
     (Join-Path $projectRoot 'tests\StateStoreTests.cpp'),
     (Join-Path $sourceRoot 'StateStore.cpp'), '-o', $stateTest
@@ -45,6 +54,25 @@ $stateTest = Join-Path $testRoot 'StateStoreTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'StateStoreTests compilation failed' }
 & $stateTest
 if ($LASTEXITCODE -ne 0) { throw 'StateStoreTests failed' }
+
+$scratchTest = Join-Path $testRoot 'SwapScratchTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\SwapScratchTests.cpp'), '-o', $scratchTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'SwapScratchTests compilation failed' }
+& $scratchTest
+if ($LASTEXITCODE -ne 0) { throw 'SwapScratchTests failed' }
+
+# Audit the optimized production TU in both configurations, not just the scratch
+# fixture. Unoptimized snapshot rendering has a larger pre-existing frame.
+# A previous optimized capture required ~489 KB before game callbacks.
+& $compiler @($common + @(
+    '-O2', '-DNDEBUG',
+    '-Wframe-larger-than=32768', '-fstack-usage', '-c',
+    (Join-Path $sourceRoot 'GameBridge.cpp'),
+    '-o', (Join-Path $testRoot 'GameBridgeStackAudit.o')
+))
+if ($LASTEXITCODE -ne 0) { throw 'GameBridge stack-frame audit failed' }
 
 $inputTest = Join-Path $testRoot 'PanelInputTests.exe'
 & $compiler @($common + $testOptimization + @(
@@ -111,6 +139,16 @@ $travelTest = Join-Path $testRoot 'NativeCampaignTravelTests.exe'
 if ($LASTEXITCODE -ne 0) { throw 'NativeCampaignTravelTests compilation failed' }
 & $travelTest
 if ($LASTEXITCODE -ne 0) { throw 'NativeCampaignTravelTests failed' }
+
+$menuTest = Join-Path $testRoot 'NativeCampaignMenuTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeCampaignMenuTests.cpp'),
+    (Join-Path $sourceRoot 'Hook.cpp'),
+    (Join-Path $sourceRoot 'Log.cpp'), '-o', $menuTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeCampaignMenuTests compilation failed' }
+if (Test-Path -LiteralPath $cloneResearchExe) { & $menuTest $cloneResearchExe } else { & $menuTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeCampaignMenuTests failed' }
 
 $shooterTest = Join-Path $testRoot 'NativeWeaponShooterTests.exe'
 & $compiler @($common + $testOptimization + @(
@@ -313,6 +351,219 @@ if (Test-Path -LiteralPath $shooterResearchExe) { & $cacheTest $shooterResearchE
 else { & $cacheTest }
 if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponDataCacheTests failed' }
 
+$retentionTest = Join-Path $testRoot 'NativeWeaponRetentionTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeWeaponRetentionTests.cpp'), '-o', $retentionTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponRetentionTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $retentionTest $shooterResearchExe } else { & $retentionTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponRetentionTests failed' }
+
+$animatorTest = Join-Path $testRoot 'NativeWeaponAnimatorTests.exe'
+& (Join-Path $projectRoot 'tests\Verify-AnimatorIntegration.ps1')
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeWeaponAnimatorTests.cpp'),
+    (Join-Path $sourceRoot 'ThisCall.S'), '-o', $animatorTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponAnimatorTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $animatorTest $shooterResearchExe } else { & $animatorTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponAnimatorTests failed' }
+
+$identityTest = Join-Path $testRoot 'NativeCharacterIdentityTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeCharacterIdentityTests.cpp'),
+    (Join-Path $sourceRoot 'ThisCall.S'), '-o', $identityTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeCharacterIdentityTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $identityTest $shooterResearchExe } else { & $identityTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeCharacterIdentityTests failed' }
+
+$vehicleTest = Join-Path $testRoot 'NativeVehicleAiTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeVehicleAiTests.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'),
+    (Join-Path $sourceRoot 'ThisCall.S'), '-o', $vehicleTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeVehicleAiTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $vehicleTest $shooterResearchExe } else { & $vehicleTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeVehicleAiTests failed' }
+
+$worldStateTest = Join-Path $testRoot 'NativeAiWorldStateTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeAiWorldStateTests.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'),
+    (Join-Path $sourceRoot 'ThisCall.S'), '-o', $worldStateTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeAiWorldStateTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $worldStateTest $shooterResearchExe } else { & $worldStateTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeAiWorldStateTests failed' }
+
+$sensorTest = Join-Path $testRoot 'NativeAiSensorTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeAiSensorTests.cpp'),
+    (Join-Path $sourceRoot 'ThisCall.S'), '-o', $sensorTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeAiSensorTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $sensorTest $shooterResearchExe } else { & $sensorTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeAiSensorTests failed' }
+
+$rolePawnTest = Join-Path $testRoot 'NativeRolePawnTests.exe'
+& $compiler @($common + $testOptimization + @(
+    '-msse2', (Join-Path $projectRoot 'tests\NativeRolePawnTests.cpp'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'),
+    (Join-Path $sourceRoot 'NativeRolePawn.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $rolePawnTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeRolePawnTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $rolePawnTest $shooterResearchExe } else { & $rolePawnTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeRolePawnTests failed' }
+
+$weaponExposureTest = Join-Path $testRoot 'NativeWeaponExposureTests.exe'
+& $compiler @($common + $testOptimization + @(
+    '-msse2', (Join-Path $projectRoot 'tests\NativeWeaponExposureTests.cpp'),
+    (Join-Path $projectRoot 'tests\NativeWeaponExposureTestCall.S'),
+    (Join-Path $sourceRoot 'NativeWeaponExposure.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $weaponExposureTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponExposureTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $weaponExposureTest $shooterResearchExe } else { & $weaponExposureTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeWeaponExposureTests failed' }
+
+$pawnDamageTest = Join-Path $testRoot 'NativePawnDamageTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePawnDamageTests.cpp'),
+    (Join-Path $sourceRoot 'NativePawnDamage.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $pawnDamageTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnDamageTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $pawnDamageTest $shooterResearchExe } else { & $pawnDamageTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnDamageTests failed' }
+
+$pawnTargetingTest = Join-Path $testRoot 'NativePawnTargetingTests.exe'
+& $compiler @($common + $testOptimization + @(
+    '-msse2', (Join-Path $projectRoot 'tests\NativePawnTargetingTests.cpp'),
+    (Join-Path $sourceRoot 'NativePawnTargeting.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $pawnTargetingTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnTargetingTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $pawnTargetingTest $shooterResearchExe } else { & $pawnTargetingTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnTargetingTests failed' }
+
+$pawnDownedTest = Join-Path $testRoot 'NativePawnDownedTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePawnDownedTests.cpp'),
+    (Join-Path $sourceRoot 'NativePawnDowned.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $pawnDownedTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnDownedTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $pawnDownedTest $shooterResearchExe } else { & $pawnDownedTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnDownedTests failed' }
+
+$gameDeathTest = Join-Path $testRoot 'NativeGameDeathTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeGameDeathTests.cpp'),
+    (Join-Path $sourceRoot 'NativeGameDeath.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $gameDeathTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeGameDeathTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $gameDeathTest $shooterResearchExe } else { & $gameDeathTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeGameDeathTests failed' }
+
+$pawnTransformTest = Join-Path $testRoot 'NativePawnTransformTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePawnTransformTests.cpp'),
+    (Join-Path $sourceRoot 'NativePawnTransform.S'),
+    (Join-Path $sourceRoot 'ThisCall.S'),
+    (Join-Path $sourceRoot 'Hook.cpp'), '-o', $pawnTransformTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnTransformTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $pawnTransformTest $shooterResearchExe } else { & $pawnTransformTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePawnTransformTests failed' }
+
+$playerCombatTest = Join-Path $testRoot 'NativePlayerCombatTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerCombatTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerCombatTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerCombatTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerCombatTest $shooterResearchExe } else { & $playerCombatTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerCombatTests failed' }
+
+$playerMotionTest = Join-Path $testRoot 'NativePlayerMotionTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerMotionTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerMotionTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerMotionTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerMotionTest $shooterResearchExe } else { & $playerMotionTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerMotionTests failed' }
+
+$playerFineAimTest = Join-Path $testRoot 'NativePlayerFineAimTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerFineAimTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerFineAimTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerFineAimTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerFineAimTest $shooterResearchExe } else { & $playerFineAimTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerFineAimTests failed' }
+
+$playerTargetJumpTest = Join-Path $testRoot 'NativePlayerTargetJumpTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerTargetJumpTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerTargetJumpTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerTargetJumpTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerTargetJumpTest $shooterResearchExe } else { & $playerTargetJumpTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerTargetJumpTests failed' }
+
+$meleeTargetTest = Join-Path $testRoot 'NativeMeleeTargetTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativeMeleeTargetTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $meleeTargetTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativeMeleeTargetTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $meleeTargetTest $shooterResearchExe } else { & $meleeTargetTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativeMeleeTargetTests failed' }
+
+$playerOwnerTest = Join-Path $testRoot 'NativePlayerOwnerTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerOwnerTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerOwnerTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerOwnerTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerOwnerTest $shooterResearchExe } else { & $playerOwnerTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerOwnerTests failed' }
+
+$playerNavigationTest = Join-Path $testRoot 'NativePlayerNavigationTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerNavigationTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerNavigationTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerNavigationTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerNavigationTest $shooterResearchExe } else { & $playerNavigationTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerNavigationTests failed' }
+
+$playerAssignmentTest = Join-Path $testRoot 'NativePlayerAssignmentTests.exe'
+& $compiler @($common + $testOptimization + @(
+    (Join-Path $projectRoot 'tests\NativePlayerAssignmentTests.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
+    (Join-Path $projectRoot 'tests\NativeRolePawnTestCall.S'), '-o', $playerAssignmentTest
+))
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerAssignmentTests compilation failed' }
+if (Test-Path -LiteralPath $shooterResearchExe) { & $playerAssignmentTest $shooterResearchExe } else { & $playerAssignmentTest }
+if ($LASTEXITCODE -ne 0) { throw 'NativePlayerAssignmentTests failed' }
+
 $sources = @(
     (Join-Path $sourceRoot 'Proxy.cpp'),
     (Join-Path $sourceRoot 'Mod.cpp'),
@@ -325,6 +576,7 @@ $sources = @(
     (Join-Path $sourceRoot 'CharacterSwap.cpp'),
     (Join-Path $sourceRoot 'CampaignClassSystem.cpp'),
     (Join-Path $sourceRoot 'NativeCampaignTravel.cpp'),
+    (Join-Path $sourceRoot 'NativeCampaignMenu.cpp'),
     (Join-Path $sourceRoot 'NativeWeaponShooter.cpp'),
     (Join-Path $sourceRoot 'NativeAiPlanning.cpp'),
     (Join-Path $sourceRoot 'NativeAiMovement.cpp'),
@@ -340,6 +592,8 @@ $sources = @(
     (Join-Path $sourceRoot 'NativeWeaponAmmo.cpp'),
     (Join-Path $sourceRoot 'NativeWeaponModifiers.cpp'),
     (Join-Path $sourceRoot 'NativeWeaponDataCache.cpp'),
+    (Join-Path $sourceRoot 'NativeWeaponRetention.cpp'),
+    (Join-Path $sourceRoot 'NativeWeaponAnimator.cpp'),
     (Join-Path $sourceRoot 'NativeAbilityHud.cpp'),
     (Join-Path $sourceRoot 'NativeCameraHandoff.cpp'),
     (Join-Path $sourceRoot 'NativePlayerFormState.cpp'),
@@ -348,6 +602,27 @@ $sources = @(
     (Join-Path $sourceRoot 'NativePawnOwnership.cpp'),
     (Join-Path $sourceRoot 'NativePlayerAdoption.cpp'),
     (Join-Path $sourceRoot 'NativeAiAdoption.cpp'),
+    (Join-Path $sourceRoot 'NativeCharacterIdentity.cpp'),
+    (Join-Path $sourceRoot 'NativeVehicleAi.cpp'),
+    (Join-Path $sourceRoot 'NativeAiSensors.cpp'),
+    (Join-Path $sourceRoot 'NativeAiWorldState.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.cpp'),
+    (Join-Path $sourceRoot 'NativeRolePawn.S'),
+    (Join-Path $sourceRoot 'NativeWeaponExposure.cpp'),
+    (Join-Path $sourceRoot 'NativeWeaponExposure.S'),
+    (Join-Path $sourceRoot 'NativePawnDamage.cpp'),
+    (Join-Path $sourceRoot 'NativePawnDamage.S'),
+    (Join-Path $sourceRoot 'NativePawnTargeting.cpp'),
+    (Join-Path $sourceRoot 'NativePawnTargeting.S'),
+    (Join-Path $sourceRoot 'NativePawnDowned.cpp'),
+    (Join-Path $sourceRoot 'NativePawnDowned.S'),
+    (Join-Path $sourceRoot 'NativeGameDeath.cpp'),
+    (Join-Path $sourceRoot 'NativeGameDeath.S'),
+    (Join-Path $sourceRoot 'NativePawnTransform.cpp'),
+    (Join-Path $sourceRoot 'NativePawnTransform.S'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.cpp'),
+    (Join-Path $sourceRoot 'NativeMeleeTargetGuard.cpp'),
+    (Join-Path $sourceRoot 'NativePlayerCombat.S'),
     (Join-Path $sourceRoot 'NativePlayerInputReset.S'),
     (Join-Path $sourceRoot 'CheckpointGate.cpp'),
     (Join-Path $sourceRoot 'CharacterRoleAdapter.cpp'),
@@ -393,6 +668,19 @@ if (Test-Path -LiteralPath $researchExe) {
         throw 'Local research executable no longer matches the gated target build.'
     }
     $signatureChecks = @(
+        [ordered]@{
+            Name = 'Squad setup uses the compiled EDI/no-argument buddy set-true specialization'
+            Start = '0x10bc6d36'
+            Stop = '0x10bc6d3d'
+            Patterns = @('10bc6d36:\s+8b fe', '10bc6d38:\s+e8 03 dc fe ff')
+        },
+        [ordered]@{
+            Name = 'AI squad spawning calls the same specialized buddy setter without a bool argument'
+            Start = '0x10bc6eb2'
+            Stop = '0x10bc6ec5'
+            Patterns = @('10bc6eb2:\s+8b f8', '10bc6eb4:\s+83 ff 10',
+                         '10bc6eb7:\s+75 07', '10bc6ec0:\s+e8 7b da fe ff')
+        },
         [ordered]@{
             Name = 'Player form-name helper uses physical player-pawn cast before vehicle read'
             Start = '0x10b191b7'

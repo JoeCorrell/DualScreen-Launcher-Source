@@ -315,6 +315,9 @@ bool UnrealResolveObjectPropertyOffset(void* object,
 bool UnrealResolveBytePropertyOffset(void* object,
                                      const wchar_t* property_name,
                                      uint32_t* output);
+bool UnrealResolveArrayPropertyOffset(void* object,
+                                      const wchar_t* property_name,
+                                      uint32_t* output);
 bool UnrealResolveFloatPropertyOffset(void* object,
                                       const wchar_t* property_name,
                                       uint32_t* output);
@@ -322,6 +325,12 @@ bool UnrealResolveStructPropertyOffset(void* object,
                                        const wchar_t* property_name,
                                        uint32_t expected_size,
                                        uint32_t* output);
+// Read-only exact-layout validation for native struct consumers. No writes or
+// UFunction lookup; the field must be scalar and have the requested byte size.
+bool UnrealResolveStructFieldOffset(const UnrealStructValueView& value,
+                                    const wchar_t* field_name,
+                                    const wchar_t* field_class,
+                                    uint32_t expected_size, uint32_t* output);
 bool UnrealReadBoolProperty(void* object, const wchar_t* property_name,
                             bool* output);
 bool UnrealReadIntProperty(void* object, const wchar_t* property_name,
@@ -440,7 +449,9 @@ bool UnrealObjectReferenceWritesReady();
 // empty live UObject array. Each cloned entry is rooted in that array BEFORE
 // the next engine call. Commit frees the previous empty backing allocation;
 // rollback removes only this transaction's exact entries and frees its block.
-// Never copy a pending journal or carry one across a game-thread pulse.
+// At most one array journal can be pending on the game thread. The active
+// journal's address owns the allocation; copied journals cannot append or
+// finish. Never move/copy a pending journal or carry it across a game pulse.
 struct UnrealObjectCloneArray {
   void* owner=nullptr;
   uint32_t owner_index=0;
@@ -462,6 +473,37 @@ bool UnrealBeginObjectCloneArray(void* owner,const wchar_t* property,
                                  UnrealObjectCloneArray* journal);
 bool UnrealAppendObjectClone(UnrealObjectCloneArray* journal,void* source,void** output);
 bool UnrealFinishObjectCloneArray(UnrealObjectCloneArray* journal,bool commit);
+// Clone into one EMPTY typed UObject property and publish its GC reference
+// before returning. Used for character-owned services such as OwnerAnimator,
+// not actor spawning. No UObject is manually deleted on rollback. A false
+// Begin may retain pending ownership if publication succeeded but validation
+// failed. The journal must remain at its original address until Finish; never
+// carry it across a game-thread pulse or discard pending recovery state.
+struct UnrealObjectCloneProperty {
+  void* owner=nullptr;
+  uint32_t owner_index=0;
+  void* field=nullptr;
+  uint32_t field_index=0;
+  void* property_class=nullptr;
+  uint32_t property_class_index=0;
+  void* source=nullptr;
+  uint32_t source_index=0;
+  void* source_class=nullptr;
+  uint32_t source_class_index=0;
+  void* clone=nullptr;
+  uint32_t clone_index=0;
+  void** destination=nullptr;
+  std::array<wchar_t,64> property{};
+  const UnrealObjectCloneProperty* journal_address=nullptr;
+  DWORD thread=0;
+  bool pending=false;
+};
+bool UnrealBeginObjectCloneProperty(void* owner,const wchar_t* property,
+                                    void* source,UnrealObjectCloneProperty* journal);
+bool UnrealFinishObjectCloneProperty(UnrealObjectCloneProperty* journal,bool commit);
+// Read-only validation of the original pending journal/root, including class,
+// property metadata, packed identities, current thread and source template.
+bool UnrealObjectClonePropertyPending(const UnrealObjectCloneProperty& journal);
 bool UnrealWriteObjectPropertyExpected(void* object,
                                        const wchar_t* property_name,
                                        void* expected_value,

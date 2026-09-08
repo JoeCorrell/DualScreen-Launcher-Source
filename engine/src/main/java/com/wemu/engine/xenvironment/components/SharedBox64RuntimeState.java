@@ -29,6 +29,7 @@ final class SharedBox64RuntimeState {
             "wemuOfficialSteamRuntimeRevision";
     static final String PINNED_RUNTIME_KEY = "wemuPinnedBox64Runtime";
     static final String TRANSFORMERS_WFC_RUNTIME = "transformers-wfc-0.4.2";
+    static final String AC2_WOWBOX64_KEY = "ac2WowBox64";
     static final String MANAGED_STEAM_CONTAINER_MARKER = "1";
     static final String BOX64_0_4_4_VERSION = "0.4.4";
     static final String BOX64_0_4_4_SHA256 =

@@ -18,6 +18,10 @@
 # JNI_OnLoad before any Switch screen or importer can open.
 -keep class kotlin.Pair { *; }
 
+# Signed companion DEX files use the host's Filament runtime through its public API.
+# Those references are invisible to the launcher's shrinker.
+-keep class com.google.android.filament.** { *; }
+
 -keepclasseswithmembers,includedescriptorclasses class * {
     native <methods>;
 }

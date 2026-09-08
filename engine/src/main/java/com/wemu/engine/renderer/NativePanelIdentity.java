@@ -63,12 +63,24 @@ final class NativePanelIdentity {
                 || isTransformersWfc(className, title)
                 || isIsaac(className, title)
                 || isAssassinsCreedII(className, title)
+                || isDishonored(className, title)
+                || isCrysis3(className, title)
                 || isStardewValley(className, title);
     }
 
     static boolean isAssassinsCreedII(String className, String title) {
         return normalizedClass(className).equals("ac2secondscreenpanel")
                 || normalizedTitle(title).equals("assassin's creed ii dual-screen animus");
+    }
+
+    static boolean isDishonored(String className, String title) {
+        return normalizedClass(className).equals("dishonoredsecondscreenpanel")
+                || normalizedTitle(title).equals("dishonored dual-screen journal");
+    }
+
+    static boolean isCrysis3(String className, String title) {
+        return normalizedClass(className).equals("crysis3secondscreenpanel")
+                || normalizedTitle(title).equals("crysis 3 dual-screen tactical interface");
     }
 
     private static String normalizedClass(String value) {

@@ -49,7 +49,9 @@ internal fun modUpdateFraction(progress: InstallProgress?): Float {
 
 internal fun gameArtwork(gameId: String): Int = when (gameId) {
     "skyrim-se" -> R.drawable.art_skyrim
+    "crysis3" -> R.drawable.art_crysis3
     "assassins-creed-ii" -> R.drawable.art_assassins_creed_ii
+    "dishonored" -> R.drawable.art_dishonored
     "fallout3" -> R.drawable.art_fallout3
     "fallout4" -> R.drawable.art_fallout4
     "grim-dawn" -> R.drawable.art_grim_dawn
@@ -74,7 +76,9 @@ internal fun switchGameArtwork(gameId: String): Int = when (gameId) {
 
 internal fun gameShortTitle(gameId: String): String = when (gameId) {
     "skyrim-se" -> "Skyrim Special Edition"
+    "crysis3" -> "Crysis 3"
     "assassins-creed-ii" -> "Assassin's Creed II"
+    "dishonored" -> "Dishonored"
     "fallout3" -> "Fallout 3"
     "fallout4" -> "Fallout 4"
     "grim-dawn" -> "Grim Dawn"

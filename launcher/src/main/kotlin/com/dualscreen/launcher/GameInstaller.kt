@@ -1843,7 +1843,7 @@ private fun isVersionedArchivePath(
     path.equals(archivePath(root, rule.path), ignoreCase = true)
 }
 
-private fun compatibilityWarning(
+internal fun compatibilityWarning(
     rule: FileRule,
     observedBytes: Long,
     observedSha256: String?,

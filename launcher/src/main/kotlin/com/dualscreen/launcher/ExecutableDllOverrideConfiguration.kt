@@ -3,7 +3,7 @@ package com.dualscreen.launcher
 import com.wemu.engine.core.WineRegistryEditor
 import java.io.File
 
-/** Applies narrowly-scoped native proxy policy after the launch target is verified. */
+/** Applies executable-scoped native proxy and Wine compatibility policies. */
 internal object ExecutableDllOverrideConfiguration {
     private val executablePattern = Regex("[A-Za-z0-9 _.'()-]+\\.exe", RegexOption.IGNORE_CASE)
     private val dllPattern = Regex("[A-Za-z0-9_.-]+")
@@ -13,7 +13,10 @@ internal object ExecutableDllOverrideConfiguration {
         require(executablePattern.matches(executableName)) { "Invalid executable override target" }
         require(overrides.isNotEmpty()) { "At least one DLL override is required" }
         require(overrides.all { (dll, value) ->
-            dllPattern.matches(dll) && value.equals("native,builtin", ignoreCase = true)
+            dllPattern.matches(dll) && (
+                value.equals("native,builtin", ignoreCase = true) ||
+                    value.equals("builtin,native", ignoreCase = true)
+                )
         }) { "Invalid DLL override policy" }
 
         val userRegistry = File(containerRoot, ".wine/user.reg")

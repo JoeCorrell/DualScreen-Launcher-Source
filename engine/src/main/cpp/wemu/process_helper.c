@@ -5,6 +5,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdint.h>
 
 JNIEXPORT jint JNICALL
 Java_com_wemu_engine_core_ProcessHelper_nativeSetProcessAffinity(
@@ -13,7 +14,7 @@ Java_com_wemu_engine_core_ProcessHelper_nativeSetProcessAffinity(
     CPU_ZERO(&cpuset);
 
     for (int i = 0; i < 32; i++) {
-        if (mask & (1 << i))
+        if ((uint32_t)mask & (UINT32_C(1) << i))
             CPU_SET(i, &cpuset);
     }
 
@@ -31,10 +32,10 @@ Java_com_wemu_engine_core_ProcessHelper_nativeGetProcessAffinity(
     if (sched_getaffinity((pid_t) pid, sizeof(cpuset), &cpuset) != 0)
         return -1; 
 
-    int mask = 0;
+    uint32_t mask = 0;
     for (int i = 0; i < 32; i++) {
         if (CPU_ISSET(i, &cpuset))
-            mask |= (1 << i);
+            mask |= (UINT32_C(1) << i);
     }
-    return mask;
+    return (jint)mask;
 }

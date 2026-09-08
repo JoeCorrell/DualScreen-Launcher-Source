@@ -1366,159 +1366,6 @@ std::optional<std::vector<u8>> LoadNestedArchive(const FileSys::VirtualDir& root
     return DecompressYaz0(*inner_source);
 }
 
-std::vector<u8> LoadBotwStock(const FileSys::VirtualDir& root, std::string_view actor) {
-    const auto source = ReadRomfsFile(root, "/UI/StockItem/" + std::string(actor) + ".sbitemico",
-                                      MaxSourceSize);
-    if (!source) {
-        return {};
-    }
-    const auto decoded = DecompressYaz0(*source);
-    return decoded ? DecodeTexturePng(*decoded, actor, true) : std::vector<u8>{};
-}
-
-std::vector<u8> LoadBotwCommon(const FileSys::VirtualDir& root, std::string_view logical_path) {
-    static constexpr std::array<std::pair<std::string_view, std::string_view>, 54> Textures{{
-        {"botw/ui/categories/Nt_PauseIconL_00_s.png", "Nt_PauseIconL_00^s"},
-        {"botw/ui/categories/Nt_PauseIconL_01_s.png", "Nt_PauseIconL_01^s"},
-        {"botw/ui/categories/Nt_PauseIconL_02_s.png", "Nt_PauseIconL_02^s"},
-        {"botw/ui/categories/Nt_PauseIconL_03_s.png", "Nt_PauseIconL_03^s"},
-        {"botw/ui/categories/Nt_PauseIconL_04_s.png", "Nt_PauseIconL_04^s"},
-        {"botw/ui/categories/Nt_PauseIconL_05_s.png", "Nt_PauseIconL_05^s"},
-        {"botw/ui/categories/Nt_PauseIconL_06_s.png", "Nt_PauseIconL_06^s"},
-        {"botw/ui/attack.png", "Nt_PauseIconL_00^s"},
-        {"botw/ui/defense.png", "Nt_PauseIconL_03^s"},
-        {"botw/ui/bow.png", "Nt_PauseIconL_01^s"},
-        {"botw/ui/guard.png", "Nt_PauseIconL_02^s"},
-        {"botw/ui/heart.png", "Nt_HeartNew_00^f"},
-        {"botw/ui/stamina.png", "Nt_GanbariLLnn_00^t"},
-        {"botw/ui/rupee.png", "Nt_RupeeIconNew_00^l"},
-        {"botw/ui/champion/grace.png", "Nt_IconSinJuNewMapL_00^s"},
-        {"botw/ui/champion/fury.png", "Nt_IconSinJuNewMapL_01^s"},
-        {"botw/ui/champion/gale.png", "Nt_IconSinJuNewMapL_02^s"},
-        {"botw/ui/champion/protection.png", "Nt_IconSinJuNewMapL_03^s"},
-        {"botw/ui/champion/grace_shadow.png", "Nt_IconSinJuNewMapShL_00^s"},
-        {"botw/ui/champion/fury_shadow.png", "Nt_IconSinJuNewMapShL_01^s"},
-        {"botw/ui/champion/gale_shadow.png", "Nt_IconSinJuNewMapShL_02^s"},
-        {"botw/ui/champion/protection_shadow.png", "Nt_IconSinJuNewMapShL_03^s"},
-        {"botw/ui/map/tower.png", "Nt_MapTowerNew_00^t"},
-        {"botw/ui/map/tower_outline.png", "Nt_MapTowerNew_01^t"},
-        {"botw/ui/map/tower_glow.png", "Nt_MapTowerNew_02^t"},
-        {"botw/ui/map/tower_flash.png", "Nt_MapTowerNew_03^t"},
-        {"botw/ui/map/stable.png", "Nt_MapHatago_00^t"},
-        {"botw/ui/map/lab.png", "Nt_MapReserchCenter_00^t"},
-        {"botw/ui/map/village.png", "Nt_MapCityIcon_00^t"},
-        {"botw/ui/map/settlement.png", "Nt_MapCityIcon_00^t"},
-        {"botw/ui/map/shrine.png", "Nt_MapDungeonNew_00^t"},
-        {"botw/ui/map/shrine_outline.png", "Nt_MapDungeonNew_01^t"},
-        {"botw/ui/map/shrine_glow.png", "Nt_MapDungeonNew_02^t"},
-        {"botw/ui/map/shrine_flash.png", "Nt_MapDungeonNew_03^t"},
-        {"botw/ui/map/shrine_dlc.png", "Sd_MapDungeonNewDLC_00^t"},
-        {"botw/ui/map/shrine_dlc_outline.png", "Sd_MapDungeonNewDLC_01^t"},
-        {"botw/ui/map/shrine_dlc_glow.png", "Sd_MapDungeonNewDLC_02^t"},
-        {"botw/ui/map/shrine_dlc_flash.png", "Sd_MapDungeonNewDLC_03^t"},
-        {"botw/ui/map/fountain.png", "Nt_MapEtcIcon_00^t"},
-        {"botw/ui/map/statue.png", "Nt_MapEtcIcon_00^t"},
-        {"botw/ui/map/memory.png", "SSIconPictureEX_00^s"},
-        {"botw/ui/map/castle.png", "Nt_MapCastle_00^t"},
-        {"botw/ui/map/shrine_resurrection.png", "Nt_MapStartPointNew_00^t"},
-        {"botw/ui/map/start.png", "Nt_MapStartPointNew_00^t"},
-        {"botw/ui/map/korok.png", "Nt_MapIconKolog^t"},
-        {"botw/ui/map/guardian.png", "Nt_MapIconGuardian_00^t"},
-        {"botw/ui/map/challenge.png", "Nt_MapChallengeIcon_00^s"},
-        {"botw/ui/map/player.png", "Nt_MapPlayerIconNew_00^s"},
-        {"botw/ui/map/stamps.png", "Nt_MapStampIconMarge_00^f"},
-        {"botw/ui/map/pin_red.png", "Nt_MapMapPinIcon1_00^s"},
-        {"botw/ui/map/pin_blue.png", "Nt_MapMapPinIcon2_00^s"},
-        {"botw/ui/map/pin_yellow.png", "Nt_MapMapPinIcon3_00^s"},
-        {"botw/ui/map/pin_green.png", "Nt_MapMapPinIcon4_00^s"},
-        {"botw/ui/map/pin_purple.png", "Nt_MapMapPinIcon5_00^s"},
-    }};
-    const auto cached = botw_common_cache.find(std::string(logical_path));
-    if (cached != botw_common_cache.end()) {
-        return cached->second;
-    }
-    const auto mapping = std::find_if(Textures.begin(), Textures.end(), [&](const auto& entry) {
-        return entry.first == logical_path;
-    });
-    if (mapping == Textures.end()) {
-        return {};
-    }
-    if (!botw_common_archive) {
-        if (std::chrono::steady_clock::now() < botw_common_retry_after) {
-            return {};
-        }
-        auto archive = LoadNestedArchive(root, "/Pack/Bootup.pack", "Layout/Common.sblarc");
-        if (!archive) {
-            botw_common_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-            return {};
-        }
-        botw_common_archive = std::make_shared<std::vector<u8>>(std::move(*archive));
-        botw_common_loaded = true;
-        botw_common_retry_after = {};
-    }
-    auto png = DecodeTexturePng(*botw_common_archive, mapping->second);
-    if (!png.empty()) {
-        botw_common_cache.emplace(std::string(logical_path), png);
-    }
-    return png;
-}
-
-std::vector<u8> LoadBotwMap(const FileSys::VirtualDir& root) {
-    static constexpr std::array<char, 12> Columns{'Z', 'A', 'B', 'C', 'D', 'E',
-                                                   'F', 'G', 'H', 'I', 'J', 'K'};
-    constexpr u32 Rows = 10;
-    std::vector<u8> canvas;
-    u32 tile_width{};
-    u32 tile_height{};
-    for (u32 column = 0; column < Columns.size(); ++column) {
-        for (u32 row = 0; row < Rows; ++row) {
-            const std::string path = "/UI/MapTex/MainField/MapTex3_" +
-                                     std::string(1, Columns[column]) + "-" +
-                                     std::to_string(row) + ".sbmaptex";
-            const auto source = ReadRomfsFile(root, path, MaxSourceSize);
-            if (!source) {
-                return {};
-            }
-            const auto decoded_source = DecompressYaz0(*source);
-            if (!decoded_source) {
-                return {};
-            }
-            const auto tile = DecodeTextureRgba(*decoded_source, {}, true);
-            if (!tile) {
-                return {};
-            }
-            if (canvas.empty()) {
-                tile_width = tile->width;
-                tile_height = tile->height;
-                const u64 output_width = static_cast<u64>(tile_width) * Columns.size();
-                const u64 output_height = static_cast<u64>(tile_height) * 12;
-                if (tile_width == 0 || tile_height == 0 || output_width > MaxTextureDimension ||
-                    output_height > MaxTextureDimension ||
-                    output_width * output_height > MaxTexturePixels) {
-                    return {};
-                }
-                canvas.resize(static_cast<std::size_t>(output_width * output_height * 4));
-            } else if (tile->width != tile_width || tile->height != tile_height) {
-                return {};
-            }
-            const u32 output_width = tile_width * Columns.size();
-            const u32 output_row = row + 1;
-            for (u32 y = 0; y < tile_height; ++y) {
-                const std::size_t destination =
-                    (static_cast<std::size_t>(output_row * tile_height + y) * output_width +
-                     column * tile_width) * 4;
-                const std::size_t source_offset = static_cast<std::size_t>(y) * tile_width * 4;
-                std::memcpy(canvas.data() + destination, tile->rgba.data() + source_offset,
-                            static_cast<std::size_t>(tile_width) * 4);
-            }
-        }
-    }
-    TextureInfo descriptor{};
-    descriptor.width = tile_width * Columns.size();
-    descriptor.height = tile_height * 12;
-    return EncodePng(descriptor, canvas);
-}
-
 std::vector<u8> LoadMk8dCharacter(const FileSys::VirtualDir& root, std::string_view logical_path) {
     const auto name = LogicalComponent(logical_path, "mk8d/characters/", ".png");
     if (!name || !name->starts_with("tc_MapChara_")) {
@@ -1745,13 +1592,17 @@ bool LoadXcxArchiveIndex(const FileSys::VirtualDir& root) {
         const u64 path_hash = ReadU64(*index, entry);
         const u32 disk_size = ReadU32(*index, entry + 8);
         const u32 expanded_size = ReadU32(*index, entry + 12);
-        if (disk_size == 0 || expanded_size == 0 || offset > store_size ||
+        // ARH2 uses expanded_size == 0 for members without an index size declaration.
+        // The installed archive has 48,992 such records; their disk ranges are real.
+        if (disk_size == 0 || offset > store_size ||
             disk_size > store_size - offset ||
             offset > std::numeric_limits<u64>::max() - disk_size - (alignment - 1)) {
             xcx_archive_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
             return false;
         }
-        ranges.emplace(path_hash, XcxArchiveRange{offset, disk_size, expanded_size});
+        if (!ranges.emplace(path_hash, XcxArchiveRange{offset, disk_size, expanded_size}).second) {
+            return false;
+        }
         offset = (offset + disk_size + alignment - 1) & ~(static_cast<u64>(alignment) - 1);
     }
     xcx_archive_index = std::move(ranges);
@@ -1764,7 +1615,8 @@ bool LoadXcxArchiveIndex(const FileSys::VirtualDir& root) {
 std::optional<std::vector<u8>> ExpandXcxArchiveMember(std::span<const u8> member,
                                                        u32 expected_size) {
     if (!HasMagic(member, "xbc1")) {
-        if (member.size() != expected_size || member.size() > MaxDecodedSourceSize) {
+        if ((expected_size != 0 && member.size() != expected_size) ||
+            member.empty() || member.size() > MaxDecodedSourceSize) {
             return std::nullopt;
         }
         return std::vector<u8>{member.begin(), member.end()};
@@ -1775,7 +1627,7 @@ std::optional<std::vector<u8>> ExpandXcxArchiveMember(std::span<const u8> member
     const u32 compression = ReadU32(member, 4);
     const u32 expanded_size = ReadU32(member, 8);
     const u32 compressed_size = ReadU32(member, 12);
-    if (expanded_size != expected_size || expanded_size == 0 ||
+    if ((expected_size != 0 && expanded_size != expected_size) || expanded_size == 0 ||
         expanded_size > MaxDecodedSourceSize || compressed_size == 0 ||
         compressed_size > member.size() - 0x30) {
         return std::nullopt;
@@ -1920,6 +1772,26 @@ struct XcxBdatTable {
         return found == columns.end() ? nullptr : &found->second;
     }
 
+    u32 UnsignedHash(std::span<const u8> row, u32 hash) const {
+        const auto found = columns.find(hash);
+        if (found == columns.end()) return 0;
+        const auto& c = found->second;
+        if (c.offset >= row.size()) return 0;
+        if (c.type == 1) return row[c.offset];
+        if (c.type == 2 && row.size() - c.offset >= 2) return ReadU16(row, c.offset);
+        if ((c.type == 3 || c.type == 9) && row.size() - c.offset >= 4) return ReadU32(row, c.offset);
+        return 0;
+    }
+
+    float FloatingHash(std::span<const u8> row, u32 hash) const {
+        const auto found = columns.find(hash);
+        if (found == columns.end() || found->second.type != 8 ||
+            found->second.offset > row.size() || row.size() - found->second.offset < 4) return 0;
+        float value{};
+        std::memcpy(&value, row.data() + found->second.offset, 4);
+        return std::isfinite(value) ? value : 0;
+    }
+
     u32 Unsigned(std::span<const u8> row, std::string_view name, u32 fallback = 0) const {
         const auto* column = Column(name);
         if (!column || column->offset >= row.size()) {
@@ -1988,8 +1860,7 @@ struct XcxBdatTable {
     }
 };
 
-std::optional<XcxBdatTable> FindXcxBdatTable(std::span<const u8> file,
-                                             std::string_view table_name) {
+std::optional<XcxBdatTable> FindXcxBdatTableByHash(std::span<const u8> file, u32 wanted) {
     if (file.size() < 16 || !HasMagic(file, "BDAT") ||
         ReadU32(file, 4) != 0x01001004) {
         return std::nullopt;
@@ -1998,7 +1869,6 @@ std::optional<XcxBdatTable> FindXcxBdatTable(std::span<const u8> file,
     if (count == 0 || count > 65'536 || static_cast<u64>(count) * 4 + 16 > file.size()) {
         return std::nullopt;
     }
-    const u32 wanted = XcxMurmur3(table_name);
     for (u32 index = 0; index < count; ++index) {
         const u32 base = ReadU32(file, 16 + index * 4);
         if (base > file.size() || file.size() - base < 48 ||
@@ -2042,6 +1912,11 @@ std::optional<XcxBdatTable> FindXcxBdatTable(std::span<const u8> file,
         return table;
     }
     return std::nullopt;
+}
+
+std::optional<XcxBdatTable> FindXcxBdatTable(std::span<const u8> file,
+                                         std::string_view table_name) {
+    return FindXcxBdatTableByHash(file, XcxMurmur3(table_name));
 }
 
 void XcxAppendU16(std::vector<u8>& output, u16 value) {
@@ -2277,10 +2152,74 @@ std::vector<u8> LoadXcxMapMetadata(const FileSys::VirtualDir& root, u32 zone) {
     return output;
 }
 
-std::vector<u8> LoadXcxPartyMetadata(const FileSys::VirtualDir& root) {
+std::vector<u8> LoadXcxProbeMetadata(const FileSys::VirtualDir& root) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
     const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto probes = common ? FindXcxBdatTable(*common, "ITM_BeaconList") : std::nullopt;
+    const auto names = messages ? FindXcxBdatTable(*messages, "ITM_BeaconList_ms") : std::nullopt;
+    if (!probes || !names || probes->rows != 39 || probes->base_id != 1) return {};
+    std::vector<u8> output;
+    XcxAppendU32(output, 0x52504358); // XCPR, probe definitions from native 0x3230DC.
+    XcxAppendU32(output, 1);
+    XcxAppendU32(output, probes->rows);
+    for (u32 id = 1; id <= probes->rows; ++id) {
+        const auto row = probes->RowById(id);
+        if (!row) return {};
+        XcxAppendU32(output, id);
+        XcxAppendU32(output, probes->Unsigned(*row, "cost"));
+        for (const auto column : {"Name", "Caption"}) {
+            const auto message = names->RowById(probes->Unsigned(*row, column));
+            const auto value = message ? names->String(*message, "name") : std::string{};
+            XcxAppendU32(output, static_cast<u32>(value.size()));
+            output.insert(output.end(), value.begin(), value.end());
+        }
+    }
+    return output;
+}
+
+std::vector<u8> LoadXcxEquipmentMetadata(const FileSys::VirtualDir& root) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    if (!common || !messages) return {};
+    const auto slots = FindXcxBdatTable(*common, "MNU_EQUIPPART");
+    const auto menu = FindXcxBdatTable(*messages, "menu_program_ms");
+    if (!slots || !menu) return {};
+    std::vector<u8> output;
+    const auto text = [&](const std::string& value) {
+        XcxAppendU32(output, static_cast<u32>(value.size()));
+        output.insert(output.end(), value.begin(), value.end());
+    };
+    XcxAppendU32(output, 0x4E514558); // XEQN
+    XcxAppendU32(output, 1);
+    XcxAppendU32(output, 12);
+    for (u32 slot = 0; slot < 12; ++slot) {
+        const auto part = slots->RowById(slot);
+        const auto label = part ? menu->RowById(slots->Unsigned(*part, "texID")) : std::nullopt;
+        if (!label) return {};
+        text(menu->String(*label, "name"));
+    }
+    for (const auto* table_name : {"WPN_PcList", "AMR_PcList"}) {
+        const auto items = FindXcxBdatTable(*common, table_name);
+        const auto names = FindXcxBdatTable(*messages, std::string(table_name) + "_ms");
+        if (!items || !names || items->rows > 8192) return {};
+        XcxAppendU32(output, items->rows);
+        for (u32 index = 0; index < items->rows; ++index) {
+            const auto item = items->RowByIndex(index);
+            if (!item) return {};
+            const auto name = names->RowById(items->Unsigned(*item, "Name"));
+            XcxAppendU32(output, items->base_id + index);
+            text(name ? names->String(*name, "name") : std::string{});
+        }
+    }
+    return output;
+}
+
+std::vector<u8> LoadXcxPartyMetadata(const FileSys::VirtualDir& root) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto characters = common ? FindXcxBdatTable(*common, "DEF_PcList") : std::nullopt;
     const auto names = messages ? FindXcxBdatTable(*messages, "DEF_PcList_ms") : std::nullopt;
-    if (!names) {
+    if (!names || !characters) {
         return {};
     }
     struct PartyName {
@@ -2289,7 +2228,11 @@ std::vector<u8> LoadXcxPartyMetadata(const FileSys::VirtualDir& root) {
     };
     std::vector<PartyName> records;
     for (u32 id = 1; id <= 23; ++id) {
-        const auto row = names->RowById(id);
+        // Runtime character IDs are DEF_PcList IDs, not message row IDs.
+        // E.g. character 11 joins Name=16 (Elma); message 11 is Frye.
+        const auto character = characters->RowById(id);
+        const auto row = character ? names->RowById(characters->Unsigned(*character, "Name"))
+                                   : std::nullopt;
         std::string name = row ? names->String(*row, "name") : std::string{};
         if (name.empty()) {
             continue;
@@ -2412,7 +2355,7 @@ std::vector<u8> DecodeXcxWilayPng(std::span<const u8> source) {
     const u32 image_format = ReadU32(mibl, footer + 24);
     if (width == 0 || height == 0 || width > MaxTextureDimension ||
         height > MaxTextureDimension || static_cast<u64>(width) * height > MaxTexturePixels ||
-        depth != 1 || image_format != 77 || image_size > footer) {
+        depth != 1 || image_format != 77 || image_size > mibl.size()) {
         return {};
     }
     constexpr u32 block_width = 4;
@@ -2425,7 +2368,9 @@ std::vector<u8> DecodeXcxWilayPng(std::span<const u8> source) {
         true, bytes_per_block, blocks_x, blocks_y, 1, block_height_log2, 0);
     const std::size_t linear_size = static_cast<std::size_t>(blocks_x) * blocks_y *
                                     bytes_per_block;
-    if (required > image_size || required > mibl.size()) {
+    // LBIM's declared allocation may include the 40-byte footer (map02_1301 does).
+    // Texture reads themselves must still remain strictly before that footer.
+    if (required > image_size || required > footer) {
         return {};
     }
     std::vector<u8> linear(linear_size);
@@ -2448,11 +2393,150 @@ std::vector<u8> DecodeXcxWilayPng(std::span<const u8> source) {
     return EncodePng(descriptor, rgba);
 }
 
+std::vector<u8> LoadXcxSegmentCatalog(const FileSys::VirtualDir& root) {
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto ui = ReadXcxArchiveMember(root, "/param/devxml/UI.bin");
+    if (!common || !messages || !ui || ui->size() != 0x6E0) return {};
+    const auto segment_text = FindXcxBdatTable(*messages, "SEG_Segment_ms");
+    const auto fields = FindXcxBdatTable(*common, "FLD_FieldNameList");
+    // Hashes are the exact operands in native 0x5632E0 / 0x674BE4.
+    const auto anchors = FindXcxBdatTableByHash(*common, 0x12E0693F);
+    const auto contents = FindXcxBdatTableByHash(*common, 0x3E72E869);
+    const auto quests = FindXcxBdatTable(*common, "FLD_questlist");
+    if (!fields || !anchors || !contents || !quests || !segment_text || fields->rows > 64 ||
+        contents->rows > 8192 || quests->rows > 4096) return {};
+    std::vector<u8> output;
+    XcxAppendU32(output, 0x4C475358); // XSGL
+    XcxAppendU32(output, 3);
+    XcxAppendU32(output, fields->rows);
+    for (u32 index = 0; index < fields->rows; ++index) {
+        const auto field = fields->RowByIndex(index);
+        const u32 id = fields->base_id + index;
+        const auto anchor = anchors->RowById(id);
+        const u32 zone = field ? fields->Unsigned(*field, "zoneNo") : 0;
+        XcxAppendU32(output, id);
+        XcxAppendU32(output, zone);
+        XcxAppendFloat(output, anchor ? anchors->FloatingHash(*anchor, 0xC5FB37C0) : 0);
+        XcxAppendFloat(output, anchor ? anchors->FloatingHash(*anchor, 0x6D72234B) : 0);
+        const u32 spacing_offset = id == 3 || (id >= 13 && id <= 16) ? 0x5B8 :
+                                   id == 10 ? 0x5DC : 0x594;
+        XcxAppendU32(output, ReadU32(*ui, spacing_offset - 0x310));
+    }
+    XcxAppendU32(output, contents->rows);
+    for (u32 index = 0; index < contents->rows; ++index) {
+        const auto row = contents->RowByIndex(index);
+        XcxAppendU32(output, contents->base_id + index);
+        XcxAppendU32(output, row ? contents->UnsignedHash(*row, 0xE8FDA8ED) : 0);
+    }
+    XcxAppendU32(output, quests->rows);
+    for (u32 index = 0; index < quests->rows; ++index) {
+        const auto row = quests->RowByIndex(index);
+        XcxAppendU32(output, quests->base_id + index);
+        XcxAppendU32(output, row ? quests->Unsigned(*row, "prt_quest_id") : 0);
+    }
+    XcxAppendU32(output, contents->rows);
+    for (u32 index = 0; index < contents->rows; ++index) {
+        const auto row = contents->RowByIndex(index);
+        if (!row) return {};
+        XcxAppendU32(output, contents->base_id + index);
+        for (const auto* column : {"info_title", "info_summary"}) {
+            const auto text_row = segment_text->RowById(contents->Unsigned(*row, column));
+            const auto value = text_row ? segment_text->String(*text_row, "name") : std::string{};
+            XcxAppendU32(output, static_cast<u32>(value.size()));
+            output.insert(output.end(), value.begin(), value.end());
+        }
+    }
+    return output;
+}
+
+std::vector<u8> LoadXcxAtlas(const FileSys::VirtualDir& root, u32 layer) {
+    if (layer != 1 && layer != 2) return {};
+    const auto common = LoadXcxBdat(root, "/bdat/common.bdat", xcx_common_bdat);
+    const auto messages = LoadXcxBdat(root, "/bdat/us/common_ms.bdat", xcx_message_bdat);
+    const auto ui = ReadXcxArchiveMember(root, "/param/devxml/UI.bin");
+    if (!common || !messages || !ui || ui->size() != 0x6E0) return {};
+    const auto maps = FindXcxBdatTable(*common, "MNU_MapInfo");
+    const auto bounds = FindXcxBdatTable(*common, "SegmentMapInfo");
+    const auto fields = FindXcxBdatTable(*common, "FLD_FieldNameList");
+    const auto names = FindXcxBdatTable(*messages, "fieldnamelist_ms");
+    const auto row = maps ? maps->RowById(layer) : std::nullopt;
+    if (!row || !bounds || !fields || !names) return {};
+    const std::string level = maps->String(*row, "level_name");
+    if (level != (layer == 1 ? "map01" : "map02")) return {};
+    const auto seg = ReadXcxArchiveMember(root, "/ui/seg/" + level + ".seg");
+    if (!seg || seg->size() < 32 || seg->size() > 64 * 1024) return {};
+    std::vector<u8> output;
+    XcxAppendU32(output, 0x534C5458); // XTLS: native tiled-map definition, v1.
+    XcxAppendU32(output, 1);
+    XcxAppendU32(output, layer);
+    // UI.bin is loaded at configuration-object +0x310 by 0x6A50. The map
+    // constructors 0x7FCF9C (Mira) and 0x89277C (NLA) copy these fields;
+    // 0x7ABB58/0x7ABC00 convert (world-offset)*pixels/world + pixels/2.
+    const std::array<u32, 6> offsets = layer == 1
+        ? std::array<u32, 6>{0x568, 0x568, 0x570, 0x574, 0x578, 0x57C}
+        : std::array<u32, 6>{0x598, 0x59C, 0x5A0, 0x5A4, 0x5A8, 0x5AC};
+    for (const auto offset : offsets) XcxAppendU32(output, ReadU32(*ui, offset - 0x310));
+    const auto append_string = [&](const std::string& value) {
+        XcxAppendU32(output, static_cast<u32>(value.size()));
+        output.insert(output.end(), value.begin(), value.end());
+    };
+    for (u32 variant = 0; variant < 5; ++variant) {
+        XcxAppendU32(output, variant == 0 ? 0 :
+            maps->Unsigned(*row, "condition" + std::to_string(variant + 1)));
+        append_string(maps->String(*row, variant == 0 ? "level_name" :
+            "level_name" + std::to_string(variant + 1)));
+    }
+    XcxAppendU32(output, static_cast<u32>(seg->size()));
+    output.insert(output.end(), seg->begin(), seg->end());
+    const std::vector<std::pair<u32, u32>> regions = layer == 1
+        ? std::vector<std::pair<u32, u32>>{{13, 1000}, {6, 1501}, {7, 1601},
+                                        {8, 1701}, {9, 2001}, {10, 2201}}
+        : std::vector<std::pair<u32, u32>>{{1, 1001}, {2, 1101}, {3, 1201},
+                                        {4, 1301}, {5, 1401}};
+    XcxAppendU32(output, static_cast<u32>(regions.size()));
+    for (const auto& [bounds_id, zone] : regions) {
+        const auto region = bounds->RowById(bounds_id);
+        if (!region) return {};
+        XcxAppendU32(output, zone);
+        for (const auto column : {"left", "top", "width", "height", "size", "worldSize"}) {
+            XcxAppendFloat(output, static_cast<float>(bounds->Signed(*region, column)));
+        }
+        std::string name = zone == 1000 ? "New Los Angeles" : "";
+        for (u32 index = 0; index < fields->rows && name.empty(); ++index) {
+            const auto field = fields->RowByIndex(index);
+            if (field && fields->Unsigned(*field, "zoneNo") == zone) {
+                if (const auto message = names->RowById(fields->Unsigned(*field, "name"))) {
+                    name = names->String(*message, "name");
+                }
+            }
+        }
+        append_string(name);
+    }
+    return output;
+}
+
 std::vector<u8> LoadXcxAsset(const FileSys::VirtualDir& root,
                              std::string_view logical_path) {
     const auto cached = xcx_asset_cache.find(std::string(logical_path));
     if (cached != xcx_asset_cache.end()) {
         return cached->second;
+    }
+    if (logical_path == "xcx/maps/segments.bin") {
+        auto data = LoadXcxSegmentCatalog(root);
+        if (!data.empty()) xcx_asset_cache.emplace(std::string(logical_path), data);
+        return data;
+    }
+    if (logical_path == "xcx/maps/icon_segment.png") {
+        const auto member = ReadXcxArchiveMember(root, "/ui/image/icon_segment.wilay");
+        auto data = member ? DecodeXcxWilayPng(*member) : std::vector<u8>{};
+        if (!data.empty()) xcx_asset_cache.emplace(std::string(logical_path), data);
+        return data;
+    }
+    if (logical_path == "xcx/maps/atlas_1.bin" || logical_path == "xcx/maps/atlas_2.bin") {
+        auto data = LoadXcxAtlas(root, logical_path == "xcx/maps/atlas_1.bin" ? 1 : 2);
+        if (!data.empty()) xcx_asset_cache.emplace(std::string(logical_path), data);
+        return data;
     }
     if (logical_path == "xcx/missions/data.bin") {
         auto data = LoadXcxMissionMetadata(root);
@@ -2461,11 +2545,21 @@ std::vector<u8> LoadXcxAsset(const FileSys::VirtualDir& root,
         }
         return data;
     }
+    if (logical_path == "xcx/probes/data.bin") {
+        auto data = LoadXcxProbeMetadata(root);
+        if (!data.empty()) xcx_asset_cache.emplace(std::string(logical_path), data);
+        return data;
+    }
     if (logical_path == "xcx/party/data.bin") {
         auto data = LoadXcxPartyMetadata(root);
         if (!data.empty()) {
             xcx_asset_cache.emplace(std::string(logical_path), data);
         }
+        return data;
+    }
+    if (logical_path == "xcx/equipment/data.bin") {
+        auto data = LoadXcxEquipmentMetadata(root);
+        if (!data.empty()) xcx_asset_cache.emplace(std::string(logical_path), data);
         return data;
     }
     constexpr std::string_view MapMetadataPrefix = "xcx/maps/meta_";
@@ -2492,17 +2586,17 @@ std::vector<u8> LoadXcxAsset(const FileSys::VirtualDir& root,
         return {};
     }
     const std::string_view name = logical_path.substr(9, logical_path.size() - 9 - 4);
-    if (name.size() < 8 || name.size() > 20 || name[0] != 'm' || name[1] != 'a' ||
+    if (name.size() < 8 || name.size() > 40 || name[0] != 'm' || name[1] != 'a' ||
         name[2] != 'p' || !std::all_of(name.begin() + 3, name.end(), [](char value) {
-            return std::isdigit(static_cast<unsigned char>(value)) || value == '_';
+            return std::isdigit(static_cast<unsigned char>(value)) || value == '_' ||
+                   value == 'e' || value == 'x';
         })) {
         return {};
     }
     const auto member = ReadXcxArchiveMember(root, "/ui/image/" + std::string(name) + ".wilay");
     auto png = member ? DecodeXcxWilayPng(*member) : std::vector<u8>{};
-    if (!png.empty()) {
-        xcx_asset_cache.emplace(std::string(logical_path), png);
-    }
+    // The Android renderer owns a bounded, resolution-aware tile cache. Keeping
+    // hundreds of duplicate full-resolution PNGs here wastes emulator memory.
     return png;
 }
 
@@ -2613,36 +2707,6 @@ std::vector<u8> LoadAsset(EmulationSession& session, std::string_view logical_pa
         }
         return png;
     }
-    if (title_id == BotwTitleId) {
-        if (logical_path == "botw/ui/hyrule_map.png") {
-            if (botw_map_cache.empty()) {
-                if (std::chrono::steady_clock::now() < botw_map_retry_after) {
-                    return {};
-                }
-                auto map = LoadBotwMap(root);
-                if (!map.empty()) {
-                    botw_map_cache = std::move(map);
-                    botw_map_retry_after = {};
-                } else {
-                    botw_map_retry_after = std::chrono::steady_clock::now() + AssetRetryDelay;
-                }
-            }
-            return botw_map_cache;
-        }
-        if (const auto actor = LogicalComponent(logical_path, "botw/stock/", ".png")) {
-            return LoadBotwStock(root, *actor);
-        }
-        if (const auto rune = LogicalComponent(logical_path, "botw/ui/rune_", ".png")) {
-            static const std::unordered_map<std::string, std::string> Actors{
-                {"bombs", "Obj_RemoteBombCube"}, {"camera", "Obj_Camera"},
-                {"cryonis", "Obj_IceMaker"}, {"magnesis", "Obj_Magnetglove"},
-                {"stasis", "Obj_StopTimer"},
-            };
-            const auto actor = Actors.find(*rune);
-            return actor != Actors.end() ? LoadBotwStock(root, actor->second) : std::vector<u8>{};
-        }
-        return LoadBotwCommon(root, logical_path);
-    }
     if (title_id == Mk8dTitleId) {
         if (logical_path.starts_with("mk8d/characters/")) {
             return LoadMk8dCharacter(root, logical_path);
@@ -2704,6 +2768,20 @@ size_t ExternalReadFile(EmulationSession& session, const char* path, uint64_t of
 std::vector<u8> ExternalDecodeTexture(std::span<const u8> source, std::string_view name, bool first) {
     if (source.size() > MaxArchiveSize || name.size() > 512) return {};
     return DecodeTexturePng(source, name, first);
+}
+
+std::vector<u8> ExternalDecodeRgba(std::span<const u8> source, std::string_view name, bool first, uint32_t& width, uint32_t& height) {
+    if(source.size()>MaxArchiveSize || name.size()>512) return {};
+    auto decoded=DecodeTextureRgba(source,name,first);
+    if(!decoded) return {};
+    width=decoded->width; height=decoded->height;
+    return std::move(decoded->rgba);
+}
+std::vector<u8> ExternalEncodePng(std::span<const u8> rgba, uint32_t width,uint32_t height) {
+    if(!width || !height || width>MaxTextureDimension || height>MaxTextureDimension ||
+        u64(width)*height>MaxTexturePixels || rgba.size()!=u64(width)*height*4) return {};
+    TextureInfo info{}; info.width=width; info.height=height;
+    return EncodePng(info,rgba);
 }
 
 void Reset() {

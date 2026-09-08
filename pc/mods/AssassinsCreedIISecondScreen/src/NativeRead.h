@@ -13,13 +13,20 @@ struct Memory {
     template<class T> bool Read(uint32_t address, T& value) const {
         return address >= 0x10000 && address <= UINT32_MAX - sizeof(T) && Copy(address, &value, sizeof(T));
     }
-    bool Field(uint32_t object, uint32_t offset, uint32_t& value) const {
+    template<class T> bool Member(uint32_t object, uint32_t offset, T& value) const {
         return object >= 0x10000 && object <= UINT32_MAX - offset && Read(object + offset, value);
     }
+    bool Field(uint32_t object, uint32_t offset, uint32_t& value) const {
+        return Member(object, offset, value);
+    }
     bool Reference(uint32_t handle, uint32_t& object) const {
-        uint32_t words[3]{};
-        if (!Read(handle, words)) return false;
-        object = words[2] & 0x80000000u ? words[0] : 0;
+        uint32_t pointer{},flags{};object=0;
+        // Native references use +0 and +8. The +4 word is an independently
+        // changing retain count (e.g.010b3c30/f7faa0 lock xadd). Consuming it
+        // made a ReadTransaction reject unchanged game state when a worker
+        // merely retained an asset. Still validate both identity and residency.
+        if (!Read(handle,pointer) || !Member(handle,8,flags)) return false;
+        object = flags & 0x80000000u ? pointer : 0;
         return true;
     }
 };

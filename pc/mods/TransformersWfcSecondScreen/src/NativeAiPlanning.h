@@ -23,6 +23,8 @@ NativeAiPlanningResult NativeAiDrainStoppedPlan(void* controller);
 bool NativeAiPlanHandoffReady(void* controller);
 // Private immediate Unbind/Bind setters, NOT public deferred Replace* calls.
 // Require a drained, suspended runner and a reciprocal physical TnAiPawn pair.
+// Same-set assignment runs the lifecycle without an unrooted null interval.
+// Canonical identities and the opposite set must survive all native callbacks.
 NativeAiPlanningResult NativeAiSetActionSet(void* controller, void* action_set);
 NativeAiPlanningResult NativeAiSetGoalSet(void* controller, void* goal_set);
 // Uses the compiled controller -> active world's scheduler -> SubmitRequest

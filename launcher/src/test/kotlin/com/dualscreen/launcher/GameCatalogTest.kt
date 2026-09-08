@@ -8,19 +8,59 @@ class GameCatalogTest {
     fun assassinsCreedUsesTheVerifiedGameAndSeparateDevelopmentPayload() {
         val game = checkNotNull(GameCatalog.byId("assassins-creed-ii"))
         assertThat(game.executableCandidates).containsExactly("AssassinsCreedIIGame.exe")
+        assertThat(game.nativeDllOverrides).containsExactly(
+            "dinput8", "native,builtin", "dsound", "builtin,native",
+        )
+        assertThat(game.isBeta).isTrue()
+        assertThat(game.saveDirectory).isEmpty()
+        assertThat(OnDemandGamePayloads.manages(game.id)).isTrue()
+        assertThat(game.fileRules.single().sha256AnyOf).containsExactly(
+            "23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92",
+            "e0520f85b2cb3ac10ce59c8073cebd5853ab6395b3d2303f368b9e3203595abd",
+            "da55d92905936ecd79e287fc268ae4af59e242f8cbf6ab9b29a566847ff4f9a3",
+            "e680e6109c39828b4f5e842d2b53fae388638a36800bdb17b5e9eb127efefb39",
+            "89c7bbb81d44b5bed37b9e71302689742933e9732d918c1f1405619ebd58c088",
+        )
+    }
+
+    @Test
+    fun ac2LaunchValidationAcceptsTheExactOriginalAndPatchedBuilds() {
+        val rule = checkNotNull(GameCatalog.byId("assassins-creed-ii")).fileRules.single()
+        assertThat(compatibilityWarning(rule, 34_693_768L,
+            "23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92")).isNull()
+        assertThat(compatibilityWarning(rule, 34_701_312L,
+            "e0520f85b2cb3ac10ce59c8073cebd5853ab6395b3d2303f368b9e3203595abd")).isNull()
+        assertThat(compatibilityWarning(rule, 34_701_312L,
+            "da55d92905936ecd79e287fc268ae4af59e242f8cbf6ab9b29a566847ff4f9a3")).isNull()
+        assertThat(compatibilityWarning(rule, 34_701_312L,
+            "e680e6109c39828b4f5e842d2b53fae388638a36800bdb17b5e9eb127efefb39")).isNull()
+        assertThat(compatibilityWarning(rule, 34_701_312L,
+            "89c7bbb81d44b5bed37b9e71302689742933e9732d918c1f1405619ebd58c088")).isNull()
+        assertThat(compatibilityWarning(rule, 34_701_312L, "0".repeat(64))).isNotNull()
+        assertThat(compatibilityWarning(rule, 34_693_768L, null)).isNotNull()
+    }
+
+    @Test
+    fun dishonoredUsesTheInstalledBuildAndAnIndependentPayload() {
+        val game = checkNotNull(GameCatalog.byId("dishonored"))
+        assertThat(game.executableCandidates).containsExactly("Binaries/Win32/Dishonored.exe")
+        assertThat(game.requiredFiles).contains("DishonoredGame/CookedPCConsole/DishonoredGame.upk")
         assertThat(game.nativeDllOverrides).containsExactly("dinput8", "native,builtin")
         assertThat(game.isBeta).isTrue()
         assertThat(game.saveDirectory).isEmpty()
         assertThat(OnDemandGamePayloads.manages(game.id)).isTrue()
+        assertThat(game.fileRules.single().bytes).isEqualTo(18_008_064L)
         assertThat(game.fileRules.single().sha256)
-            .isEqualTo("23a73e5f2d035973ebe4afc056e5c56bad982d27142294fa44e7cd11732c8b92")
+            .isEqualTo("67ced86b1675b8d27c742a84be41eaa7eba41c748a7f4ec1fe05d107d4f91ae5")
     }
 
     @Test
     fun catalogIsClosedAndEveryGameHasInstallAndLaunchRules() {
         assertThat(GameCatalog.games.map { it.id }).containsExactly(
             "skyrim-se",
+            "crysis3",
             "assassins-creed-ii",
+            "dishonored",
             "fallout3",
             "fallout4",
             "grim-dawn",
@@ -37,7 +77,7 @@ class GameCatalogTest {
             assertThat(game.executableCandidates).isNotEmpty()
             assertThat(game.requiredFiles).isNotEmpty()
             assertThat(game.requiredBuild).isNotEmpty()
-            if (game.id != "assassins-creed-ii") assertThat(game.saveDirectory).isNotEmpty()
+            if (game.id !in setOf("assassins-creed-ii", "dishonored", "crysis3")) assertThat(game.saveDirectory).isNotEmpty()
             assertThat(game.saveDirectory).doesNotContain("..")
             assertThat(game.saveDirectory.startsWith("/")).isFalse()
             assertThat(game.id).matches("[a-z0-9-]+")

@@ -38,9 +38,9 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     private companion object {
         private const val DESIGN_WIDTH = 1240f
         private const val DESIGN_HEIGHT = 1080f
-        private const val SNAPSHOT_SIZE = 208
+        private const val SNAPSHOT_SIZE = 308
         private const val SNAPSHOT_MAGIC = 0x53584358
-        private const val SNAPSHOT_VERSION = 4
+        private const val SNAPSHOT_VERSION = 9
         private const val POLL_INTERVAL_MS = 100L
         private const val ACTIVE_STATUS = 4
 
@@ -52,9 +52,15 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         private const val CAP_PARTY_STATE = 1 shl 5
         private const val CAP_COMBAT_STATE = 1 shl 6
         private const val CAP_ACTION_BRIDGE = 1 shl 7
+        private const val CAP_CREDITS_STATE = 1 shl 8
+        private const val CAP_NAVIGATION_STATE = 1 shl 9
 
         private const val ACTION_SWITCH_CHARACTER = 1
         private const val ACTION_FAST_TRAVEL = 2
+        private const val ACTION_INSTALL_PROBE = 3
+        private const val ACTION_TRACK_MISSION = 4
+        private const val ACTION_SWAP_PARTY = 5
+        private const val ACTION_EQUIP_ITEM = 6
         private const val ACTION_STATE_QUEUED = 1
         private const val ACTION_STATE_RUNNING = 2
 
@@ -71,9 +77,28 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         private const val CONTROL_MAP_LOCATIONS = 11
         private const val CONTROL_MAP_PROBES = 12
         private const val CONTROL_MAP_FAST_TRAVEL = 13
+        private const val CONTROL_MISSIONS_PREVIOUS = 14
+        private const val CONTROL_MISSIONS_NEXT = 15
+        private const val CONTROL_PARTY_SWITCH = 16
+        private const val CONTROL_MISSION_TRACK = 17
+        private const val CONTROL_MISSION_MAP = 18
         private const val CONTROL_SEGMENT_FIRST = 20
         private const val CONTROL_PARTY_FIRST = 40
         private const val CONTROL_MISSION_FIRST = 60
+        private const val CONTROL_PARTY_UP = 80
+        private const val CONTROL_PARTY_DOWN = 81
+        private const val CONTROL_EQUIPMENT = 82
+        private const val CONTROL_EQUIPMENT_CLOSE = 83
+        private const val CONTROL_FRONTIER_PREVIOUS = 84
+        private const val CONTROL_FRONTIER_NEXT = 85
+        private const val CONTROL_FRONTIER_MAP = 86
+        private const val CONTROL_FRONTIER_SITE = 100
+        private const val CONTROL_EQUIPMENT_SLOT = 120
+        private const val CONTROL_EQUIPMENT_ROW = 140
+        private const val CONTROL_EQUIPMENT_PREVIOUS = 150
+        private const val CONTROL_EQUIPMENT_NEXT = 151
+        private const val CONTROL_EQUIPMENT_APPLY = 152
+        private val FRONTIER_ZONES = longArrayOf(1101, 1501, 1601, 1701, 2001, 2201)
         private const val MISSION_FLAG_POLL_MS = 750L
         private const val MAP_FLAG_POLL_MS = 1_000L
         private const val ASSET_RETRY_MS = 5_000L
@@ -89,6 +114,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         val segmentMask: Int = 0,
         val segmentScores: LongArray = LongArray(6),
         val playerTransformValid: Boolean = false,
+        val playerHeadingValid: Boolean = false,
         val playerX: Float = 0f,
         val playerY: Float = 0f,
         val playerZ: Float = 0f,
@@ -113,7 +139,17 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         val actionResult: Int = 0,
         val actionRequest: Long = 0,
         val actionCompleted: Long = 0,
-        val sampleTimeUs: Long = 0
+        val sampleTimeUs: Long = 0,
+        val partyVitalsMask: Int = 0,
+        val partyHp: LongArray = LongArray(4),
+        val partyMaximumHp: LongArray = LongArray(4),
+        val credits: Long = 0,
+        val skellFuelMask: Int = 0,
+        val partyLevelMask: Int = 0,
+        val partyLevels: IntArray = IntArray(4),
+        val trackedMission: Int = 0,
+        val skellFuel: FloatArray = FloatArray(4),
+        val skellMaximumFuel: FloatArray = FloatArray(4)
     )
 
     private data class MapMarker(
@@ -142,7 +178,6 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     private data class MapData(
         val zone: Long,
-        val bitmap: Bitmap,
         val left: Float,
         val top: Float,
         val width: Float,
@@ -198,6 +233,9 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     private var mapPanX = 0f
     private var mapPanY = 0f
     private var mapZoom = 1f
+    private var nativeMapRenderer: XcxMapRenderer? = null
+    private var nativeMapTouch = false
+    @Volatile private var viewedMapZone = 0L
     @Volatile private var mapData: MapData? = null
     private var mapLoadZone = 0L
     private var mapRetryAt = 0L
@@ -213,14 +251,30 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     private var missionRetryAt = 0L
     private var missionFlagPollAt = 0L
     private var selectedMissionId = 0
+    private var missionOpenedFromMap = false
+    private val missionWindow = XcxListWindow(7)
+    private var pressedRecordId = 0
     private var selectedSegment = 0
+    private var selectedFrontierProbe = 0
+    private val frontierWindow = XcxListWindow(4)
     private var selectedPartyMember = 0
+    @Volatile private var equipmentCharacter = -1
+    @Volatile private var equipmentSlot = -1
+    @Volatile private var equipmentInventory: XcxEquipment.Inventory? = null
+    private var equipmentSelectedSlot = 0
+    private var equipmentSelectedKey = -1L
+    private val equipmentWindow = XcxListWindow(6)
+    @Volatile private var equipmentFrame: XcxEquipment.Frame? = null
+    @Volatile private var equipmentCatalog: XcxEquipment.Catalog? = null
+    private var equipmentPollAt = 0L
+    private var equipmentCatalogRetryAt = 0L
     @Volatile private var actionMessage = ""
     @Volatile private var actionMessageUntil = 0L
     private var lastActionCompleted = 0L
-    @Volatile private var pendingSwitchCharacter = 0
+    @Volatile private var pendingSwitchCharacter = -1
     @Volatile private var pendingSwitchUntil = 0L
     private var controllerActive = false
+    private val companionHeldKeys = mutableSetOf<Pair<Int, Int>>()
     private var controllerMotionAt = 0L
 
     init {
@@ -232,6 +286,19 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        nativeMapRenderer = XcxMapRenderer(
+            { postInvalidateOnAnimation() }, { task -> post { task() } },
+            { zone -> viewedMapZone = zone },
+            { formation -> requestNativeAction(ACTION_FAST_TRAVEL, formation) },
+            { argument -> requestNativeAction(ACTION_INSTALL_PROBE, argument) },
+            { quest ->
+                if (missions.any { it.id == quest }) {
+                    selectedMissionId = quest
+                    selectPage(2)
+                    missionOpenedFromMap = true
+                    postInvalidateOnAnimation()
+                } else showActionMessage("MISSION DETAILS ARE NOT AVAILABLE YET")
+            })
         XcxControllerBridge.attach(this)
         if (poller != null) return
         poller = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -259,10 +326,13 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     override fun onDetachedFromWindow() {
+        nativeMapRenderer?.close()
+        nativeMapRenderer = null
         XcxControllerBridge.detach(this)
         poller?.shutdownNow()
         poller = null
-        mapData?.bitmap?.recycle()
+        // RenderThread can still hold the last display list. Let Bitmap's lifetime follow
+        // its references rather than recycling pixels while a queued frame draws them.
         mapData = null
         Log.info("[XCX Companion] Verification surface detached")
         super.onDetachedFromWindow()
@@ -270,16 +340,26 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     private fun pollSnapshot() {
         buffer.clear()
-        if (NativeLibrary.fillXcxCompanionSnapshot(buffer) != SNAPSHOT_SIZE) return
-        if (buffer.getInt(0) != SNAPSHOT_MAGIC ||
+        val received = NativeLibrary.fillXcxCompanionSnapshot(buffer)
+        if (received != SNAPSHOT_SIZE || buffer.getInt(0) != SNAPSHOT_MAGIC ||
             buffer.getShort(4).toInt() != SNAPSHOT_VERSION ||
             buffer.getShort(6).toInt() != SNAPSHOT_SIZE
         ) {
+            // A stale packaged JNI library used to leave the UI waiting forever, even
+            // while the game was running. Never parse or retain a mismatched frame.
+            if (snapshot.status != -1) {
+                Log.error("[XCX Companion] Incompatible snapshot: returned=$received " +
+                    "expected=$SNAPSHOT_SIZE/v$SNAPSHOT_VERSION")
+                snapshot = Snapshot(status = -1)
+                stateHash = 0
+                postInvalidate()
+            }
             return
         }
 
         var nextHash = 17
         for (offset in 12 until 200) nextHash = 31 * nextHash + buffer.get(offset)
+        for (offset in 208 until SNAPSHOT_SIZE) nextHash = 31 * nextHash + buffer.get(offset)
         val changed = nextHash != stateHash
         if (changed) {
             stateHash = nextHash
@@ -292,7 +372,8 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                 lastQuest = buffer.getInt(32),
                 segmentMask = buffer.getInt(36),
                 segmentScores = LongArray(6) { buffer.u32(40 + it * 4) },
-                playerTransformValid = buffer.getInt(64) != 0,
+                playerTransformValid = buffer.getInt(64) and 1 != 0,
+                playerHeadingValid = buffer.getInt(64) and 2 != 0,
                 playerX = buffer.getFloat(68),
                 playerY = buffer.getFloat(72),
                 playerZ = buffer.getFloat(76),
@@ -321,26 +402,40 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                 actionResult = buffer.getInt(180),
                 actionRequest = buffer.getLong(184),
                 actionCompleted = buffer.getLong(192),
-                sampleTimeUs = buffer.getLong(200)
+                sampleTimeUs = buffer.getLong(200),
+                partyVitalsMask = buffer.getInt(208),
+                partyHp = LongArray(4) { buffer.u32(212 + it * 4) },
+                partyMaximumHp = LongArray(4) { buffer.u32(228 + it * 4) },
+                credits = buffer.u32(244),
+                skellFuelMask = buffer.getInt(248),
+                partyLevelMask = buffer.getInt(284),
+                partyLevels = IntArray(4) { buffer.getInt(288 + it * 4) },
+                trackedMission = buffer.getInt(304),
+                skellFuel = FloatArray(4) { buffer.getFloat(252 + it * 4) },
+                skellMaximumFuel = FloatArray(4) { buffer.getFloat(268 + it * 4) }
             )
         }
         val current = snapshot
         if (current.status == ACTIVE_STATUS) {
-            ensureMapData(current.zone)
+            ensureMapData(if (selectedPage == 1) FRONTIER_ZONES[selectedSegment]
+                else viewedMapZone.takeIf { it != 0L } ?: current.zone)
             ensureMissionData()
             ensurePartyData()
+            refreshEquipment()
             refreshMapMarkerFlags()
             refreshMissionFlags()
             consumeActionCompletion(current)
             val expectedCharacter = pendingSwitchCharacter
-            if (expectedCharacter != 0 && current.playerCharacterId == expectedCharacter) {
-                pendingSwitchCharacter = 0
+            if (expectedCharacter >= 0 && current.playerCharacterId == expectedCharacter &&
+                current.activePartySlot in 0..3 &&
+                current.partyValidMask and (1 shl current.activePartySlot) != 0) {
+                pendingSwitchCharacter = -1
                 pendingSwitchUntil = 0L
                 showActionMessage("NOW CONTROLLING ${characterName(expectedCharacter)}")
-            } else if (expectedCharacter != 0 &&
+            } else if (expectedCharacter >= 0 &&
                 SystemClock.uptimeMillis() > pendingSwitchUntil
             ) {
-                pendingSwitchCharacter = 0
+                pendingSwitchCharacter = -1
                 pendingSwitchUntil = 0L
                 showActionMessage("CHARACTER SWITCH TRANSITION DID NOT COMPLETE")
             }
@@ -354,21 +449,14 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         if (now < mapRetryAt) return
         mapLoadZone = zone
         try {
-            val imageBytes = NativeLibrary.getDualScreenRomfsAsset("xcx/maps/map02_${zone}.png")
             val metadataBytes = NativeLibrary.getDualScreenRomfsAsset("xcx/maps/meta_${zone}.bin")
-            val bitmap = imageBytes?.let {
-                BitmapFactory.decodeByteArray(it, 0, it.size)
-            }
-            val metadata = metadataBytes?.let { parseMapData(zone, bitmap, it) }
-            if (bitmap == null || metadata == null) {
-                bitmap?.recycle()
+            val metadata = metadataBytes?.let { parseMapData(zone, it) }
+            if (metadata == null) {
                 mapRetryAt = now + ASSET_RETRY_MS
                 Log.warning("[XCX-MAP] Native map data unavailable for zone $zone")
                 return
             }
-            val previous = mapData
             mapData = metadata
-            previous?.bitmap?.takeIf { it !== metadata.bitmap }?.recycle()
             mapPanX = metadata.startX
             mapPanY = metadata.startY
             mapZoom = 1f
@@ -377,15 +465,15 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             mapFlagPollAt = 0L
             mapRetryAt = 0L
             Log.info("[XCX-MAP] Loaded native map zone=$zone " +
-                "size=${bitmap.width}x${bitmap.height} markers=${metadata.markers.size}")
+                "markers=${metadata.markers.size}")
             postInvalidateOnAnimation()
         } finally {
             mapLoadZone = 0L
         }
     }
 
-    private fun parseMapData(zone: Long, bitmap: Bitmap?, bytes: ByteArray): MapData? {
-        if (bitmap == null || bytes.size < 80) return null
+    private fun parseMapData(zone: Long, bytes: ByteArray): MapData? {
+        if (bytes.size < 80) return null
         val data = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
         if (data.int != 0x50414D58 || data.short.toInt() != 2 ||
             (data.short.toInt() and 0xFFFF) != 80
@@ -408,7 +496,8 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         val moveRight = data.int
         val count = data.int
         val regionNameLength = data.int
-        if (!left.isFinite() || !top.isFinite() || mapWidth <= 0f || mapHeight <= 0f ||
+        if (!listOf(left, top, mapWidth, mapHeight, mapScale, worldSize, startX, startY)
+                .all { it.isFinite() } || mapWidth <= 0f || mapHeight <= 0f ||
             mapScale <= 0f || worldSize <= 0f || count < 0 || count > 4096 ||
             regionNameLength < 0 || regionNameLength > data.remaining()
         ) return null
@@ -444,7 +533,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             }
         }
         if (data.hasRemaining()) return null
-        return MapData(zone, bitmap, left, top, mapWidth, mapHeight, mapScale, worldSize,
+        return MapData(zone, left, top, mapWidth, mapHeight, mapScale, worldSize,
             maxScale, midScale, minScale, startX, startY, moveTop, moveLeft, moveBottom,
             moveRight, regionName, markers, markers.filter { it.visible })
     }
@@ -555,7 +644,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             val summary = cleanGameText(String(summaryBytes, Charsets.UTF_8))
             if (title.isNotBlank()) result += Mission(id, statusFlag, category, title, summary)
         }
-        return result
+        return if (data.hasRemaining()) emptyList() else result
     }
 
     private fun refreshMissionFlags() {
@@ -573,9 +662,6 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         }
         if (next != activeMissions) {
             activeMissions = next
-            if (selectedMissionId == 0 || next.none { it.id == selectedMissionId }) {
-                selectedMissionId = next.firstOrNull()?.id ?: 0
-            }
             Log.info("[XCX-MISSIONS] Active missions=${next.size}")
             postInvalidateOnAnimation()
         }
@@ -586,19 +672,98 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         .replace("\\r", "")
         .trim()
 
+    private fun refreshEquipment() {
+        val character = equipmentCharacter
+        if (character !in 0..22) return
+        val now = SystemClock.uptimeMillis()
+        if (now < equipmentPollAt) return
+        equipmentPollAt = now + 500L
+        if (equipmentCatalog == null && now >= equipmentCatalogRetryAt) {
+            equipmentCatalogRetryAt = now + ASSET_RETRY_MS
+            equipmentCatalog = NativeLibrary.getDualScreenRomfsAsset("xcx/equipment/data.bin")
+                ?.let(XcxEquipment::catalog)
+        }
+        val live = NativeLibrary.readXcxEquipment(character)?.let { XcxEquipment.frame(it, character) }
+        if (equipmentCharacter == character && equipmentFrame != live) {
+            equipmentFrame = live
+            postInvalidateOnAnimation()
+        }
+        val slot = equipmentSlot
+        if (slot in 0..11) {
+            val category = XcxEquipment.categories[slot]
+            val inventory = NativeLibrary.readXcxEquipmentInventory(category)
+                ?.let { XcxEquipment.inventory(it, category) }
+            if (equipmentCharacter == character && equipmentSlot == slot && equipmentInventory != inventory) {
+                equipmentInventory = inventory
+                postInvalidateOnAnimation()
+            }
+        }
+    }
+
+    private fun openEquipment() {
+        val state = snapshot
+        if (state.partyValidMask and (1 shl selectedPartyMember) == 0) return
+        val character = state.partyCharacterIds[selectedPartyMember]
+        if (character !in 0..22) return
+        equipmentFrame = null
+        equipmentSlot = -1
+        equipmentInventory = null
+        equipmentCharacter = character
+    }
+
+    private fun openEquipmentSlot(slot: Int) {
+        if (slot !in 0..11 || equipmentFrame?.character != equipmentCharacter) return
+        equipmentSelectedSlot = slot
+        equipmentSelectedKey = -1L
+        equipmentInventory = null
+        equipmentWindow.reconcile(0, -1)
+        equipmentSlot = slot
+        invalidate()
+    }
+
+    private fun closeEquipment() {
+        if (equipmentSlot >= 0) {
+            equipmentSlot = -1
+            equipmentInventory = null
+        } else equipmentCharacter = -1
+    }
+
+    private fun equipmentItems() = equipmentInventory
+        ?.takeIf { equipmentSlot in 0..11 && it.category == XcxEquipment.categories[equipmentSlot] }
+        ?.items.orEmpty()
+
+    private fun equipmentPage(direction: Int) {
+        val items = equipmentItems()
+        equipmentSelectedKey = items.getOrNull(equipmentWindow.movePage(items.size, direction))?.instance ?: -1L
+        invalidate()
+    }
+
+    private fun applyEquipment(expectedKey: Long = equipmentSelectedKey) {
+        val slot = equipmentSlot
+        val character = equipmentCharacter
+        if (slot !in 0..11 || character !in 0..22 || expectedKey != equipmentSelectedKey ||
+            equipmentItems().none { it.instance == expectedKey }) return
+        if (equipmentFrame?.items?.getOrNull(slot)?.instance == expectedKey) {
+            showActionMessage("THIS ITEM IS ALREADY EQUIPPED")
+            return
+        }
+        requestNativeAction(ACTION_EQUIP_ITEM, expectedKey.toInt(), character or (slot shl 8))
+    }
+
     private fun characterName(characterId: Int): String =
-        partyNames[characterId] ?: if (characterId == 1) "Player 1" else "Character $characterId"
+        if (characterId == 0) "Avatar" else partyNames[characterId] ?: "Character $characterId"
 
     private fun consumeActionCompletion(state: Snapshot) {
         if (state.actionCompleted == 0L || state.actionCompleted == lastActionCompleted) return
         lastActionCompleted = state.actionCompleted
+        if (state.actionType == 7) return // Background native condition batch has no user notification.
         actionMessage = when (state.actionResult) {
             1 -> when (state.actionType) {
                 ACTION_SWITCH_CHARACTER -> {
                     pendingSwitchCharacter = state.actionArgument
                     pendingSwitchUntil = SystemClock.uptimeMillis() + 10_000L
                     if (state.playerCharacterId == state.actionArgument) {
-                        pendingSwitchCharacter = 0
+                        pendingSwitchCharacter = -1
                         pendingSwitchUntil = 0L
                         "NOW CONTROLLING ${characterName(state.actionArgument)}"
                     } else {
@@ -606,27 +771,37 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                     }
                 }
                 ACTION_FAST_TRAVEL -> "FAST TRAVEL STARTED"
+                ACTION_INSTALL_PROBE -> "PROBE UPDATED"
+                ACTION_TRACK_MISSION -> if (state.actionArgument == 0)
+                    "MISSION TRACKING CLEARED" else "MISSION NAVIGATION UPDATED"
+                ACTION_SWAP_PARTY -> "PARTY ORDER TRANSITION STARTED"
+                ACTION_EQUIP_ITEM -> "EQUIPMENT CHANGE STARTED"
                 else -> "ACTION COMPLETED"
             }
             2 -> "NATIVE ACTION WAS NOT RECOGNIZED"
-            3 -> "TARGET IS NO LONGER VALID"
+            3 -> if (state.actionType == ACTION_EQUIP_ITEM)
+                "ITEM IS ALREADY EQUIPPED OR NO LONGER AVAILABLE" else "TARGET IS NO LONGER VALID"
             4 -> "UNAVAILABLE DURING A CUTSCENE OR EVENT"
             5 -> "UNAVAILABLE IN A MENU OR SCRIPTED PAUSE"
             6 -> "GAMEPLAY SYSTEM IS STILL LOADING"
-            7 -> "THE GAME REJECTED THAT TRANSITION"
+            7 -> if (state.actionType == ACTION_INSTALL_PROBE)
+                "PROBE UNAVAILABLE: CHECK INVENTORY, CREDITS, OR CURRENT INSTALLATION"
+                else if (state.actionType == ACTION_EQUIP_ITEM)
+                    "ITEM DOES NOT MEET THIS CHARACTER'S EQUIPMENT REQUIREMENTS"
+                else "THE GAME REJECTED THAT TRANSITION"
             8 -> "UNAVAILABLE DURING COMBAT"
-            9 -> "EXIT THE SKELL BEFORE SWITCHING CHARACTERS"
+            9 -> "EXIT THE SKELL BEFORE CHANGING CHARACTERS OR EQUIPMENT"
             else -> "ACTION DID NOT COMPLETE"
         }
         if (state.actionResult != 1 && state.actionType == ACTION_SWITCH_CHARACTER) {
-            pendingSwitchCharacter = 0
+            pendingSwitchCharacter = -1
             pendingSwitchUntil = 0L
         }
         actionMessageUntil = SystemClock.uptimeMillis() + 4_000L
         postInvalidateOnAnimation()
     }
 
-    private fun requestNativeAction(action: Int, argument: Int) {
+    private fun requestNativeAction(action: Int, argument: Int, context: Int = 0) {
         val state = snapshot
         if (state.capabilities and CAP_ACTION_BRIDGE == 0) {
             showActionMessage("NATIVE ACTION BRIDGE IS NOT READY")
@@ -640,8 +815,9 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             showActionMessage("UNAVAILABLE IN A MENU OR SCRIPTED PAUSE")
             return
         }
-        if (action == ACTION_SWITCH_CHARACTER && state.playerActorType == 2) {
-            showActionMessage("EXIT THE SKELL BEFORE SWITCHING CHARACTERS")
+        if ((action == ACTION_SWITCH_CHARACTER || action == ACTION_SWAP_PARTY ||
+                action == ACTION_EQUIP_ITEM) && state.playerActorType == 4) {
+            showActionMessage("EXIT THE SKELL BEFORE CHANGING CHARACTERS OR EQUIPMENT")
             return
         }
         if (state.actionState == ACTION_STATE_QUEUED || state.actionState == ACTION_STATE_RUNNING ||
@@ -652,9 +828,39 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         }
         showActionMessage("SENDING REQUEST TO THE GAME...", 2_000L)
         poller?.execute {
-            val accepted = NativeLibrary.performXcxCompanionAction(action, argument)
+            val accepted = if (action == ACTION_EQUIP_ITEM)
+                NativeLibrary.equipXcxItem(context and 255, (context ushr 8) and 255,
+                    argument.toLong() and 0xffffffffL)
+                else NativeLibrary.performXcxCompanionAction(action, argument)
             if (!accepted) showActionMessage("ACTION IS NOT AVAILABLE IN THE CURRENT GAME STATE")
         }
+    }
+
+    private fun toggleMissionTracking(missionId: Int) {
+        if (snapshot.capabilities and CAP_NAVIGATION_STATE == 0) {
+            showActionMessage("MISSION NAVIGATION IS STILL LOADING")
+            return
+        }
+        if (missionId <= 0 || (snapshot.trackedMission != missionId &&
+            activeMissions.none { it.id == missionId })) {
+            showActionMessage("THIS MISSION IS NO LONGER ACTIVE")
+            return
+        }
+        requestNativeAction(ACTION_TRACK_MISSION,
+            if (snapshot.trackedMission == missionId) 0 else missionId)
+    }
+
+    private fun partyOrderArgument(delta: Int): Int? = XcxPartyOrder.argument(
+        selectedPartyMember, selectedPartyMember + delta,
+        snapshot.partyValidMask, snapshot.partyCharacterIds)
+
+    private fun movePartyMember(delta: Int, expected: Int? = partyOrderArgument(delta)) {
+        val argument = partyOrderArgument(delta)
+        if (argument == null || argument != expected) {
+            showActionMessage("SELECT TWO OCCUPIED COMPANION SLOTS")
+            return
+        }
+        requestNativeAction(ACTION_SWAP_PARTY, argument)
     }
 
     private fun showActionMessage(message: String, duration: Long = 4_000L) {
@@ -717,150 +923,25 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     private fun drawMapPage(canvas: Canvas, state: Snapshot) {
-        val nativeMap = mapData?.takeIf { it.zone == state.zone }
-        val region = nativeMap?.regionName?.takeIf { it.isNotBlank() }
-            ?: if (state.capabilities and CAP_ZONE_STATE != 0) "ZONE ${state.zone}" else ""
-        drawPageTitle(canvas, "MAP", region)
-        val mapRect = RectF(48f, 112f, 1192f, 908f)
-        panel(canvas, mapRect)
-        if (nativeMap == null) {
-            emptyState(canvas, "LOADING NATIVE MAP DATA")
-            return
-        }
-        val minimumZoom = (nativeMap.minScale.toFloat() /
-            nativeMap.midScale.coerceAtLeast(1)).coerceIn(.25f, 1f)
-        val maximumZoom = (nativeMap.maxScale.toFloat() /
-            nativeMap.midScale.coerceAtLeast(1)).coerceIn(1f, 4f)
-        mapZoom = mapZoom.coerceIn(minimumZoom, maximumZoom)
-        val baseSize = min(mapRect.width(), mapRect.height())
-        val drawSize = baseSize * mapZoom
-        if (mapFollowsPlayer && state.playerTransformValid &&
-            state.capabilities and CAP_PLAYER_TRANSFORM != 0
-        ) {
-            val centered = RectF(
-                mapRect.centerX() - drawSize * .5f,
-                mapRect.centerY() - drawSize * .5f,
-                mapRect.centerX() + drawSize * .5f,
-                mapRect.centerY() + drawSize * .5f
-            )
-            mapPosition(nativeMap, centered, state.playerX, state.playerZ)?.let { player ->
-                mapPanX = mapRect.centerX() - player.first
-                mapPanY = mapRect.centerY() - player.second
-            }
-        }
-        clampMapPan(nativeMap, drawSize)
-        val destination = RectF(
-            mapRect.centerX() - drawSize * .5f + mapPanX,
-            mapRect.centerY() - drawSize * .5f + mapPanY,
-            mapRect.centerX() + drawSize * .5f + mapPanX,
-            mapRect.centerY() + drawSize * .5f + mapPanY
-        )
-        mapMarkerHitRegions.clear()
-        canvas.save()
-        canvas.clipRect(mapRect.left + 2f, mapRect.top + 2f, mapRect.right - 2f,
-            mapRect.bottom - 2f)
-        paint.color = Color.rgb(10, 34, 47)
-        canvas.drawRect(mapRect, paint)
-        paint.alpha = 255
-        paint.isFilterBitmap = true
-        canvas.drawBitmap(nativeMap.bitmap,
-            Rect(0, 0, nativeMap.bitmap.width, nativeMap.bitmap.height), destination, paint)
-        paint.isFilterBitmap = false
-
-        val filteredMarkers = nativeMap.visibleMarkers.filter {
-            (it.isProbe && mapShowProbes) || (!it.isProbe && mapShowLocations)
-        }
-        filteredMarkers.forEach { marker ->
-            val position = mapPosition(nativeMap, destination, marker.worldX, marker.worldZ)
-                ?: return@forEach
-            val markerX = position.first + marker.offsetX * mapZoom
-            val markerY = position.second + marker.offsetY * mapZoom
-            val radius = when {
-                marker.isProbe -> 12f
-                marker.canFastTravel -> 11f
-                marker.kind == 2 -> 13f
-                else -> 9f
-            } * mapZoom.coerceIn(.8f, 1.5f)
-            paint.color = when {
-                marker.isProbe && marker.open -> Color.rgb(105, 232, 137)
-                marker.isProbe -> Color.rgb(73, 158, 102)
-                marker.canFastTravel -> Color.rgb(255, 201, 70)
-                else -> Color.rgb(76, 220, 239)
-            }
-            canvas.drawCircle(markerX, markerY, radius, paint)
-            stroke.color = Color.argb(220, 5, 16, 23)
-            stroke.strokeWidth = 3f
-            canvas.drawCircle(markerX, markerY, radius + 2f, stroke)
-            if (marker.infoId == selectedMapMarkerId) {
-                stroke.color = Color.WHITE
-                canvas.drawCircle(markerX, markerY, radius + 8f, stroke)
-            }
-            stroke.strokeWidth = 2f
-            mapMarkerHitRegions += Pair(
-                RectF(markerX - 24f, markerY - 24f, markerX + 24f, markerY + 24f), marker
-            )
-        }
-
-        if ((state.capabilities and CAP_PLAYER_TRANSFORM) != 0 && state.playerTransformValid) {
-            mapPosition(nativeMap, destination, state.playerX, state.playerZ)?.let { position ->
-                val markerSize = 18f
-                val yawRadians = atan2(
-                    2f * (state.playerRotationW * state.playerRotationY +
-                        state.playerRotationX * state.playerRotationZ),
-                    1f - 2f * (state.playerRotationY * state.playerRotationY +
-                        state.playerRotationZ * state.playerRotationZ)
-                )
-                val markerRotation = 180f - Math.toDegrees(yawRadians.toDouble()).toFloat()
-                val playerMarker = android.graphics.Path().apply {
-                    moveTo(0f, -markerSize)
-                    lineTo(-markerSize * .7f, markerSize)
-                    lineTo(0f, markerSize * .55f)
-                    lineTo(markerSize * .7f, markerSize)
-                    close()
-                }
-                canvas.save()
-                canvas.translate(position.first, position.second)
-                canvas.rotate(markerRotation)
-                paint.color = Color.WHITE
-                canvas.drawPath(playerMarker, paint)
-                canvas.restore()
-            }
-        }
-        canvas.restore()
-
-        paint.color = Color.argb(225, 5, 16, 23)
-        canvas.drawRect(66f, 130f, 394f, 184f, paint)
-        val probeCount = nativeMap.visibleMarkers.count { it.isProbe }
-        text(canvas, "${nativeMap.visibleMarkers.size} SITES - $probeCount PROBES",
-            84f, 165f, 18f, Color.WHITE, true)
-        drawCompactButton(canvas, mapLocationsRect(), "SITES", mapShowLocations,
-            pressedControl == CONTROL_MAP_LOCATIONS)
-        drawCompactButton(canvas, mapProbesRect(), "PROBES", mapShowProbes,
-            pressedControl == CONTROL_MAP_PROBES)
-        drawCompactButton(canvas, mapCenterRect(), "RESET", mapFollowsPlayer,
-            pressedControl == CONTROL_MAP_CENTER)
-        drawCompactButton(canvas, mapZoomOutRect(), "-", false,
-            pressedControl == CONTROL_MAP_ZOOM_OUT)
-        drawCompactButton(canvas, mapZoomInRect(), "+", false,
-            pressedControl == CONTROL_MAP_ZOOM_IN)
-
-        val selected = nativeMap.visibleMarkers.firstOrNull { it.infoId == selectedMapMarkerId }
-        if (selected != null) {
-            paint.color = Color.argb(235, 5, 16, 23)
-            canvas.drawRect(66f, 814f, 1174f, 892f, paint)
-            val label = selected.name.ifBlank {
-                if (selected.isProbe) "FRONTIERNAV SITE ${selected.probeId}" else "LOCATION ${selected.infoId}"
-            }
-            drawFittedText(canvas, label, 84f, 851f, 690f, 23f, 17f, Color.WHITE, true)
-            text(canvas,
-                if (selected.isProbe) {
-                    if (selected.open) "PROBE SITE OPEN" else "PROBE SITE DISCOVERED"
-                } else if (selected.canFastTravel) "FAST TRAVEL POINT" else "DISCOVERED LOCATION",
-                84f, 878f, 16f, Color.rgb(118, 169, 187), true)
-            if (selected.canFastTravel && selected.discovered) {
-                drawCompactButton(canvas, mapFastTravelRect(), "FAST TRAVEL", false,
-                    pressedControl == CONTROL_MAP_FAST_TRAVEL)
-            }
+        drawPageTitle(canvas, "MAP")
+        val yaw = atan2(2f * (state.playerRotationW * state.playerRotationY +
+            state.playerRotationX * state.playerRotationZ),
+            1f - 2f * (state.playerRotationY * state.playerRotationY +
+                state.playerRotationZ * state.playerRotationZ))
+        nativeMapRenderer?.apply {
+            sitesZone = mapData?.zone ?: 0L
+            update(state.zone, state.playerX, state.playerZ,
+                if (state.playerHeadingValid) 180f - Math.toDegrees(yaw.toDouble()).toFloat()
+                else Float.NaN, state.playerTransformValid &&
+                    state.capabilities and CAP_PLAYER_TRANSFORM != 0,
+                state.credits.takeIf { state.capabilities and CAP_CREDITS_STATE != 0 },
+                state.actionState == ACTION_STATE_QUEUED || state.actionState == ACTION_STATE_RUNNING ||
+                    state.actionRequest != 0L)
+            sites = mapData?.visibleMarkers.orEmpty().filter {
+                it.name.isNotBlank() && (it.kind == 1 || it.isProbe)
+            }.map { XcxMapRenderer.Site(it.infoId, it.name, it.worldX, it.worldZ,
+                if (it.canFastTravel && it.discovered) it.formationId else 0, it.isProbe) }
+            draw(canvas)
         }
     }
 
@@ -899,21 +980,60 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         text(canvas, if (valid) "SURVEY DATA AVAILABLE" else "NO SURVEY DATA",
             458f, 510f, 24f, if (valid) Color.rgb(76, 220, 239)
             else Color.rgb(151, 183, 194), true)
-        val probes = mapData?.takeIf { it.zone == state.zone }?.markers.orEmpty()
+        val currentMap = mapData?.takeIf { it.zone == FRONTIER_ZONES[selectedSegment] }
+        val probes = currentMap?.markers.orEmpty()
             .filter { it.isProbe }
         val visibleProbes = probes.filter { it.visible }
         val openProbes = visibleProbes.count { it.open }
-        text(canvas, "LIVE FRONTIERNAV SITES", 458f, 580f, 18f,
+        text(canvas, currentMap?.regionName?.takeIf { it.isNotBlank() }?.let { "$it SITES" }
+            ?: "SELECTED REGION SITES", 458f, 580f, 18f,
             Color.rgb(118, 169, 187), true)
-        text(canvas, "$openProbes OPEN / ${visibleProbes.size} DISCOVERED / ${probes.size} TOTAL",
+        text(canvas, if (currentMap == null) "WAITING FOR REGION DATA" else
+            "$openProbes OPEN / ${visibleProbes.size} DISCOVERED / ${probes.size} TOTAL",
             458f, 624f, 22f, Color.WHITE, true)
-        visibleProbes.take(4).forEachIndexed { index, probe ->
+        frontierWindow.reconcile(visibleProbes.size,
+            visibleProbes.indexOfFirst { it.probeId == selectedFrontierProbe })
+        visibleProbes.drop(frontierWindow.first).take(4).forEachIndexed { index, probe ->
             val y = 676f + index * 48f
+            if (probe.probeId == selectedFrontierProbe) {
+                paint.color = Color.rgb(15, 71, 89)
+                canvas.drawRect(frontierSiteRect(index), paint)
+            }
             paint.color = if (probe.open) Color.rgb(105, 232, 137) else Color.rgb(73, 158, 102)
             canvas.drawCircle(470f, y - 6f, 7f, paint)
             drawFittedText(canvas, probe.name.ifBlank { "FrontierNav Site ${probe.probeId}" },
                 490f, y, 620f, 19f, 15f, Color.rgb(190, 211, 219), false)
         }
+        if (frontierWindow.first > 0) drawCompactButton(canvas, frontierPreviousRect(),
+            "PREVIOUS", false, pressedControl == CONTROL_FRONTIER_PREVIOUS)
+        if (frontierWindow.first + 4 < visibleProbes.size) drawCompactButton(canvas, frontierNextRect(),
+            "NEXT", false, pressedControl == CONTROL_FRONTIER_NEXT)
+        drawCompactButton(canvas, frontierMapRect(), "VIEW MAP", false,
+            pressedControl == CONTROL_FRONTIER_MAP)
+    }
+
+    private fun frontierProbes(): List<MapMarker> = mapData
+        ?.takeIf { it.zone == FRONTIER_ZONES[selectedSegment] }?.markers.orEmpty()
+        .filter { it.isProbe && it.visible }
+
+    private fun selectContinent(index: Int) {
+        selectedSegment = (index + 6) % 6
+        selectedFrontierProbe = 0
+        frontierWindow.reconcile(0, -1)
+    }
+
+    private fun frontierPage(direction: Int) {
+        val probes = frontierProbes()
+        val index = frontierWindow.movePage(probes.size, direction)
+        selectedFrontierProbe = probes.getOrNull(index)?.probeId ?: 0
+    }
+
+    private fun openFrontierMap(probe: Int = 0) {
+        val zone = FRONTIER_ZONES[selectedSegment]
+        if (probe != 0 && frontierProbes().none { it.probeId == probe }) return
+        viewedMapZone = zone
+        selectPage(0)
+        nativeMapRenderer?.showRegion(zone, probe)
     }
 
     private fun drawMissionsPage(canvas: Canvas, state: Snapshot) {
@@ -933,14 +1053,21 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         if (active.isEmpty()) {
             text(canvas, "NO ACTIVE MISSIONS", 240f, 500f, 22f,
                 Color.rgb(151, 183, 194), true, Paint.Align.CENTER)
-            text(canvas, "The list updates from XCX's live quest flags.", 826f, 500f, 22f,
-                Color.rgb(151, 183, 194), false, Paint.Align.CENTER)
-            return
+            if (missions.none { it.id == selectedMissionId }) {
+                selectedMissionId = if (state.capabilities and CAP_NAVIGATION_STATE != 0)
+                    state.trackedMission else 0
+                text(canvas, "Select a mission marker on the map for details.", 826f, 500f, 22f,
+                    Color.rgb(151, 183, 194), false, Paint.Align.CENTER)
+                if (selectedMissionId != 0) drawCompactButton(canvas, missionTrackRect(),
+                    "STOP TRACKING", true, pressedControl == CONTROL_MISSION_TRACK)
+                return
+            }
         }
-        if (selectedMissionId == 0 || active.none { it.id == selectedMissionId }) {
+        if (selectedMissionId == 0 || missions.none { it.id == selectedMissionId }) {
             selectedMissionId = active.first().id
         }
-        val visible = active.take(7)
+        missionWindow.reconcile(active.size, active.indexOfFirst { it.id == selectedMissionId })
+        val visible = active.drop(missionWindow.first).take(7)
         visible.forEachIndexed { index, mission ->
             val row = missionRect(index)
             val selected = mission.id == selectedMissionId
@@ -950,10 +1077,24 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                 stroke.color = Color.rgb(76, 220, 239)
                 canvas.drawRect(row, stroke)
             }
-            text(canvas, mission.title, row.left + 16f, row.centerY() + 7f, 18f,
+            canvas.save()
+            canvas.clipRect(row)
+            drawFittedText(canvas, if (state.capabilities and CAP_NAVIGATION_STATE != 0 &&
+                state.trackedMission == mission.id) "• ${mission.title}" else mission.title,
+                row.left + 16f, row.centerY() + 7f,
+                row.width() - 32f, 18f, 13f,
                 if (selected) Color.WHITE else Color.rgb(151, 183, 194), true)
+            canvas.restore()
         }
-        val selected = active.firstOrNull { it.id == selectedMissionId } ?: active.first()
+        if (active.isNotEmpty()) {
+            drawCompactButton(canvas, missionPreviousRect(), "PREV", false,
+                pressedControl == CONTROL_MISSIONS_PREVIOUS)
+            drawCompactButton(canvas, missionNextRect(), "NEXT", false,
+                pressedControl == CONTROL_MISSIONS_NEXT)
+            text(canvas, "${missionWindow.first + 1}-${missionWindow.first + visible.size} / ${active.size}",
+                240f, 898f, 16f, Color.rgb(151, 183, 194), false, Paint.Align.CENTER)
+        }
+        val selected = missions.firstOrNull { it.id == selectedMissionId } ?: return
         text(canvas, missionCategory(selected.category), 492f, 166f, 17f,
             Color.rgb(76, 220, 239), true)
         drawFittedText(canvas, selected.title, 492f, 224f, 660f, 34f, 23f,
@@ -962,6 +1103,21 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         canvas.drawRect(492f, 250f, 1160f, 254f, paint)
         drawWrappedText(canvas, selected.summary, 492f, 304f, 650f, 25f, 8,
             Color.rgb(190, 211, 219))
+        val navigationReady = state.capabilities and CAP_NAVIGATION_STATE != 0
+        if (missionOpenedFromMap) drawCompactButton(canvas, missionMapRect(), "RETURN TO MAP",
+            false, pressedControl == CONTROL_MISSION_MAP)
+        val tracked = navigationReady && state.trackedMission == selected.id
+        val selectedActive = active.any { it.id == selected.id }
+        text(canvas, when {
+            !navigationReady -> "WAITING FOR NAVIGATION STATE"
+            tracked -> "TRACKED IN THE GAME'S NAVIGATION PANEL"
+            !selectedActive -> "THIS MISSION IS NOT ACTIVE"
+            state.trackedMission == 0 -> "NO MISSION TRACKED"
+            else -> "ANOTHER MISSION IS TRACKED"
+        }, 492f, 785f, 18f, Color.rgb(118, 169, 187), true)
+        if (navigationReady && (selectedActive || tracked)) drawCompactButton(canvas, missionTrackRect(),
+            if (tracked) "STOP TRACKING" else "TRACK MISSION", tracked,
+            pressedControl == CONTROL_MISSION_TRACK)
     }
 
     private fun drawCombatPage(canvas: Canvas, state: Snapshot) {
@@ -971,6 +1127,8 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         drawMetric(canvas, 48f, 112f, 350f, "ENEMIES IN BATTLE",
             if ((state.capabilities and CAP_COMBAT_STATE) != 0)
                 state.battleEnemyCount.toString() else "--")
+        drawMetric(canvas, 48f, 278f, 350f, "CREDITS",
+            if (state.capabilities and CAP_CREDITS_STATE != 0) "%,d".format(state.credits) else "--")
         panel(canvas, RectF(426f, 112f, 1192f, 908f))
         text(canvas, "ACTIVE PARTY", 458f, 166f, 22f, Color.WHITE, true)
         for (index in 0 until 4) {
@@ -984,14 +1142,23 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                 Color.rgb(118, 169, 187), true)
             text(canvas, if (valid) characterName(state.partyCharacterIds[index]) else "EMPTY",
                 484f, rowTop + 82f, 25f, Color.WHITE, true)
+            text(canvas, partyHealth(state, index), 1138f, rowTop + 82f, 21f,
+                Color.rgb(105, 232, 137), false, Paint.Align.RIGHT)
         }
     }
 
     private fun drawPartyPage(canvas: Canvas, state: Snapshot) {
+        if (equipmentCharacter >= 0) {
+            drawEquipment(canvas)
+            return
+        }
         drawPageTitle(canvas, "PARTY")
         panel(canvas, RectF(48f, 112f, 720f, 908f))
         panel(canvas, RectF(748f, 112f, 1192f, 908f))
         text(canvas, "CURRENT PARTY", 80f, 166f, 22f, Color.WHITE, true)
+        if (state.partyValidMask and (1 shl selectedPartyMember) != 0)
+            drawCompactButton(canvas, equipmentRect(), "EQUIPMENT", false,
+                pressedControl == CONTROL_EQUIPMENT)
         for (index in 0 until 4) {
             val rect = partyRect(index)
             val valid = state.partyValidMask and (1 shl index) != 0
@@ -1021,40 +1188,145 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             if (selectedValid) characterName(selectedCharacter) else "EMPTY",
             780f, 238f, 380f, 34f, 22f, Color.WHITE, true)
         if (selectedValid) {
-            text(canvas, "CHARACTER ID", 780f, 298f, 18f, Color.rgb(118, 169, 187), true)
-            text(canvas, selectedCharacter.toString(), 780f, 338f, 23f,
+            text(canvas, "HEALTH", 780f, 298f, 18f, Color.rgb(118, 169, 187), true)
+            text(canvas, partyHealth(state, selectedPartyMember), 780f, 338f, 23f,
                 Color.rgb(151, 183, 194), true)
             text(canvas, "PARTY STATE", 780f, 394f, 18f, Color.rgb(118, 169, 187), true)
             text(canvas, if (selectedActive) "PLAYER CONTROLLED" else
-                if (nativeSlot == 0xFFFF) "ACTOR SYNCHRONIZING" else "READY - NATIVE SLOT $nativeSlot",
+                if (nativeSlot == 0xFFFF) "JOINING PARTY" else "PARTY MEMBER",
                 780f, 434f, 21f, if (selectedActive) Color.rgb(105, 232, 137)
                 else Color.rgb(151, 183, 194), true)
-            text(canvas, "ROSTER STATE ${state.partyRecordStates[selectedPartyMember]}",
-                780f, 480f, 17f, Color.rgb(118, 169, 187), true)
+            text(canvas, "LEVEL", 780f, 478f, 18f, Color.rgb(118, 169, 187), true)
+            text(canvas, if (state.partyLevelMask and (1 shl selectedPartyMember) != 0)
+                state.partyLevels[selectedPartyMember].toString() else "--",
+                780f, 514f, 26f, Color.WHITE, true)
             val switchStatus = when {
                 selectedActive -> "ALREADY CONTROLLED"
                 state.battleEnemyCount > 0 -> "BLOCKED DURING COMBAT"
                 state.pauseFlags != 0L -> "BLOCKED BY CURRENT GAME STATE"
-                state.playerActorType == 2 -> "EXIT SKELL BEFORE SWITCHING"
+                state.playerActorType == 4 -> "EXIT SKELL BEFORE SWITCHING"
                 state.capabilities and CAP_ACTION_BRIDGE == 0 -> "NATIVE BRIDGE LOADING"
-                else -> "TAP MEMBER TO TAKE CONTROL"
+                else -> "READY TO TAKE CONTROL"
             }
             text(canvas, switchStatus, 780f, 560f, 19f,
                 if (!selectedActive && state.battleEnemyCount == 0L && state.pauseFlags == 0L &&
-                    state.playerActorType != 2 && state.capabilities and CAP_ACTION_BRIDGE != 0)
+                    state.playerActorType != 4 && state.capabilities and CAP_ACTION_BRIDGE != 0)
                     Color.rgb(76, 220, 239) else Color.rgb(151, 183, 194), true)
+            if (!selectedActive) drawCompactButton(canvas, partySwitchRect(), "TAKE CONTROL",
+                false, pressedControl == CONTROL_PARTY_SWITCH)
+            if (partyOrderArgument(-1) != null) drawCompactButton(canvas, partyOrderRect(-1),
+                "X: MOVE UP", false, pressedControl == CONTROL_PARTY_UP)
+            if (partyOrderArgument(1) != null) drawCompactButton(canvas, partyOrderRect(1),
+                "Y: MOVE DOWN", false, pressedControl == CONTROL_PARTY_DOWN)
         }
     }
 
-    private fun drawSkellPage(canvas: Canvas, state: Snapshot) {
-        drawPageTitle(canvas, "SKELL")
+    private fun drawEquipment(canvas: Canvas) {
+        drawPageTitle(canvas, "EQUIPMENT", characterName(equipmentCharacter))
         panel(canvas, RectF(48f, 112f, 1192f, 908f))
-        text(canvas, "ACTIVE ACTOR", 80f, 166f, 22f, Color.WHITE, true)
-        drawMetric(canvas, 80f, 202f, 326f, "RUNTIME TYPE", state.playerActorType.toString())
-        drawMetric(canvas, 457f, 202f, 326f, "PARTY MEMBERS",
-            Integer.bitCount(state.partyValidMask).toString())
-        drawMetric(canvas, 834f, 202f, 326f, "MIRANIUM", "%,d".format(state.miranium))
+        text(canvas, if (equipmentSlot >= 0) "OWNED INVENTORY" else "CURRENT EQUIPMENT",
+            80f, 164f, 22f, Color.WHITE, true)
+        drawCompactButton(canvas, equipmentCloseRect(), "BACK", false,
+            pressedControl == CONTROL_EQUIPMENT_CLOSE)
+        if (equipmentSlot >= 0) {
+            drawEquipmentInventory(canvas)
+            return
+        }
+        val frame = equipmentFrame?.takeIf { it.character == equipmentCharacter }
+        if (frame == null) {
+            text(canvas, "LIVE EQUIPMENT DATA UNAVAILABLE", 80f, 246f, 23f,
+                Color.rgb(151, 183, 194), false)
+            return
+        }
+        val catalog = equipmentCatalog
+        frame.items.forEach { item ->
+            val x = 80f + (item.slot / 6) * 548f
+            val y = 204f + (item.slot % 6) * 110f
+            paint.color = if (item.slot == equipmentSelectedSlot) Color.rgb(22, 70, 88)
+                else Color.rgb(11, 39, 53)
+            canvas.drawRect(x, y, x + 520f, y + 98f, paint)
+            val slot = catalog?.slots?.getOrNull(item.slot)?.takeIf { it.isNotBlank() }
+                ?: XcxEquipment.slotLabels[item.slot]
+            drawFittedText(canvas, cleanGameText(slot), x + 16f, y + 32f, 488f, 19f, 15f,
+                Color.rgb(118, 169, 187), true)
+            drawFittedText(canvas, cleanGameText(catalog?.name(item) ?:
+                if (item.id == 0) "Empty" else "Item ${item.id}"),
+                x + 16f, y + 72f, 488f, 25f, 16f, Color.WHITE, true)
+        }
     }
+
+    private fun drawEquipmentInventory(canvas: Canvas) {
+        val slot = equipmentSlot
+        val items = equipmentItems()
+        val catalog = equipmentCatalog
+        val label = catalog?.slots?.getOrNull(slot)?.takeIf { it.isNotBlank() }
+            ?: XcxEquipment.slotLabels[slot]
+        drawFittedText(canvas, cleanGameText(label), 80f, 216f, 1050f, 23f, 16f, Color.WHITE, true)
+        if (equipmentInventory == null) {
+            text(canvas, "LIVE INVENTORY DATA UNAVAILABLE", 80f, 310f, 23f,
+                Color.rgb(151, 183, 194), false)
+            return
+        }
+        equipmentWindow.reconcile(items.size, items.indexOfFirst { it.instance == equipmentSelectedKey })
+        if (items.isEmpty()) text(canvas, "NO OWNED ITEMS FOR THIS SLOT", 80f, 310f, 23f,
+            Color.rgb(151, 183, 194), false)
+        repeat(6) { row ->
+            val item = equipmentWindow.index(row, items.size)?.let(items::get) ?: return@repeat
+            val bounds = equipmentItemRect(row)
+            paint.color = if (item.instance == equipmentSelectedKey) Color.rgb(22, 70, 88)
+                else Color.rgb(11, 39, 53)
+            canvas.drawRect(bounds, paint)
+            val name = catalog?.name(XcxEquipment.Item(slot, XcxEquipment.categories[slot],
+                item.id, item.instance)) ?: "Item ${item.id}"
+            drawFittedText(canvas, cleanGameText(name), bounds.left + 16f, bounds.top + 35f,
+                bounds.width() - 32f, 25f, 16f, Color.WHITE, true)
+            val current = equipmentFrame?.items?.getOrNull(slot)?.instance == item.instance
+            text(canvas, if (current) "CURRENTLY EQUIPPED" else "OWNED ITEM",
+                bounds.left + 16f, bounds.top + 62f, 16f, Color.rgb(118, 169, 187), false)
+        }
+        drawCompactButton(canvas, equipmentInventoryPreviousRect(), "PREVIOUS", false,
+            pressedControl == CONTROL_EQUIPMENT_PREVIOUS)
+        drawCompactButton(canvas, equipmentInventoryNextRect(), "NEXT", false,
+            pressedControl == CONTROL_EQUIPMENT_NEXT)
+        if (items.any { it.instance == equipmentSelectedKey })
+            drawCompactButton(canvas, equipmentApplyRect(), "EQUIP", false,
+                pressedControl == CONTROL_EQUIPMENT_APPLY)
+        text(canvas, "${if (items.isEmpty()) 0 else equipmentWindow.first + 1}" +
+            "–${min(items.size, equipmentWindow.first + 6)} / ${items.size}",
+            620f, 882f, 18f, Color.rgb(118, 169, 187), false, Paint.Align.CENTER)
+    }
+
+    private fun drawSkellPage(canvas: Canvas, state: Snapshot) {
+        drawPageTitle(canvas, "SKELL", if (state.playerActorType == 4) "PILOTING" else "ON FOOT")
+        panel(canvas, RectF(48f, 112f, 1192f, 908f))
+        text(canvas, "PARTY SKELLS", 80f, 166f, 22f, Color.WHITE, true)
+        for (index in 0 until 4) {
+            val top = 202f + index * 162f
+            paint.color = Color.rgb(11, 39, 53)
+            canvas.drawRect(80f, top, 1160f, top + 142f, paint)
+            val present = state.partyValidMask and (1 shl index) != 0
+            text(canvas, if (present) characterName(state.partyCharacterIds[index]) else "EMPTY SLOT",
+                104f, top + 40f, 24f, Color.WHITE, true)
+            if (state.skellFuelMask and (1 shl index) != 0) {
+                val fuel = state.skellFuel[index]
+                val maximum = state.skellMaximumFuel[index]
+                text(canvas, "FUEL ${fuel.toInt()} / ${maximum.toInt()}", 1136f, top + 40f,
+                    22f, Color.rgb(76, 220, 239), true, Paint.Align.RIGHT)
+                paint.color = Color.rgb(22, 62, 75)
+                canvas.drawRect(104f, top + 76f, 1136f, top + 108f, paint)
+                paint.color = Color.rgb(76, 220, 239)
+                canvas.drawRect(104f, top + 76f, 104f + 1032f * (fuel / maximum).coerceIn(0f, 1f),
+                    top + 108f, paint)
+            } else {
+                text(canvas, if (present) "NO DEPLOYED SKELL DATA" else "--", 104f, top + 94f,
+                    20f, Color.rgb(151, 183, 194), false)
+            }
+        }
+    }
+
+    private fun partyHealth(state: Snapshot, index: Int): String =
+        if (index in 0..3 && state.partyVitalsMask and (1 shl index) != 0)
+            "${state.partyHp[index]} / ${state.partyMaximumHp[index]} HP" else "HP UNAVAILABLE"
 
     private fun emptyState(canvas: Canvas, label: String, centerX: Float = 620f) {
         text(canvas, label, centerX, 510f, 25f, Color.rgb(151, 183, 194), true,
@@ -1063,6 +1335,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     private fun drawWaiting(canvas: Canvas, state: Snapshot) {
         val title = when (state.status) {
+            -1 -> "COMPANION UPDATE REQUIRED"
             0 -> "WAITING FOR EMULATION"
             1 -> "WAITING FOR XENOBLADE X"
             2 -> "UNSUPPORTED GAME VERSION"
@@ -1070,6 +1343,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
             else -> "STATE BRIDGE UNAVAILABLE"
         }
         val detail = when (state.status) {
+            -1 -> "The installed companion components do not match. A complete build is required."
             2 -> "This build is disabled safely. Supported: XCX DE 1.0.2 / update v131072."
             3 -> "The executable is verified; waiting for the world and save-state roots."
             else -> "The bottom display will connect automatically when the game is ready."
@@ -1077,8 +1351,8 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         text(canvas, title, DESIGN_WIDTH * .5f, 475f, 38f, Color.WHITE, true, Paint.Align.CENTER)
         text(canvas, detail, DESIGN_WIDTH * .5f, 525f, 22f, Color.rgb(151, 183, 194), false,
             Paint.Align.CENTER)
-        text(canvas, "Checkpoint ${state.checkpoint}", DESIGN_WIDTH * .5f, 567f, 18f,
-            Color.rgb(76, 220, 239), true, Paint.Align.CENTER)
+        if (state.status != -1) text(canvas, "Checkpoint ${state.checkpoint}",
+            DESIGN_WIDTH * .5f, 567f, 18f, Color.rgb(76, 220, 239), true, Paint.Align.CENTER)
     }
 
     private fun drawMetric(canvas: Canvas, x: Float, y: Float, width: Float, label: String,
@@ -1114,6 +1388,29 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     private fun mapFastTravelRect() = RectF(930f, 826f, 1154f, 882f)
 
+    private fun missionPreviousRect() = RectF(80f, 818f, 228f, 868f)
+    private fun missionNextRect() = RectF(252f, 818f, 400f, 868f)
+    private fun missionTrackRect() = RectF(492f, 818f, 1160f, 878f)
+    private fun missionMapRect() = RectF(492f, 708f, 1160f, 768f)
+    private fun partySwitchRect() = RectF(780f, 602f, 1160f, 666f)
+    private fun equipmentRect() = RectF(482f, 128f, 688f, 182f)
+    private fun equipmentCloseRect() = RectF(1000f, 128f, 1160f, 182f)
+    private fun equipmentSlotRect(slot: Int): RectF {
+        val x = 80f + slot / 6 * 548f
+        val y = 204f + slot % 6 * 110f
+        return RectF(x, y, x + 520f, y + 98f)
+    }
+    private fun equipmentItemRect(row: Int) = RectF(80f, 238f + row * 86f, 1160f, 318f + row * 86f)
+    private fun equipmentInventoryPreviousRect() = RectF(80f, 788f, 300f, 842f)
+    private fun equipmentInventoryNextRect() = RectF(320f, 788f, 540f, 842f)
+    private fun equipmentApplyRect() = RectF(920f, 788f, 1160f, 842f)
+    private fun frontierSiteRect(row: Int) = RectF(458f, 648f + row * 48f, 1160f, 690f + row * 48f)
+    private fun frontierPreviousRect() = RectF(458f, 842f, 656f, 896f)
+    private fun frontierNextRect() = RectF(676f, 842f, 864f, 896f)
+    private fun frontierMapRect() = RectF(884f, 842f, 1160f, 896f)
+    private fun partyOrderRect(delta: Int) = if (delta < 0) RectF(780f, 690f, 1160f, 754f)
+        else RectF(780f, 774f, 1160f, 838f)
+
     private fun mapContentRect() = RectF(48f, 112f, 1192f, 908f)
 
     private fun mapZoomRange(map: MapData): ClosedFloatingPointRange<Float> {
@@ -1124,6 +1421,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     private fun adjustMapZoom(factor: Float) {
+        nativeMapRenderer?.adjustZoom(factor)
         val map = mapData ?: return
         val range = mapZoomRange(map)
         mapZoom = (mapZoom * factor).coerceIn(range.start, range.endInclusive)
@@ -1166,7 +1464,7 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     private fun missionRect(index: Int): RectF {
-        val top = 202f + index * 92f
+        val top = 202f + index * 84f
         return RectF(72f, top, 408f, top + 72f)
     }
 
@@ -1248,14 +1546,57 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                     mapFastTravelRect().contains(x, y)
                 ) return CONTROL_MAP_FAST_TRAVEL
             }
-            1 -> repeat(6) { index ->
-                if (segmentRect(index).contains(x, y)) return CONTROL_SEGMENT_FIRST + index
+            1 -> {
+                repeat(6) { index ->
+                    if (segmentRect(index).contains(x, y)) return CONTROL_SEGMENT_FIRST + index
+                }
+                val probes = frontierProbes()
+                if (frontierWindow.first > 0 && frontierPreviousRect().contains(x, y)) return CONTROL_FRONTIER_PREVIOUS
+                if (frontierWindow.first + 4 < probes.size && frontierNextRect().contains(x, y)) return CONTROL_FRONTIER_NEXT
+                if (frontierMapRect().contains(x, y)) return CONTROL_FRONTIER_MAP
+                repeat(4) { row ->
+                    if (frontierWindow.index(row, probes.size) != null && frontierSiteRect(row).contains(x, y))
+                        return CONTROL_FRONTIER_SITE + row
+                }
             }
-            2 -> repeat(min(7, activeMissions.size)) { index ->
-                if (missionRect(index).contains(x, y)) return CONTROL_MISSION_FIRST + index
+            2 -> {
+                if (missionPreviousRect().contains(x, y)) return CONTROL_MISSIONS_PREVIOUS
+                if (missionOpenedFromMap && missionMapRect().contains(x, y)) return CONTROL_MISSION_MAP
+                if (snapshot.capabilities and CAP_NAVIGATION_STATE != 0 &&
+                    (activeMissions.any { it.id == selectedMissionId } ||
+                        selectedMissionId != 0 && snapshot.trackedMission == selectedMissionId) &&
+                    missionTrackRect().contains(x, y)) return CONTROL_MISSION_TRACK
+                if (missionNextRect().contains(x, y)) return CONTROL_MISSIONS_NEXT
+                repeat(7) { index ->
+                    if (missionWindow.index(index, activeMissions.size) != null &&
+                        missionRect(index).contains(x, y)) return CONTROL_MISSION_FIRST + index
+                }
             }
-            4 -> repeat(4) { index ->
-                if (partyRect(index).contains(x, y)) return CONTROL_PARTY_FIRST + index
+            4 -> {
+                if (equipmentCharacter >= 0) {
+                    if (equipmentCloseRect().contains(x, y)) return CONTROL_EQUIPMENT_CLOSE
+                    if (equipmentSlot < 0) {
+                        repeat(12) { if (equipmentSlotRect(it).contains(x, y)) return CONTROL_EQUIPMENT_SLOT + it }
+                    } else {
+                        val items = equipmentItems()
+                        repeat(6) { row ->
+                            if (equipmentWindow.index(row, items.size) != null && equipmentItemRect(row).contains(x, y))
+                                return CONTROL_EQUIPMENT_ROW + row
+                        }
+                        if (equipmentInventoryPreviousRect().contains(x, y)) return CONTROL_EQUIPMENT_PREVIOUS
+                        if (equipmentInventoryNextRect().contains(x, y)) return CONTROL_EQUIPMENT_NEXT
+                        if (equipmentApplyRect().contains(x, y) && items.any { it.instance == equipmentSelectedKey })
+                            return CONTROL_EQUIPMENT_APPLY
+                    }
+                    return CONTROL_NONE
+                }
+                if (equipmentRect().contains(x, y)) return CONTROL_EQUIPMENT
+                if (partySwitchRect().contains(x, y)) return CONTROL_PARTY_SWITCH
+                if (partyOrderArgument(-1) != null && partyOrderRect(-1).contains(x, y)) return CONTROL_PARTY_UP
+                if (partyOrderArgument(1) != null && partyOrderRect(1).contains(x, y)) return CONTROL_PARTY_DOWN
+                repeat(4) { index ->
+                    if (partyRect(index).contains(x, y)) return CONTROL_PARTY_FIRST + index
+                }
             }
         }
         return CONTROL_NONE
@@ -1266,10 +1607,41 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
         if (scale <= 0f || !scale.isFinite()) return true
         val x = (event.x - (width - DESIGN_WIDTH * scale) * .5f) / scale
         val y = (event.y - (height - DESIGN_HEIGHT * scale) * .5f) / scale
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            nativeMapTouch = selectedPage == 0 && snapshot.status == ACTIVE_STATUS &&
+                mapContentRect().contains(x, y)
+        }
+        if (nativeMapTouch) {
+            nativeMapRenderer?.touch(event, 1f / scale, 1f / scale,
+                (width - DESIGN_WIDTH * scale) * .5f,
+                (height - DESIGN_HEIGHT * scale) * .5f)
+            if (event.actionMasked == MotionEvent.ACTION_UP ||
+                event.actionMasked == MotionEvent.ACTION_CANCEL) nativeMapTouch = false
+            return true
+        }
         val hit = if (snapshot.status == ACTIVE_STATUS) controlAt(x, y) else CONTROL_NONE
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                pressedRecordId = when (hit) {
+                    CONTROL_MISSION_TRACK -> selectedMissionId
+                    in CONTROL_MISSION_FIRST until CONTROL_MISSION_FIRST + 7 ->
+                        missionWindow.index(hit - CONTROL_MISSION_FIRST, activeMissions.size)
+                            ?.let { activeMissions.getOrNull(it)?.id } ?: 0
+                    CONTROL_PARTY_SWITCH -> snapshot.partyCharacterIds[selectedPartyMember]
+                    CONTROL_EQUIPMENT -> snapshot.partyCharacterIds[selectedPartyMember]
+                    CONTROL_EQUIPMENT_APPLY -> equipmentSelectedKey.toInt()
+                    in CONTROL_EQUIPMENT_ROW until CONTROL_EQUIPMENT_ROW + 6 ->
+                        equipmentWindow.index(hit - CONTROL_EQUIPMENT_ROW, equipmentItems().size)
+                            ?.let { equipmentItems().getOrNull(it)?.instance?.toInt() } ?: 0
+                    in CONTROL_FRONTIER_SITE until CONTROL_FRONTIER_SITE + 4 ->
+                        frontierWindow.index(hit - CONTROL_FRONTIER_SITE, frontierProbes().size)
+                            ?.let { frontierProbes().getOrNull(it)?.probeId } ?: 0
+                    CONTROL_PARTY_UP -> partyOrderArgument(-1) ?: -1
+                    CONTROL_PARTY_DOWN -> partyOrderArgument(1) ?: -1
+                    CONTROL_MAP_FAST_TRAVEL -> selectedMapMarkerId
+                    else -> 0
+                }
                 touchDownX = event.x
                 touchDownY = event.y
                 lastTouchDesignX = x
@@ -1348,9 +1720,9 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                     when (selected) {
                         CONTROL_PREVIOUS_GROUP, CONTROL_NEXT_GROUP -> {
                             pageGroup = 1 - pageGroup
-                            selectedPage = pageGroup * 3
+                            selectPage(pageGroup * 3)
                         }
-                        in PAGE_NAMES.indices -> selectedPage = selected
+                        in PAGE_NAMES.indices -> selectPage(selected)
                         CONTROL_MAP_CENTER -> {
                             mapPanX = 0f
                             mapPanY = 0f
@@ -1363,20 +1735,38 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                         CONTROL_MAP_PROBES -> mapShowProbes = !mapShowProbes
                         CONTROL_MAP_FAST_TRAVEL -> {
                             mapData?.visibleMarkers?.firstOrNull {
-                                it.infoId == selectedMapMarkerId && it.canFastTravel && it.discovered
+                                it.infoId == pressedRecordId && it.infoId == selectedMapMarkerId &&
+                                    it.canFastTravel && it.discovered && mapData?.zone == snapshot.zone
                             }?.let { requestNativeAction(ACTION_FAST_TRAVEL, it.formationId) }
                         }
+                        CONTROL_MISSIONS_PREVIOUS, CONTROL_MISSIONS_NEXT -> {
+                            val active = activeMissions
+                            val index = missionWindow.movePage(active.size,
+                                if (selected == CONTROL_MISSIONS_PREVIOUS) -1 else 1)
+                            selectedMissionId = active.getOrNull(index)?.id ?: 0
+                        }
+                        CONTROL_MISSION_TRACK -> if (selectedMissionId == pressedRecordId)
+                            toggleMissionTracking(pressedRecordId)
+                        CONTROL_MISSION_MAP -> selectPage(0)
                         in CONTROL_SEGMENT_FIRST until CONTROL_SEGMENT_FIRST + 6 ->
-                            selectedSegment = selected - CONTROL_SEGMENT_FIRST
+                            selectContinent(selected - CONTROL_SEGMENT_FIRST)
+                        CONTROL_FRONTIER_PREVIOUS -> frontierPage(-1)
+                        CONTROL_FRONTIER_NEXT -> frontierPage(1)
+                        CONTROL_FRONTIER_MAP -> openFrontierMap()
+                        in CONTROL_FRONTIER_SITE until CONTROL_FRONTIER_SITE + 4 ->
+                            if (pressedRecordId != 0) openFrontierMap(pressedRecordId)
                         in CONTROL_MISSION_FIRST until CONTROL_MISSION_FIRST + 7 -> {
-                            activeMissions.getOrNull(selected - CONTROL_MISSION_FIRST)?.let {
+                            activeMissions.firstOrNull { it.id == pressedRecordId }?.let {
                                 selectedMissionId = it.id
                             }
                         }
                         in CONTROL_PARTY_FIRST until CONTROL_PARTY_FIRST + 4 -> {
                             selectedPartyMember = selected - CONTROL_PARTY_FIRST
+                        }
+                        CONTROL_PARTY_SWITCH -> {
                             val characterId = snapshot.partyCharacterIds[selectedPartyMember]
-                            if (snapshot.partyValidMask and (1 shl selectedPartyMember) != 0) {
+                            if (characterId == pressedRecordId &&
+                                snapshot.partyValidMask and (1 shl selectedPartyMember) != 0) {
                                 if (selectedPartyMember == snapshot.activePartySlot) {
                                     showActionMessage("${characterName(characterId)} IS ALREADY CONTROLLED")
                                 } else {
@@ -1384,6 +1774,20 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                                 }
                             }
                         }
+                        CONTROL_PARTY_UP -> movePartyMember(-1, pressedRecordId)
+                        CONTROL_PARTY_DOWN -> movePartyMember(1, pressedRecordId)
+                        CONTROL_EQUIPMENT -> if (pressedRecordId == snapshot.partyCharacterIds[selectedPartyMember])
+                            openEquipment()
+                        CONTROL_EQUIPMENT_CLOSE -> closeEquipment()
+                        in CONTROL_EQUIPMENT_SLOT until CONTROL_EQUIPMENT_SLOT + 12 ->
+                            openEquipmentSlot(selected - CONTROL_EQUIPMENT_SLOT)
+                        in CONTROL_EQUIPMENT_ROW until CONTROL_EQUIPMENT_ROW + 6 -> {
+                            val key = pressedRecordId.toLong() and 0xffffffffL
+                            if (equipmentItems().any { it.instance == key }) equipmentSelectedKey = key
+                        }
+                        CONTROL_EQUIPMENT_PREVIOUS -> equipmentPage(-1)
+                        CONTROL_EQUIPMENT_NEXT -> equipmentPage(1)
+                        CONTROL_EQUIPMENT_APPLY -> applyEquipment(pressedRecordId.toLong() and 0xffffffffL)
                     }
                     if (selected in PAGE_NAMES.indices || selected == CONTROL_PREVIOUS_GROUP ||
                         selected == CONTROL_NEXT_GROUP
@@ -1419,29 +1823,40 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     override fun onXcxControllerKey(event: KeyEvent): Boolean {
+        val key = event.deviceId to event.keyCode
+        // Focus may be released by B while other companion keys are still held.
+        // Keep their releases paired with the downs consumed here.
+        if (event.action == KeyEvent.ACTION_UP && companionHeldKeys.remove(key)) return true
         if (event.keyCode == KeyEvent.KEYCODE_BUTTON_MODE) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                companionHeldKeys.add(key)
                 controllerActive = !controllerActive
                 invalidate()
             }
             return true
         }
-        if (!controllerActive || snapshot.status != ACTIVE_STATUS) return false
-        if (event.action == KeyEvent.ACTION_UP) return isControllerNavigationKey(event.keyCode)
-        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return false
-        return handleControllerKey(event.keyCode)
+        if (!controllerActive) return key in companionHeldKeys
+        if (event.action == KeyEvent.ACTION_DOWN) companionHeldKeys.add(key)
+        if (snapshot.status == ACTIVE_STATUS && event.action == KeyEvent.ACTION_DOWN &&
+            event.repeatCount == 0) handleControllerKey(event.keyCode)
+        // Companion focus owns both halves of each key, including unavailable page actions.
+        return true
     }
 
     override fun onXcxControllerMotion(event: MotionEvent): Boolean {
-        if (!controllerActive || snapshot.status != ACTIVE_STATUS ||
+        if (!controllerActive ||
             event.action != MotionEvent.ACTION_MOVE ||
             event.source and InputDevice.SOURCE_JOYSTICK != InputDevice.SOURCE_JOYSTICK
         ) {
             return false
         }
-        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X).takeIf { abs(it) > .55f } ?: 0f
-        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y).takeIf { abs(it) > .55f } ?: 0f
-        if (horizontal == 0f && vertical == 0f) return false
+        if (snapshot.status != ACTIVE_STATUS) return true
+        if (selectedPage == 4 && equipmentCharacter >= 0) return true
+        val horizontal = event.getAxisValue(MotionEvent.AXIS_HAT_X).takeIf { abs(it) > .55f }
+            ?: event.getAxisValue(MotionEvent.AXIS_X).takeIf { abs(it) > .55f } ?: 0f
+        val vertical = event.getAxisValue(MotionEvent.AXIS_HAT_Y).takeIf { abs(it) > .55f }
+            ?: event.getAxisValue(MotionEvent.AXIS_Y).takeIf { abs(it) > .55f } ?: 0f
+        if (horizontal == 0f && vertical == 0f) return true
         val now = SystemClock.uptimeMillis()
         if (now - controllerMotionAt < 170L) return true
         controllerMotionAt = now
@@ -1455,34 +1870,58 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     }
 
     private fun handleControllerKey(keyCode: Int): Boolean {
+        if (selectedPage == 4 && equipmentCharacter >= 0) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BACK -> closeEquipment()
+                KeyEvent.KEYCODE_BUTTON_A -> if (equipmentSlot < 0) openEquipmentSlot(equipmentSelectedSlot)
+                    else applyEquipment()
+                KeyEvent.KEYCODE_BUTTON_L2 -> if (equipmentSlot >= 0) equipmentPage(-1)
+                KeyEvent.KEYCODE_BUTTON_R2 -> if (equipmentSlot >= 0) equipmentPage(1)
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (equipmentSlot < 0) {
+                        val delta = when (keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> -1
+                            KeyEvent.KEYCODE_DPAD_DOWN -> 1
+                            KeyEvent.KEYCODE_DPAD_LEFT -> -6
+                            else -> 6
+                        }
+                        equipmentSelectedSlot = (equipmentSelectedSlot + delta).coerceIn(0, 11)
+                    } else {
+                        val items = equipmentItems()
+                        val delta = if (keyCode == KeyEvent.KEYCODE_DPAD_UP || keyCode == KeyEvent.KEYCODE_DPAD_LEFT) -1 else 1
+                        val next = (items.indexOfFirst { it.instance == equipmentSelectedKey } + delta)
+                            .coerceIn(0, (items.size - 1).coerceAtLeast(0))
+                        equipmentSelectedKey = items.getOrNull(next)?.instance ?: -1L
+                        equipmentWindow.reconcile(items.size, next)
+                    }
+                }
+                KeyEvent.KEYCODE_BUTTON_L1 -> selectPage(selectedPage - 1)
+                KeyEvent.KEYCODE_BUTTON_R1 -> selectPage(selectedPage + 1)
+            }
+            invalidate()
+            return true
+        }
         when (keyCode) {
+            KeyEvent.KEYCODE_BUTTON_R2 -> if (selectedPage == 4) openEquipment()
+                else if (selectedPage == 1) frontierPage(1)
+                else if (selectedPage == 0) adjustMapZoom(1.35f) else return false
+            KeyEvent.KEYCODE_BUTTON_X -> if (selectedPage == 4) movePartyMember(-1) else return false
+            KeyEvent.KEYCODE_BUTTON_Y -> if (selectedPage == 4) movePartyMember(1) else return false
             KeyEvent.KEYCODE_BUTTON_L1 -> selectPage(selectedPage - 1)
             KeyEvent.KEYCODE_BUTTON_R1 -> selectPage(selectedPage + 1)
             KeyEvent.KEYCODE_BUTTON_L2 -> if (selectedPage == 0) {
                 adjustMapZoom(1f / 1.35f)
-            } else return false
-            KeyEvent.KEYCODE_BUTTON_R2 -> if (selectedPage == 0) {
-                adjustMapZoom(1.35f)
-            } else return false
+            } else if (selectedPage == 1) frontierPage(-1) else return false
             KeyEvent.KEYCODE_DPAD_LEFT -> handleDirectionalInput(-1, 0)
             KeyEvent.KEYCODE_DPAD_RIGHT -> handleDirectionalInput(1, 0)
             KeyEvent.KEYCODE_DPAD_UP -> handleDirectionalInput(0, -1)
             KeyEvent.KEYCODE_DPAD_DOWN -> handleDirectionalInput(0, 1)
             KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_ENTER,
             KeyEvent.KEYCODE_DPAD_CENTER -> when (selectedPage) {
-                0 -> {
-                    val marker = mapData?.visibleMarkers?.firstOrNull {
-                        it.infoId == selectedMapMarkerId && it.canFastTravel && it.discovered
-                    }
-                    if (marker != null) {
-                        requestNativeAction(ACTION_FAST_TRAVEL, marker.formationId)
-                    } else {
-                        mapPanX = 0f
-                        mapPanY = 0f
-                        mapZoom = 1f
-                        mapFollowsPlayer = true
-                    }
-                }
+                0 -> nativeMapRenderer?.activateCenter()
+                1 -> openFrontierMap(selectedFrontierProbe)
+                2 -> toggleMissionTracking(selectedMissionId)
                 4 -> {
                     val characterId = snapshot.partyCharacterIds[selectedPartyMember]
                     if (snapshot.partyValidMask and (1 shl selectedPartyMember) == 0) return false
@@ -1494,7 +1933,10 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
                 }
                 else -> return false
             }
-            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BACK -> controllerActive = false
+            KeyEvent.KEYCODE_BUTTON_B, KeyEvent.KEYCODE_BACK -> {
+                if (selectedPage == 2 && missionOpenedFromMap) selectPage(0)
+                else if (selectedPage != 0 || nativeMapRenderer?.back() != true) controllerActive = false
+            }
             else -> return false
         }
         invalidate()
@@ -1503,6 +1945,8 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
 
     private fun selectPage(next: Int) {
         selectedPage = (next + PAGE_NAMES.size) % PAGE_NAMES.size
+        if (selectedPage != 4) equipmentCharacter = -1
+        if (selectedPage != 2) missionOpenedFromMap = false
         pageGroup = selectedPage / 3
         Log.info("[XCX Companion] Controller selected page ${PAGE_NAMES[selectedPage]}")
     }
@@ -1510,14 +1954,23 @@ internal class XcxCompanionView(context: Context) : View(context), XcxController
     private fun handleDirectionalInput(horizontal: Int, vertical: Int) {
         when (selectedPage) {
             0 -> {
+                nativeMapRenderer?.pan(horizontal * 90f, vertical * 90f)
                 val step = 90f
                 mapPanX -= horizontal * step
                 mapPanY -= vertical * step
                 mapFollowsPlayer = false
             }
             1 -> {
-                val delta = if (vertical != 0) vertical else horizontal
-                selectedSegment = (selectedSegment + delta + 6) % 6
+                if (horizontal != 0) selectContinent(selectedSegment + horizontal)
+                else if (vertical != 0) {
+                    val probes = frontierProbes()
+                    if (probes.isNotEmpty()) {
+                        val current = probes.indexOfFirst { it.probeId == selectedFrontierProbe }
+                        val index = if (current < 0) if (vertical > 0) 0 else probes.lastIndex
+                            else (current + vertical + probes.size) % probes.size
+                        selectedFrontierProbe = probes[index].probeId
+                    }
+                }
             }
             2 -> {
                 val active = activeMissions

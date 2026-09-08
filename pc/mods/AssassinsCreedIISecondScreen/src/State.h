@@ -1,5 +1,6 @@
 #pragma once
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -18,20 +19,43 @@ enum Capability : uint32_t { Player = 1, Map = 2, Equipment = 4, Inventory = 8,
 enum class ActionKind { Equip, Use, Select, Track, Replay };
 constexpr uint32_t ActionBit(ActionKind kind) { return 1u << static_cast<unsigned>(kind); }
 struct Image { int width{}, height{}; std::vector<uint32_t> bgra; };
+struct MapSurface {
+    uint32_t artwork{}, width{}, height{};
+    std::vector<uint8_t> discovery;
+    bool operator==(const MapSurface& other) const {
+        return artwork==other.artwork && width==other.width && height==other.height && discovery==other.discovery;
+    }
+};
+class MapSource {
+public:
+    virtual ~MapSource()=default;
+    virtual std::shared_ptr<const Image> Request(uint64_t generation,const MapSurface& surface)=0;
+};
+class ImageSource {
+public:
+    virtual ~ImageSource() = default;
+    virtual std::shared_ptr<const Image> Request(uint32_t id) = 0;
+    virtual uint64_t Revision() const = 0;
+};
 struct Item {
     uint64_t id{}, revision{};
     std::wstring name, category, description, details;
     std::optional<unsigned> quantity, capacity;
+    std::optional<std::array<unsigned,3>> weaponRatings; // Damage, speed, deflection; original scale 0..5.
     bool owned{}, equipped{};
     uint32_t actions{};
     std::shared_ptr<const Image> icon;
+    uint32_t artworkId{}, thumbnailId{};
 };
 struct Marker {
     uint64_t id{};
     float x{}, y{}; // Normalized native map coordinates, after native discovery checks.
     std::wstring name, description;
     bool discovered{}, visible{};
+    uint32_t artworkId{};
+    uint32_t categoryId{}; // Original localized map-category identity.
 };
+struct MapCategory { uint32_t id{},artwork{};std::wstring name; };
 struct Memory {
     uint64_t id{}, revision{};
     std::wstring sequence, name, description, objective;
@@ -43,6 +67,7 @@ struct DatabaseEntry {
     std::wstring category, title, text;
     bool unlocked{};
     std::shared_ptr<const Image> illustration;
+    uint32_t artworkId{};
 };
 struct Statistic {
     std::wstring name;
@@ -54,11 +79,13 @@ struct Snapshot {
     Phase phase = Phase::Starting;
     uint32_t capabilities{};
     bool mapVisibilityVerified{};
+    bool mapMarkersVerified{};
     std::wstring location, objective, status = L"Establishing Animus connection";
-    std::optional<double> health, maximumHealth, money, synchronization;
+    std::optional<double> health, maximumHealth, money, synchronization, notoriety;
     std::optional<float> mapX, mapY, heading;
     std::shared_ptr<const Image> map, preview;
     std::vector<Marker> markers;
+    std::vector<MapCategory> mapCategories;
     std::vector<Item> items;
     std::vector<Memory> memories;
     std::vector<DatabaseEntry> database;
@@ -69,13 +96,21 @@ struct Command {
     ActionKind kind{};
 };
 
-// No engine pointer crosses into the window thread. The game-thread adapter alone
-// constructs snapshots and re-resolves command identities immediately before use.
+// No engine pointer crosses into the window thread. A single read-only worker
+// constructs snapshots. Native actions re-resolve identities on the game thread.
 class StateStore {
     mutable std::mutex mutex_;
     std::shared_ptr<const Snapshot> snapshot_ = std::make_shared<Snapshot>();
     std::deque<Command> commands_;
     uint64_t nextRequest_ = 1;
+    std::optional<Command> TakeLocked(uint64_t now) {
+        while (!commands_.empty()) {
+            Command next = commands_.front(); commands_.pop_front();
+            if (snapshot_->phase == Phase::Playing && next.generation == snapshot_->generation &&
+                next.revision == snapshot_->revision && now >= next.enqueuedAt && now - next.enqueuedAt <= 500) return next;
+        }
+        return {};
+    }
 public:
     std::shared_ptr<const Snapshot> Read() const {
         std::lock_guard<std::mutex> guard(mutex_); return snapshot_;
@@ -85,20 +120,20 @@ public:
         if (value.generation < snapshot_->generation ||
             (value.generation == snapshot_->generation && value.revision <= snapshot_->revision)) return false;
         if (value.items.size() > 2048 || value.memories.size() > 1024 ||
-            value.database.size() > 4096 || value.markers.size() > 4096 || value.statistics.size() > 128) return false;
+            value.database.size() > 4096 || value.markers.size() > 4096 || value.mapCategories.size()>128 || value.statistics.size() > 128) return false;
         value.markers.erase(std::remove_if(value.markers.begin(), value.markers.end(), [](const Marker& marker) {
             return !marker.discovered || !marker.visible || !std::isfinite(marker.x) || !std::isfinite(marker.y) ||
                 marker.x < 0 || marker.x > 1 || marker.y < 0 || marker.y > 1;
         }), value.markers.end());
         if (!value.mapVisibilityVerified) { value.capabilities &= ~Map; value.map.reset(); value.markers.clear(); }
-        if (!(value.capabilities & Map)) { value.map.reset(); value.markers.clear(); }
+        if (!(value.capabilities & Map)) { value.map.reset(); value.markers.clear(); value.mapCategories.clear(); value.mapMarkersVerified=false; }
         if (!(value.capabilities & Inventory)) value.items.clear();
         if (!(value.capabilities & Missions)) value.memories.clear();
         if (!(value.capabilities & Database)) value.database.clear();
         if (!(value.capabilities & Progress)) { value.statistics.clear(); value.synchronization.reset(); }
         if (!(value.capabilities & Preview)) value.preview.reset();
         if (!(value.capabilities & Player)) {
-            value.health.reset(); value.maximumHealth.reset(); value.money.reset();
+            value.health.reset(); value.maximumHealth.reset(); value.money.reset(); value.notoriety.reset();
             value.mapX.reset(); value.mapY.reset(); value.heading.reset();
         }
         if (value.generation != snapshot_->generation || value.phase != Phase::Playing) commands_.clear();
@@ -136,12 +171,16 @@ public:
     }
     std::optional<Command> Take(uint64_t now) {
         std::lock_guard<std::mutex> guard(mutex_);
-        while (!commands_.empty()) {
-            Command next = commands_.front(); commands_.pop_front();
-            if (snapshot_->phase == Phase::Playing && next.generation == snapshot_->generation &&
-                next.revision == snapshot_->revision && now >= next.enqueuedAt && now - next.enqueuedAt <= 500) return next;
-        }
-        return {};
+        return TakeLocked(now);
+    }
+    struct PendingAction { Command command; std::shared_ptr<const Snapshot> displayed; };
+    std::optional<PendingAction> TryTakeForGame(uint64_t now) {
+        // Publication/scrolling must never make the game thread wait on the UI.
+        std::unique_lock<std::mutex> guard(mutex_,std::try_to_lock);
+        if (!guard.owns_lock()) return {};
+        auto command=TakeLocked(now);
+        if (!command) return {};
+        return PendingAction{*command,snapshot_};
     }
 };
 }

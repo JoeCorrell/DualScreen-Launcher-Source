@@ -200,6 +200,8 @@ object NativeLibrary {
     external fun fillPlzaCompanionSnapshot(output: ByteBuffer): Int
     external fun loadExternalCompanion(path: String, title: Long, version: String): Boolean
     external fun externalCompanionAsset(path: String): ByteArray?
+    external fun externalCompanionQuery(kind: Int, input: String): String
+    external fun externalCompanionAction64(operation: Int, argument: Long): Boolean
 
     external fun fillSmoCompanionSnapshotV1(output: ByteBuffer): Int
     external fun fillSmoCompanionMoonsV1(output: ByteBuffer): Int
@@ -231,7 +233,14 @@ object NativeLibrary {
 
     external fun readXcxGameFlags(bitWidth: Int, flagIds: IntArray): ByteArray?
 
+    external fun readXcxMapSegments(field: Int): ByteArray?
+    external fun readXcxProbeInventory(): ByteArray?
+    external fun readXcxEquipment(character: Int): ByteArray?
+    external fun readXcxEquipmentInventory(category: Int): ByteArray?
+    external fun readXcxConditions(ids: IntArray, ignoredTypes: Int): ByteArray?
+
     external fun performXcxCompanionAction(action: Int, argument: Int): Boolean
+    external fun equipXcxItem(character: Int, slot: Int, key: Long): Boolean
 
     external fun performPlzaCompanionAction(action: Int, argument: Int): Boolean
 

@@ -114,9 +114,10 @@ class SwitchCatalogTest {
             assertThat(manifest.getInt("schema")).isEqualTo(1)
             assertThat(manifest.getString("titleId")).isEqualTo(game.titleId)
             assertThat(manifest.getString("version")).isNotEmpty()
-            if (game.id == "pokemon-legends-za") {
+            if (game.id == "pokemon-legends-za" || game.id == "breath-of-the-wild") {
                 assertThat(manifest.getString("delivery")).isEqualTo("external-module")
-                assertThat(manifest.getString("package")).isEqualTo("plza/package.dsmod")
+                assertThat(manifest.getString("package")).isEqualTo(
+                    if (game.id == "breath-of-the-wild") "botw/package.dsmod" else "plza/package.dsmod")
             } else {
                 assertThat(manifest.getString("delivery")).isEqualTo("launcher-apk")
                 assertThat(manifest.getString("minimumLauncherVersion"))

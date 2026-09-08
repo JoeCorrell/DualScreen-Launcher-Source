@@ -2,6 +2,8 @@
 #include <dlfcn.h>
 #include <jni.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <android/log.h>
 
 #define WAIT_COMPLETION_TIMEOUT 100 * 1000000L
@@ -75,7 +77,42 @@ static AAudioStream *aaudioCreate(int32_t format, int8_t channelCount, int32_t s
             if (requestedFrames < burst) requestedFrames = burst;
         }
     }
-    AAudioStream_setBufferSizeInFrames(stream, requestedFrames);
+    int32_t actualFrames = AAudioStream_setBufferSizeInFrames(stream, requestedFrames);
+    __android_log_print(ANDROID_LOG_INFO, LOG_TAG,
+                        "AAudio buffer=%d capacity=%d performanceMode=%d",
+                        actualFrames, AAudioStream_getBufferCapacityInFrames(stream),
+                        AAudioStream_getPerformanceMode(stream));
+
+    /*
+     * AudioTrack-backed AAudio rounds this device's 1920-frame guest ring up
+     * to a 1922-frame start threshold. Wine fills its ring, then waits for the
+     * hardware cursor; Android waits for two more frames. Neither advances.
+     * Prime only the rounding gap, before guest PCM, so the first complete
+     * guest ring can start playback. These silent host frames deliberately do
+     * not enter ALSA's accepted-frame counter. The consumed-frame clock still
+     * subtracts the entire native queue, so no guest frame is credited early.
+     */
+    if (actualFrames > bufferSize) {
+        int32_t paddingFrames = actualFrames - bufferSize;
+        int32_t channels = AAudioStream_getChannelCount(stream);
+        size_t sampleBytes = AAudioStream_getFormat(stream) == AAUDIO_FORMAT_PCM_FLOAT ? 4 : 2;
+        void *silence = paddingFrames <= 262144 && channels > 0 && channels <= 8
+                ? calloc((size_t)paddingFrames * (size_t)channels, sampleBytes) : NULL;
+        int32_t primed = silence ? AAudioStream_write(stream, silence, paddingFrames, 0)
+                                : AAUDIO_ERROR_NO_MEMORY;
+        free(silence);
+        if (primed != paddingFrames) {
+            __android_log_print(ANDROID_LOG_ERROR, LOG_TAG,
+                                "AAudio startup padding failed: requested=%d accepted=%d",
+                                paddingFrames, primed);
+            AAudioStream_close(stream);
+            AAudioStreamBuilder_delete(builder);
+            return NULL;
+        }
+        __android_log_print(ANDROID_LOG_INFO, LOG_TAG,
+                            "AAudio primed %d silent host frames for guest ring=%d output=%d",
+                            primed, bufferSize, actualFrames);
+    }
 
     result = AAudioStreamBuilder_delete(builder);
     if (result != AAUDIO_OK) {
@@ -92,23 +129,27 @@ static int aaudioWrite(AAudioStream *aaudioStream, void *buffer, int numFrames) 
 }
 
 static void aaudioStart(AAudioStream *aaudioStream) {
-    AAudioStream_requestStart(aaudioStream);
-    AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_STARTING, NULL, WAIT_COMPLETION_TIMEOUT);
+    aaudio_stream_state_t next;
+    if (AAudioStream_requestStart(aaudioStream) == AAUDIO_OK)
+        AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_STARTING, &next, WAIT_COMPLETION_TIMEOUT);
 }
 
 static void aaudioStop(AAudioStream *aaudioStream) {
-    AAudioStream_requestStop(aaudioStream);
-    AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_STOPPING, NULL, WAIT_COMPLETION_TIMEOUT);
+    aaudio_stream_state_t next;
+    if (AAudioStream_requestStop(aaudioStream) == AAUDIO_OK)
+        AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_STOPPING, &next, WAIT_COMPLETION_TIMEOUT);
 }
 
 static void aaudioPause(AAudioStream *aaudioStream) {
-    AAudioStream_requestPause(aaudioStream);
-    AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_PAUSING, NULL, WAIT_COMPLETION_TIMEOUT);
+    aaudio_stream_state_t next;
+    if (AAudioStream_requestPause(aaudioStream) == AAUDIO_OK)
+        AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_PAUSING, &next, WAIT_COMPLETION_TIMEOUT);
 }
 
 static void aaudioFlush(AAudioStream *aaudioStream) {
-    AAudioStream_requestFlush(aaudioStream);
-    AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_FLUSHING, NULL, WAIT_COMPLETION_TIMEOUT);
+    aaudio_stream_state_t next;
+    if (AAudioStream_requestFlush(aaudioStream) == AAUDIO_OK)
+        AAudioStream_waitForStateChange(aaudioStream, AAUDIO_STREAM_STATE_FLUSHING, &next, WAIT_COMPLETION_TIMEOUT);
 }
 
 JNIEXPORT jlong JNICALL
@@ -121,11 +162,15 @@ Java_com_wemu_engine_alsaserver_ALSAClient_create(JNIEnv *env, jobject obj, jint
 
 JNIEXPORT jint JNICALL
 Java_com_wemu_engine_alsaserver_ALSAClient_write(JNIEnv *env, jobject obj, jlong streamPtr, jobject buffer,
-                                              jint numFrames) {
+                                              jint byteOffset, jint numFrames) {
     AAudioStream *aaudioStream = (AAudioStream*)streamPtr;
     void *address = buffer ? (*env)->GetDirectBufferAddress(env, buffer) : NULL;
-    if (aaudioStream && address && numFrames > 0) {
-        return aaudioWrite(aaudioStream, address, numFrames);
+    jlong capacity = buffer ? (*env)->GetDirectBufferCapacity(env, buffer) : -1;
+    if (aaudioStream && address && numFrames > 0 && byteOffset >= 0) {
+        int bytesPerSample = AAudioStream_getFormat(aaudioStream) == AAUDIO_FORMAT_PCM_FLOAT ? 4 : 2;
+        int64_t bytes = (int64_t)numFrames * AAudioStream_getChannelCount(aaudioStream) * bytesPerSample;
+        if (bytes <= 0 || (int64_t)byteOffset + bytes > capacity) return AAUDIO_ERROR_ILLEGAL_ARGUMENT;
+        return aaudioWrite(aaudioStream, (uint8_t*)address + byteOffset, numFrames);
     }
     else return -1;
 }
@@ -158,4 +203,21 @@ JNIEXPORT void JNICALL
 Java_com_wemu_engine_alsaserver_ALSAClient_close(JNIEnv *env, jobject obj, jlong streamPtr) {
     AAudioStream *aaudioStream = (AAudioStream*)streamPtr;
     if (aaudioStream) AAudioStream_close(aaudioStream);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_wemu_engine_alsaserver_ALSAClient_getXRunCount(JNIEnv *env, jobject obj, jlong streamPtr) {
+    return streamPtr ? AAudioStream_getXRunCount((AAudioStream*)streamPtr) : -1;
+}
+
+JNIEXPORT jlong JNICALL
+Java_com_wemu_engine_alsaserver_ALSAClient_getPendingFrames(JNIEnv *env, jobject obj, jlong streamPtr) {
+    if (!streamPtr) return -1;
+    AAudioStream* stream = (AAudioStream*)streamPtr;
+    // Reading the endpoint last cannot overestimate the queue if it advances
+    // between these calls. ALSAClient holds streamLock against write/close.
+    int64_t written = AAudioStream_getFramesWritten(stream);
+    int64_t read = AAudioStream_getFramesRead(stream);
+    if (written < 0 || read < 0) return -1;
+    return written > read ? written - read : 0;
 }

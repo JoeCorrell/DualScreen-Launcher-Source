@@ -9,7 +9,1112 @@ shipping executable. **Character swapping and the complete custom class flow
 are still incomplete. Do not publish these changes as a working swap feature.**
 
 Source/native-DLL work only. No agents, APK, payload publication, device writes,
-game launch or save access. Other mods and the reverted UI were left alone.
+game launch or save access. With the newly supplied ADB port 41335, read-only
+inspection confirmed the installed DLL is still
+`3ec08ba854ecbee0f51015894808169847f88f613a8082ec6328a699b0d18cfd`.
+Its retained September 4 log shows accepted UI requests rejected by the old
+reflected call audit, not a test of the current native adapters. Other mods and
+the reverted UI were left alone.
+
+Latest completed full local verification (native weapon animator binding): **48 native
+test groups** and serial 32-bit DLL link/export/dependency checks passed with
+`-Configuration Release -SkipLauncherPayloadUpdate`. The most recent cooked audit passed
+**324 behavior contracts, 77 call signatures and 0 retained cast sites**.
+`git diff --check` passed. That local build/package DLL SHA256 is
+`3e2b38744f0ea74f5cbefe45cf1469490ea3d5d9e31fb53c78bec633bc98e92b`.
+Launcher manifest SHA256 is unchanged:
+`4df18f029707362bfa65d59d780ba07dab663a62215a819f405668977c0d26d5`.
+No deployed payload/APK contains these local source changes.
+
+### Pending allocation ownership follow-up (September 7)
+
+The current DLL includes source changes making array-clone allocation ownership
+address-bound and serialize pending array initialization on the game thread.
+Previously a copied journal could finish against the same published array,
+including freeing the previous backing allocation twice on repeated commit.
+A second Begin could also adopt a still-empty staged array as its original
+allocation. Both paths now reject without changing the live array. Failed
+recovery retains the active owner rather than admitting another initializer.
+
+The outer weapon-modifier initialization journal is also address-bound,
+including capacity-only setup where no nested allocation journal exists.
+Copied journals cannot commit or undo the original transaction's capacity seed.
+Regression cases cover copies before/after completion, overlapping empty-array
+admission, dirty recovery, and capacity-only ownership. These are local memory
+ownership defects, not a proven explanation for the prior gameplay crash.
+The production resolver fixture passes against the retained executable, and
+the modifier suite passes 3,000 runtime restorations and 2,000 initialization
+commit/rollback batches plus capacity-only cases. These edits are linked into
+the local DLL above, but not deployed. Animator bootstrap is connected in the
+later integration section; the complete character-swap feature remains gated.
+
+### Rooted scalar service cloning (September 7)
+
+The current source adds `UnrealBeginObjectCloneProperty` /
+`UnrealFinishObjectCloneProperty` using the already-verified native Clone and
+GC-reference barrier. It requires an empty scalar ObjectProperty, validates its
+declared class against the template hierarchy, and publishes the new clone in
+that typed property before another allocating game call can occur. The clone
+must have its requested Outer and exact template class. Commit leaves the
+property as its root; rollback removes only the still-owned pointer and leaves
+UObject collection to WFC. It never replaces an existing service or manually
+deletes a game object. Journals are address-bound so copying one cannot duplicate
+the right to remove the root. Failed dirty validation keeps pending recovery.
+
+The targeted production-resolver test passes 2,000 scalar clone/commit/rollback
+cycles, occupied-property rejection, duplicate completion, copied journals,
+wrong-thread calls, seven clone-callback failures, stale identities/roots,
+invalid property shape/type and compatible inheritance. Engine allocation and
+GC callbacks are fixtures, not gameplay. This helper is not yet connected to
+the weapon animator initializer; the owner-animator admission gate remains.
+The full serial 47-group native build passed after this additional change;
+the DLL hash above includes it. No gameplay or animator playback was tested.
+
+The animator service trace now identifies both compiled QueryInterface leaves:
+`TnBasicAnimator` at `10BD0170..10BD01BE` and `TnRobotAnimator` at
+`10B3D1F0..10B3D23E`. Both take ECX=compiled service plus a UTF-16 interface name
+on the stack, RET4, and compare exactly `TnAnimatorService`. Success returns
+compiled-this +28 for Basic (raw +38) and +18 for Robot (raw +28). These are
+addresses of their embedded interface tables, not raw UObject pointers. The
+first literal is `1262366C`, the second `12632FA4`. Returning the raw service
+pointer where an interface-table pointer is expected would therefore be wrong.
+
+`InitializeOwnerAnimator` at `109E69E0..109E6C36` selects RobotForm or VehicleForm
+from WeaponType 6, resolves both `TnAnimatorService` and
+`TnAdditiveAnimatorService`, then clones Data.OwnerAnimations, roots OwnerAnimator
+and invokes `109F1E70`. That initializer takes EDX=compiled animator, EDI=the
+12-byte primary interface record, ESI=the additive record, and plain RET. It
+stores the two records at raw +A8/+B4 with the native reference barriers, then
+sets raw +78 bit 2 (`LoopOverheatAnimation.IsLooping`). It does not reset pawn
+health or spawn an actor. Cooked RobotForm/VehicleForm.OnGetService first supply
+their existing `_Animator` / `_AdditiveAnimator` fields for those names and
+cache them. Existing cached service descriptions must take precedence over the
+fallback fields. The binding adapter below invokes the initializer, and the
+preparation wrapper connects it before atomic controller detachment. The root
+helper alone does not initialize animation or make the full swap flow ready.
+
+### Native weapon animator binding (September 7 follow-up)
+
+`NativeBindClonedWeaponAnimator` now binds a new, still-rooted OwnerAnimator
+clone using the complete shipping initializer and a dedicated EDX/EDI/ESI
+assembly caller. It validates the original scalar clone journal, its actual
+OwnerAnimator property, both form-owned service fields, cached service entries,
+the two concrete service classes, embedded interface-property offsets, actual
+QueryInterface dispatch targets, entire native method bodies and the native
+GC barrier. A differing cached service is rejected as an unsupported override,
+not silently replaced. Robot weapons resolve RobotForm even while the pawn has
+a vehicle form; only WeaponType 6 resolves the corresponding vehicle form.
+
+The initializer writes only the two interface records and the overheat-loop
+flag. It does not call UpdateData, Possess, Restart, actor spawning, input reset,
+animation playback or health/inventory initialization. Existing bound animators
+cannot be reinitialized. A dirty postcondition returns StateMismatch and keeps
+clone ownership pending; the caller must complete commit or recovery in the
+same game-thread pulse. The low-level binder alone is not a swap admission.
+
+The new test executes the real initializer, reference barrier and both native
+interface-query leaves, with PE relocation-directory checks. Two thousand
+robot/car/truck/plane/tank cases verify exact destination bytes, unchanged pawn,
+weapon and animator-service bytes, and GC rescan marking. Every signature byte
+is corruption-tested. Repeated binding, copied journal, wrong thread, changed
+identity, transformation, foreign form ownership, unsupported service classes,
+cache overrides and dirty post-call state reject. UObject metadata, control and
+clone-root ownership are fixtures, not a live level or animation test.
+
+### Animator preparation connected to the swap transaction
+
+`NativeCanPrepareWeaponAnimator` is now the read-only admission for a missing
+animator. It checks the authored template, supported native binding code,
+current form/service ownership and clone availability without calling the game
+or allocating. Incompatible heat tuning still rejects independently.
+
+`GameBridge::PrepareInventoryWeaponAnimators` runs at the start of
+`kDetachOriginalControlLinks`, inside the atomic tick and BEFORE form exit or
+either controller detachment. `NativePrepareWeaponAnimator` clones, binds and
+commits one service in that pulse. Both original control pairs and input leases
+are checked around preparation. Only the new animator root/index is adopted
+into the inventory's weak baseline; other service/tuning changes reject.
+
+Successful initialization is lazy, character-owned service preparation, not an
+actor/control transfer. It persists on later rollback instead of deleting an
+animator that could have received an animation/heat event during settle ticks.
+This follows native InitializeOwnerAnimator's early return for an existing
+instance across role-data changes; it still needs combined gameplay validation.
+No existing animator, weapon, pawn, ammo or health is recreated/reset.
+
+Failed preparation removes only its own new root immediately where ownership
+checks allow. Changed identity/ownership or failed recovery keeps input and AI
+quiesced; detachment is not attempted. The fixed-address recovery journal is
+outside copied/resettable preflight snapshots. A clean rejection before any
+change follows the existing rollback path, without inventing a control mutation.
+New log records identify the pawn, weapon, result and pending recovery state.
+
+Tests add 2,000 prepare/commit cycles, pure-read admission, duplicate/nested
+requests and six clone/bind/commit/recovery failures. Retention tests cover
+admitting only supported missing animators, loss of readiness, explicit weak
+baseline adoption, and unchanged heat incompatibility rejection. A source
+integration check pins the atomic placement, single caller and recovery storage.
+Those tests do not execute a whole live GameBridge swap or establish normal AI,
+checkpoint compatibility, class selection or gameplay stability. The remaining
+native checkpoint/AI/class readiness gates have not been bypassed.
+
+### Initialization transaction consumption (September 7)
+
+`NativeFinishWeaponModifierInitialization` previously left `initialized`
+captured after committing. A subsequent rollback could report `kApplied` even
+though the clone journal had been committed and the capacity seed was no longer
+owned. Finish now consumes that admission on both successful paths. Duplicate
+commit/rollback rejects without touching live state; reusing the journal requires
+a fresh Begin/capture. Begin also rejects an unfinished already-initialized
+admission, not only a pending clone/seed, so it cannot silently replace the
+snapshot while waiting for Finish. Dirty failures still retain their recovery
+journals. The modifier fixture covers duplicate completion across the 2,000
+existing clone/seed cases and explicit live-service no-op/reuse cases.
+This corrects bootstrap transaction semantics; it does not integrate bootstrap
+into GameBridge or make the full control/class flow ready.
+
+The additional heat consumer trace confirms why a Tick-only fix is insufficient:
+the cooked `SetupInitialAmmo`, `HasAnyAmmo`, `HasAmmo`, `AttachWeapon`,
+`DetachWeapon`, `ConsumeAmmo`, `BeginFire`, `EndFire` and `ShouldHideAmmoHud`
+all branch on `IsHeatBased`. Attach/detach add/remove both overheated and cooled
+observers; Begin/End dispatch heat events 0/1 and ConsumeAmmo dispatches 2/3.
+The native HUD reserve observer `10AC36D0..10AC3779` inlines ShouldHideAmmoHud:
+its `10AC370A` call to IsHeatBased selects the -2 hidden sentinel before the
+unlimited-reserve/actual-reserve branches. The cooked clip observer similarly
+selects -2 rather than AmmoClipCount for heat weapons. Any retention adapter must
+keep those predicates and live services coherent, not merely retain CurrentHeat.
+
+### Checkpoint request ownership and native collector trace (September 7)
+
+The current source adds end-to-end generation ownership to the unfinished
+deferred-writer path. Restore verification now receives the original request;
+the hook captures a replay token before calling the original; completion and
+cancellation reject stale generations without advancing or poisoning a newer
+request. Replay success requires the exact completed token, not merely an idle
+gate. Reset invalidates completion but does not recycle generations. GameBridge
+also rechecks its retained restore journal/world and reciprocal controller/pawn
+identities after writer callbacks before clearing state or reopening input.
+Logs no longer equate return from a writer
+invocation with actual successful disk completion.
+
+CheckpointGateTests adds 2,000 reset/reentry cycles with identical manager/slot
+identities, stale restore/completion/cancellation, mismatched identity fields,
+invalid completion after reset, and owned-call failures. This repairs request
+bookkeeping only: it does not validate the snapshot being written or replace
+the shipping capture hook. The full 47-group build, optimized stack audit and
+323/77 cooked audit passed after the final source edit; the DLL above includes
+this change. No gameplay, disk-save completion or complete swap/class feature
+has been verified by these offline tests.
+
+The actual `TnCheckpointSaveData.AddSaveData` collector was located at
+`10A79FD0..10A7A367` (two compiled object pointers on the stack: save-data receiver
+then player controller, RET8). At `10A7A092` it performs the physical-player cast;
+the failed cast skips health, abilities and inventory capture. The successful
+path reads compiled pawn +880 (raw pawn +890, player-only segmented health) at
+`10A7A10F`, obtains the first segment bound, calls virtual GetHealth at +26C,
+then combines them at `10A7A161`. Widening that cast alone is unsafe for TnAiPawn.
+The combine is a maximum: `1097F770` calls `1094C080`, whose `maxss` is at
+`1094C0A1`. Stock checkpoints therefore enforce a first-segment health floor.
+The authored segment blueprint comes from the shared pawn blueprint's
+SegmentedHealth field. Do not run TnSegmentedHealth.Initialize as a shortcut:
+the cooked initializer assigns HealthMax and, on authority, resets Health to
+that maximum. That would violate retained-character health preservation.
+
+The collector then reads the shared ability-manager resource, enumerates native
+inventory, collects weapon archetype paths/total ammo and moves the selected
+robot weapon to the front. SavedPlayers uses 84-byte records, with append/copy at
+`10A7A307..10A7A344` (native element copier `10AB09F0`) and local record destruction
+at `10A7A356` (`10A79D10`). Those records contain nested strings/arrays, not POD
+state. They do not contain all three members' magazines, cooldowns or buffs.
+OnPopulateSaveData clears SavedPlayers before enumerating player controllers;
+skipping a failed collector would therefore leave an incomplete snapshot, not
+preserve the previous one. No collector patch or broadened class cast was added.
+
+### Repair weapon inheritance correction (September 7)
+
+The prior derived-cache gate incorrectly treated Repair+Beam membership as a
+contradictory hierarchy. The shipping Repair.UpdateData body is
+`109F2C90..109F2D09`, selected by vtable `1281B7D8` +228. It casts Data through
+the TnWeaponDataRepair class literal at `12672318`, assigns RepairData at raw
++39C, then calls **Beam.UpdateData** at `109F2CFF`, not the base weapon directly.
+The Beam body additionally assigns BeamData at raw +394 before base UpdateData.
+This explains why a direct-call scan of the base body did not find Repair.
+
+The retained handoff now accepts precisely that inherited cache pair, verifies
+both typed layouts/values, and updates both through the existing GC-aware writer.
+Partial publication remains dirty and is reversible through the existing weapon
+journal; unrelated multiple class matches, split caches, changed ownership and
+unknown overrides still reject. It never invokes the resetting UpdateData chain.
+Retention checks all three complete shipping bodies (Repair, Beam and Base),
+their PE relocations and the actual dispatch slot. The cache suite covers 4,000
+round trips; retention now covers 640 plus byte-corruption checks for the full
+inherited chain. These are local fixtures, not a gameplay handoff.
+
+A separate stale-admission bug is fixed: weapon retention now requires the
+original Instigator identity. Equipping/holstering changes whether native owner
+animation initialization occurs; a saved admission cannot silently survive that
+change. Legitimate controller/Data handoff changes remain allowed.
+
+The Repair/Beam and Instigator corrections passed the full build/hash above.
+Weapon bootstrap, heat compatibility and the other documented integration gates
+remain incomplete; this does not make swapping or the class flow test-ready.
+
+Heat-policy trace (read-only): native `TnWeapon.IsHeatBased` is
+`109E68F0..109E6941`, EAX=compiled weapon, plain RET. It resolves Data as
+TnWeaponData and tests its HeatMax at compiled-data +140 (raw +150), not the
+WeaponHeat service's retained maximum. Native Tick is `109E7450..109E7623`;
+its call at `109E74BF` controls the heat event and mesh-glow block. The direct
+call scan also finds `109E6DE5`, `109E70B5`, `109E70D5`, `109E7BF9`,
+`109E7D83`, `109E91F6`, `109E92D6`, `109E9336`, `10A77EB1`, `10A77ECC`,
+`10A78072`, `10A780E2`, `10AB3EC2`, `10AC34B6`, `10AC370A`. These additional
+callers still require individual semantic verification. A Tick-only workaround
+would not establish coherent heat behavior throughout the weapon/HUD paths.
+No heat-policy hook was installed and the incompatibility rejection remains.
+
+The full local DLL above includes the initialization-commit guard:
+NativeFinishWeaponModifierInitialization now checks full modifier runtime,
+not just identity/tuning. A cooldown timer or event flag changed between Begin
+and Finish keeps the clone journal pending and does not silently commit. The
+added cases cover both existing and newly cloned modifiers, unchanged failed
+commit state, and retry after a fixture restores the expected state. This does
+not introduce production event resets or integrate the bootstrap into the swap.
+The targeted NativeWeaponModifierTests rebuild/run passed after this edit:
+3,000 timer/flag restoration cycles, 2,000 initialization batches and the new
+commit-boundary cases; the complete native suite also passed afterward.
+
+### Initialization rollback event preservation (September 7)
+
+The cooked Charge.OnHeatEvent case 7 changes IsCharging without adding heat;
+Lose.OnHeatEvent changes IsHoldingFire/TimeSinceLastShot independently of the
+returned heat. Consequently, a cold service is insufficient evidence that its
+new modifier instances can be discarded. Both failed-Begin cleanup and explicit
+rollback now validate the rooted clone array's identity, schema, tuning, owner,
+flags and timers before removing it or undoing its capacity seed. Changed events
+leave recovery ownership intact and report StateMismatch, without clearing the
+event to force rollback. Existing non-cloned modifiers are not reset or removed.
+
+Failed Begin also invalidates its candidate initialized snapshot before any
+cleanup attempt. Otherwise a final template/runtime failure could leave a
+captured snapshot that a later Finish(commit=true) mistakenly accepted. Recovery
+can only roll back that failed setup, not promote it to a successful commit.
+
+Tests inject flag-only and timer-only events during cloning and after successful
+Begin, with and without capacity seeding; verify failed cleanup changes no event
+state/array/capacity; reject commit after failed Begin; and exercise explicit
+fixture recovery. These remain bootstrap-module checks, not GameBridge or live
+gameplay validation. These changes are included in the local DLL above.
+The updated modifier suite passed all 3,000 restoration / 2,000 initialization
+cycles and injected-event/failed-commit checks.
+
+### Swap stack-pressure correction (September 7)
+
+Disassembly of local DLL `dc236d8358...` revealed CaptureJournal's x86 prologue
+reserving `0x776C4` bytes (489,156), with InventoryCaptureStillCurrent reserving
+another `0x1DCB8` (122,040). These are compiled frame reservations, not estimates
+from sizeof. Large local snapshots and aggregate reset temporaries unnecessarily
+consume the game's stack at the native callback boundary. This is verified stack
+pressure, NOT proof that it caused the user's previous gameplay crash/stutter.
+
+CaptureJournal and inventory recapture now borrow separate fixed scratch storage
+only on the game thread, with recursive acquisition rejected. Global journal
+resets reconstruct trivially-copyable/destructible snapshots directly in place;
+nonzero default fields are preserved. No engine-owned resources are relocated,
+no per-tap heap allocation is introduced, and the active journal is still only
+published after a successful capture. Future owned-resource journal types cause
+the reset helper's compile-time check to fail instead of silently leaking.
+
+The production GameBridge compile with stack-usage output now reports 6,764 bytes
+for CapturePreflight (including inlined CaptureJournal), 80 for inventory
+recapture, and 4,132 for its inventory-reader callee. SwapScratchTests passes
+2,000 full-size resets, nonzero defaults, nested rejection and lease release.
+The native build now includes that test plus a 32-KB per-frame compilation limit
+on optimized GameBridge so this stack regression cannot silently return. The
+audit uses release optimization in either build configuration: the pre-existing
+unoptimized snapshot-rendering function has a 57,472-byte frame, so applying the
+release bound to unoptimized code would incorrectly break Debug builds. These
+changes are linked into the local DLL above, not a deployed replacement payload.
+
+### Native controller-motion, fine-aim and targeting continuation (September 6)
+
+Current source has **1 unavailable executor hook and 0 cooked cast sites**
+remaining. This is not the total work estimate: normal physical-player AI,
+weapon bootstrap/heat-role compatibility and the class/menu/persistence work
+below remain. No safety gate was bypassed.
+
+### Native transformation entry guards (September 7)
+
+The former player's bounded robot-form protection now uses shipping native
+entries, not the unreachable Transform/StartVehicle executor hooks. Transform
+is `10B05C40..10B05CF0`: ECX=compiled pawn, two stack slots (form and pointer to
+the 16-byte compiled delegate), RET8. It checks raw +544 bit20, optionally drops
+heavy weapons, writes target/compressed form and the delegate, moves to a safe
+position, dispatches OnTransformationChanged, and returns transformation state.
+StartVehicle is `10B05160..10B051D4`: EAX=compiled pawn, plain RET; it tests the
+vehicle form, sets collision mode, starts the form, enables effects and enters
+InVehicleForm. The direct CALL at `10B05095`, inside InitializeState (which
+returns immediately for an existing current form), reaches this entry. Transform has
+multiple shipping table references rather than direct E8 calls in the text scan.
+The shipping table at `12688E0C` uses Transform slot +30C (OnTransformationChanged
+is the following +310 slot). Admission checks both live pawns' actual current
+script table +30C, rejecting foreign or unsupported overriding dispatch.
+
+NativePawnTransform validates both complete bodies/PE relocation, patches only
+instruction-aligned prefixes, forwards stock calls with registers/flags intact,
+and denies only the published former-player identity without dereferencing it.
+There is no reflection, allocation or engine callback in the guard. A stale
+published identity remains denied rather than admitting unsafe vehicle AI;
+mapping publication/restore and native hook rollback/removal own its lifetime.
+These guards do NOT supply normal AI or transformed swapping. The checkpoint
+executor and all other documented role/weapon/class gates remain required.
+
+The targeted test passed 4,000 batches containing denied calls, stock early
+returns and enabled stock Transform state/delegate updates. It also checks
+off-thread denial, unchanged denied actor memory, every code byte, PE relocation,
+trampoline/patch ownership and restoration. Engine movement/notification calls
+are fixtures; full vehicle initialization and gameplay remain untested.
+The 47-group full build and 320/75 cooked audit passed for this continuation;
+the local DLL hash above includes these two native guards and dispatch checks.
+Linked-code inspection confirms the guards contain only register/address checks
+and forwarding/return instructions, and inventory recapture's large stack frame
+is absent. This is not an in-game performance result or permission to deploy.
+
+### Inlined respawn integration (September 7)
+
+Removed the obsolete RespawnHelper.Died executor dependency and its frame-parameter
+reader from CharacterRoleAdapter. Cooked Died only forwards to OnDeath; shipping
+TnGame.Killed inlines that dispatch through the helper's virtual +44. The existing
+NativeGameDeath adapter covers the actual branch at 10A97D50, including logical
+player/AI identity and native base-death/achievement ordering. Validation,
+installation, rollback/removal and generation-aware death notification remain
+mandatory; only the redundant, unreachable-through-this-path executor hook was
+removed. The full native death suite passes 12,000 shipping-body branches and
+the adapter compiles with strict 32-bit warnings. The cooked audit now rejects
+reintroducing the old executor or removing the native lifecycle dependencies.
+
+The broad cooked scan returned TnGame.Killed as the sole decoded match for
+RespawnHelper.Died, but also reported decompiler errors in unrelated methods;
+it is not treated as proof of exhaustive call coverage. The removal is supported
+by the complete shipping Killed body and its tested native OnDeath dispatch.
+Transform/StartVehicle were subsequently ported to the native guards above;
+checkpoint writer/capture compatibility remains a separate prerequisite. Normal
+former-player AI and class/menu/persistence work are not completed by this change.
+
+Also corrected the pending Transform lookup's declaring class: the cooked
+declaration is TnPawn.Transform (export 6537, flags 02020102; byte TargetForm,
+delegate TransformCompleteEvent, bool result). TnPlayerPawn inherits it and has
+no own Transform declaration. An exact-owner lookup on TnPlayerPawn could never
+resolve it, independently of the shipping executor limitation. The cooked audit
+pins that signature. The subsequent native-guard integration removes the executor
+dependency entirely and rejects its reintroduction; correcting the owner alone
+was insufficient to make the old path usable in shipping gameplay.
+
+### Camera, HUD, local-player and navigation role continuation
+
+Six camera/owner replacements and two navigation replacements passed the complete
+44-group DLL build. OnSetPawn now has a native replacement which also passed the
+subsequent 45-group full build. Do not infer that removing cast dependencies completes
+normal AI, weapon bootstrap, class menus or persistent configuration.
+
+### Native pawn assignment continuation (September 7)
+
+`NativePlayerAssignmentCode.h` retains the entire OnSetPawn body at
+`10B21ED0..10B21FD3`, ESI=compiled controller/EAX=compiled pawn, plain RET.
+The 21st owned CALL in NativePlayerCombat replaces only its IsA at +3F.
+The resolver validates the canonical role first, then checks the native receiver
+against the actual pawn.Controller. Rejected mapped actors exit through
+`10B21FD0` before any pickup/aim/HUD/POI mutation. Merely returning false from
+IsA would instead continue with Initialize(None)/ResetHud(None).
+
+4,096 fixture paths preserve native authority/local branching, pickup and aiming
+arguments, HUD/POI/killstreak call order, exact controller flag updates, and pawn
+storage. Wrong receiver, stale/foreign ownership, off-thread, stock None/failed
+casts, stack/FP, byte corruption and patch ownership are checked. Deep service
+callbacks are fixtures, not a rendered HUD or an end-to-end swap. The transaction
+still uses its staged service journal; it does NOT call full OnSetPawn again.
+
+### Checkpoint capture ordering correction (September 7)
+
+The old CheckpointGate comment incorrectly attributed snapshot capture to
+SaveActiveCheckpoint. Cooked SetActiveCheckpoint calls GenerateCheckpointData
+before NotifyCheckpointSet; OnStartingFromCheckpoint generates before
+ProcessActions/NotifyCheckpointGameStart. SaveActiveCheckpoint writes the
+ALREADY CAPTURED CheckpointData and does not regenerate it. Restoring ownership
+only before disk-write is therefore insufficient. The existing deferred-write
+gate is not evidence that checkpoint capture is safe. This remains within the
+existing checkpoint/persistence integration area; no save-safety gate was bypassed.
+
+The retained executable's Unicode native binding
+`intUCheckpointManagerexecGenerateCheckpointData` at `127D56D0` is referenced by
+the data registration at `12A093E8`. Initializer `118764AA..118764B4` stores
+executor `10993FD0` at `12A093EC`. That executor decodes the ActiveCheckpoint
+argument and calls `1183AB10` at `10994020`. Actual generator
+`1183AB10..1183ADA4` takes raw manager and checkpoint on stack, RET8, bool result.
+It clears manager.CheckpointData at raw +38 BEFORE building its archive and
+calling manager virtual +138. A hook at the later writer cannot undo this
+ordering. No capture hook has been enabled: deferring this bool call alone also
+cannot defer its callers' path assignment/mission notification/ProcessActions.
+
+A bounded direct E8/E9 scan of .text found generator calls at `10994020`
+(executor), `113A07A2` (OnStartingFromCheckpoint body `113A0730..113A07C0`)
+and `113A095F` (shared SetActiveCheckpoint body `113A0910..113A09B0`). Both
+compiled event bodies take ECX=compiled manager and compiled checkpoint on
+stack, RET4; both convert to raw objects for the generator. This scan does not
+prove absence of indirect callers. Crucially, TransGame defines an additional
+`TnCheckpointManager.SetActiveCheckpoint` override: it sets
+`_PreviousCheckpointName` BEFORE super, then calls Game.NotifyReachedCheckpoint
+AFTER super. Deferring just the base implementation would split those side
+effects across frames. The actual WFC override must be included in a capture
+transaction. The sole direct CALL to the shared SetActiveCheckpoint found in
+.text is `10A79979`, in WFC override `10A79940..10A799CD`. It takes ECX=compiled
+manager, compiled checkpoint on stack, RET4; calls GetActiveCheckpoint virtual
++38, stores the previous checkpoint name at compiled manager +90, calls super,
+then invokes TnGame's NotifyReachedCheckpoint virtual +30C. The checkpoint
+writer's TnCheckpointSaveData.OnPopulateSaveData enumerates TnPlayerController
+instances and calls AddSaveData(PC). These are research findings, not installed
+capture adapters or a demonstrated saved-state round trip. No save was touched.
+
+`NativePlayerCombat` now owns scoped CALLs in these shipping bodies:
+
+- ConstrainRotation.SetActor `10A7D720..10A7D76A`, LocationOffset.SetActor
+  `10AD4250..10AD429A`, OrbitRotation.SetActor `10AFDDA0..10AFDDED`.
+  All use ECX=compiled behavior, compiled actor on stack, RET4; their IsA CALL
+  is at +26. Original GC-aware stores remain at raw behavior fields 2C/4C/98.
+  Decompiled consumers use shared Controller, Rotation and VehicleForm; the
+  location Update does not consume Player. No player-only tail is fabricated.
+- FlyingFollow.AdjustStickInputForVehicleUnderMouseControl
+  `10A95790..10A9580A`, EAX=compiled behavior, ECX=ControllerInput*, stack delta,
+  RET4; pawn cast +28. Native controller cast and complete existing controller
+  mouse/form/Clamp route remain. Tests execute 6,144 camera setter/flying cases
+  alongside the existing 2,048 record/1,536 controller-input cases, including
+  native post-store GC order, untouched surrounding fields, stale roles,
+  wrong threads, gamepad preservation, stack/FP and all-body corruption checks.
+- NormalizedDownedHealth.CheckData `10AC2270..10AC22F5`, ECX=compiled observer,
+  native stack Movie then PC, RET8; pawn cast +2F. Native shared _IsDowned,
+  Health and DownedHealth fields remain, including **1 - Health / -DownedHealth**
+  and the original ProcessNewValue call. No synthetic HUD value/cache.
+- LocalPlayerFinderOwner.FindLocalPlayers `10AD40C0..10AD412D`, stack return
+  array then compiled owner, RET8; pawn cast +32. The full controller field
+  cast `1097FBD0..1097FC06` and native array Set/Append helpers
+  `10AF3AF0..10AF3B32` / `10AF4E70..10AF4EB3` remain. Return storage belongs
+  to the native caller, not a static mod array. Tests run 3,840 HUD/finder pairs,
+  actual array growth/store behavior, signed health math, zero allocations on
+  rejected lookups, stock null-controller behavior and ownership/ABI/FP guards.
+- TryTeleportToLastAnchor `10C11B60..10C11ECB`, stack compiled action then
+  destination, RET8; pawn cast +124. Invalid mapped observers must **abort**
+  through native iterator cleanup `10C11E1F`, not simply return false from IsA:
+  that would skip their FOV checks and permit the existing AI catch-up teleport.
+  Valid observers retain both view tests, anchor/time/CanAnchor restrictions,
+  native controller iteration and destination rotation. This is adaptation of
+  the game's existing catch-up behavior, not teleport-based character swapping.
+- FindNearAnyPlayer `10B504A0..10B50599`, stack compiled finder, RET4; pawn cast
+  +C0. Keeps native iterator destruction and FindFromAnchor; that latter method
+  uses TnPawn's anchor service/vehicle type and native safe-location validator.
+  No actor is spawned by this adapter. The new navigation fixture covers 4,096
+  visibility/finder cases, iterator cleanup and no teleport on invalid mapping.
+
+These fixtures replace deep metadata, world iteration, GFx, allocation backend,
+math, anchor service and teleport callbacks where stated. They verify shipping
+method control flow, not actual rendered cameras, normal AI, a complete swap or
+chapter compatibility. All new bodies/PE relocations are independently matched
+against the retained executable. No new per-frame object scans or allocations
+were added to the role resolver. No device, APK or payload publication occurred.
+
+### Verified cast migration cleanup
+
+After the complete 45-group verification, removed the now-empty cooked-cast
+patch installer, restoration loops and preflight collection from
+CharacterRoleAdapter. The audit now rejects any reintroduction of operand-patch
+APIs anywhere in this adapter. Native scoped body validation and all four
+remaining lifecycle executor requirements remain; this does not enable swaps.
+The cleanup passes the strict 32-bit compilation check. The recorded DLL hash
+above predates this source-only cleanup.
+
+### Checkpoint writer and animator follow-up
+
+TnCheckpointSaveData.AddSaveData casts PC.Pawn to TnPlayerPawn, then reads
+`P._SegmentedHealth.GetSingleSegmentHealth()` when computing saved health.
+The cooked declaration places `_SegmentedHealth` on TnPlayerPawn, NOT TnPawn.
+Replacing that cast alone is unsafe for an existing TnAiPawn allocation.
+The same writer records selected-character identity, ability resource and total
+weapon ammo, excluding weapon types 7/5 and recording vehicle type 6 separately.
+It does not preserve a complete three-pawn runtime snapshot by itself.
+
+The missing owner-animator bootstrap has a shipping native entry:
+`109E69E0..109E6C37`, stack compiled weapon then compiled pawn, RET8.
+`InitializeFromInstigator` calls it at `109E6986`. It returns without modifying
+an existing OwnerAnimator; otherwise it resolves robot/vehicle animator and
+additive-animator services, clones Data.OwnerAnimations through native Object.Clone
+(`109E6C01 -> 116ED490`), assigns the owner animator with the native GC setter
+(`109E6C16 -> 10A659E0`), then initializes it (`109E6C28 -> 109F1E70`).
+Cooked TnWeaponOwnerAnimator.Initialize assigns the two interfaces and sets
+LoopOverheatAnimation.IsLooping=true; it does not start a new animation.
+Robot/vehicle OnGetService resolve these two names from _Animator/_AdditiveAnimator
+and cache them in _Services. No initializer has been called or admitted yet:
+the native service/cache, cloned-object ownership and rollback boundaries must
+be verified before removing owner-animator-needs-initialization.
+
+The existing `NativePlayerCombat` scoped resolver/owned-call machinery now also
+handles controller motion, fine-aim and targeting. It does not replace the input
+backend or globally spoof a pawn class. General recurring checks use the
+canonical reciprocal mapping without object scans, allocations or VirtualQuery.
+All added method bodies are checked byte-for-byte, including PE relocations.
+
+- AdjustStickInputForVehicleUnderMouseControl `10B18930..10B18A5C`, EDI=
+  compiled controller, DeltaTime/StickX*/StickY* on stack, RET12. The IsA CALL
+  at `10B18984` is now role-aware. The original vehicle/form and mouse/keyboard
+  gates, positive-delta reciprocal and native Clamp remain. Gamepad values are
+  not modified. The input-device getter `10B18900..10B1892E` is retained.
+- ShouldRecordPlayerRecord `10B20700..10B2077D`, EDI=compiled controller,
+  RET/bool, IsA at `10B20744`. Native IsDead, GetActorBase and Physics==7
+  restrictions remain. It delegates to the current pawn state virtual328;
+  grounded/plane rules are not approximated with a new position history.
+  Tests execute 2,048 record and 1,536 vehicle-input combinations, plus full
+  GetActorBase/Clamp bodies, wrong-thread/stale-role paths and register/FP checks.
+- FineAim Start/Stop `10A93ED0..10A93F48` / `10A93FE0..10A94033` use EDI=
+  compiled manager. Their typed Owner-field helper calls `10A93EF3` /
+  `10A94000` are scoped; the shared helper itself is not patched. A rejected
+  mapped owner restores only the bFineAiming bit just changed and exits through
+  the exact native epilogue. Returning None alone would still run the camera
+  tail. No weapon/speed/camera callback has occurred at that rejection point.
+- CheckSnipingOverheat `10A94160..10A941C7` and NotifyTakeHit
+  `10A941D0..10A94282` take EAX=compiled manager. IsA at `10A9418E` /
+  `10A94206` admits the canonical player role. Native scope/overheat tests,
+  StopFineAim, existing buff service and authored damage-scramble buff remain.
+  Full TnPlayerPawn Start/StopFineAim bodies only touch shared Weapon and call
+  the existing weapon; they do not access physical-player tail storage.
+  Tests execute 4,096 complete cycles, callback order, repeat no-ops, rejected
+  flag restoration and a mapping invalidated before nested overheat Stop.
+- IsOwnerJumping `10BA8700..10BA873C` takes EAX=compiled targeting. Its IsA
+  at `10BA8725` gates the shared Physics==2 check. GetAngleToTestTarget
+  `10BA85A0..10BA8635` contains another **inlined** copy at `10BA85D7`;
+  hooking the standalone predicate is insufficient. That full body preserves
+  the native base angle, positive JumpExpansionFactor, absolute-angle<25 rule
+  and division. The test executes 4,096 native predicate/angle pairs including
+  threshold boundaries, stale roles, exact float return/stack/FP and FAbs.
+
+SetMeleeAssistTarget `10BA8820..10BA887A` takes EDI=compiled victim plus compiled
+targeting on stack (RET4). Its IsA at `10BA884A` is now scoped, with the actual
+targeting receiver and victim passed to a separate required validator. The full
+setter and array helper `10BB0E20..10BB0E9E` are signature-checked and executed
+in local tests. They retain the native equality check, fourth-entry store and
+post-store GC barrier; no replacement target list or UI-only target is created.
+
+`NativeMeleeTargetGuard` validates reciprocal pawn/controller links, the exact
+controller-owned targeting object, its `_TargetingOwner`, reflected array offset
+34, stride8, TargetActor field0 and at least four readable entries. This matters
+because the setter reads entry3 before its array helper. The cache is non-owning
+and invalidates on mapping generation, GObjects slot/identity, owner links or
+buffer/header changes. Unchanged target updates do not repeat reflection,
+VirtualQuery or writes; a changed non-None target must be a live non-deleting
+Actor. Cold-cache validation uses the new strict ArrayProperty-offset reader,
+also exercised in the actual bridge lookup fixture.
+
+The setter test covers 3,000 native changes and 3,000 zero-reflection repeats,
+all other array entries/scores and pawn bytes, null clears, reallocation,
+undersized/invalid capacity, wrong layout/owner, deletion, generation changes,
+off-thread rejection, full-body PE relocations and register/FP/patch ownership.
+These tests use fixture class/input/virtual-state/camera/buff/backend services;
+they do not demonstrate completed possession or in-game stability.
+
+### Native death and firing/melee continuation (September 6)
+
+`NativeGameDeath` replaces `GameKilledHook` and its two stripped parameter
+lookups. The exact full `TnGame.Killed` body `10A97D50..10A97E04` takes
+ECX=compiled game and four compiled pointer arguments, RET16. Its base call
+`1176C600` executes scoring/inventory/mission notifications first. The physical
+TnPlayerPawn IsA at `10A97DAA` then determines whether helper virtual44 runs;
+that is the inlined `RespawnHelper.Died -> OnDeath` path. Killer achievements
+remain after it. No second reflected Died call is added and no helper is
+respawned, reconfigured or replaced.
+
+The new entry captures the canonical victim/controller generation. Only this
+native IsA callsite uses that captured role; unrelated/global IsA is untouched.
+Validation after the base notifications rejects mapping changes, reused GObjects
+slots and reassignment to another actor. Null links caused by dying are allowed:
+Engine.Pawn.Died explicitly passes Controller(Owner) when Controller is already
+null. Both the original death victim and its controller must still match their
+published slots. Logical-player death sets the existing recovery signal. A
+logical-AI death skips player respawn but retains all ordinary base/achievement
+notifications. Nested notifications use scoped thread-local records, not one
+overwritable global victim. Removal while a death scope is active is refused.
+
+The death test executes the entire shipping body in 12,000 cases plus missing
+helper/killer/victim, nested notifications, pre/post-base detach, generation
+invalidation, conflicting reassignment, authority and off-thread checks. It
+checks ABI, full-body PE relocations, byte corruption and owned entry/callsite
+restoration. Base scoring/mission/respawn/achievement services remain fixtures.
+
+`NativePlayerCombat` replaces the IsAbleToFire, AbortMelee and PlayerWalking.Melee cooked cast edits.
+The full bodies `10B1A930..10B1AAEB` and `10B1BAC0..10B1BB9A` use shared TnPawn
+service/robot-form/transform-handler storage and actual weapon interfaces, not
+TnPlayerPawn tail fields. Scoped IsA calls at `10B1A982` and `10B1BB0E` admit the
+canonical player-controlled AI pawn and reject the physical player acting as AI.
+Unmapped calls retain the original native class result.
+
+Important: IsAbleToFire returns **true** when its physical-player cast fails.
+A stale/off-thread mapped identity must therefore not merely return false from
+IsA. The new rejected branch drops that CALL's return/class argument and enters
+the native EBP/local cleanup at `10B1A990` with EAX=0. Valid mapped calls execute
+the original shield, masked-animation, transformation, overheating, attachment
+and IsAllowedToFire checks. AbortMelee retains the native robot melee interface
+and tail-call. All register/FP state is preserved around the canonical resolver;
+no per-fire allocation, object scan or VirtualQuery is added.
+
+The combat fixture executes 4,096 complete firing/melee combinations plus None
+services/forms/weapons, invalid identities, original nonplayer behavior, native
+network guards, register/FP canaries and all-byte/relocation/owned-patch checks.
+Service/interface/class/GC and nested weapon calls are fixtures, not gameplay.
+
+Melee activation uses the complete `10B24E90..10B24FC3` body and scoped IsA
+at `10B24EE6`. It preserves downed/reviving restrictions, SpamMeleeTimer,
+the vehicle-visible gate, actual picked victim, stomp selection, the original
+four-word MeleeComplete delegate and exact `_MeleeRequested` flag cleanup.
+The tests execute 256 more native activation combinations, including complete
+downed/visibility/robot-service/interface helper bodies. Native visibility and
+target selection dereference their resources without None/bounds checks; the
+production role resolver additionally validates the vehicle/mesh owner chain,
+four-entry typed PickedTargets array and cylinder before allowing mapped melee.
+The metadata/backend callbacks and completion delegate remain fixtures; this
+does not establish in-game melee or completed character swapping.
+
+### Native target-location continuation (September 6)
+
+The former reflected `AiPawnGetTargetLocationHook` is replaced by a third
+owned hook in `NativePawnTargeting`. At that checkpoint **9 executor hooks** remained, plus the
+same 20 cooked cast sites and previously documented normal-AI/class/persistence
+work. No role gate was bypassed; the complete feature remains unready.
+
+Evidence chain, inspected directly in the retained executable:
+
+- The native Actor registration at `114EE490` uses the Unicode `Actor`
+  name at `1297723E` and constructor `10EFA740`. That constructor installs
+  native vtable `127DAEF8`; its slot1A0 at `127DB098` is `114C8DA0`.
+- `114C8DA0..114C8DC0` is the complete native Actor target-location body.
+  ECX=raw actor; stack output-vector, raw RequestedBy and alternate flag;
+  RET12, EAX=original output. It copies raw D8/DC/E0 exactly, not raw E8/F0.
+- `117B9040` is the compiled Actor bridge: it subtracts10 from the compiled
+  receiver and requester, then calls native virtual1A0. Thus a direct native
+  call without both pointer conversions would have the wrong ABI. The new
+  thunk performs those conversions before tail-calling the full Actor body.
+- `10BC1BE0..10BC1BFF` is the complete compiled AI override. It otherwise
+  follows BoundController->WeaponAimer and calls `10BC7ED0`, with no None
+  BoundController guard. Its entry's six-byte MOV is the scoped hook site.
+  Unmapped pawns retain this whole original path.
+
+Mapped calls first verify the existing canonical reciprocal role identity.
+Preparation verifies both physical pawns' native location dispatch and the
+metadata Location=D8 layout; unknown native overrides reject before mutation.
+Publication caches an image-owned native table. Recurring calls only compare
+that table and slot after canonical validation: **no added VirtualQuery, object
+scan or allocation on the location path**. A stale identity/table fails closed
+instead of dereferencing the detached AI controller. No custom position state
+or coordinate approximation is introduced.
+
+The targeting suite now adds 2,000 stock/mapped location cycles, exact position
+bit patterns, adjacent-offset sentinels, whole-pawn preservation, stale mapping,
+changed table/slot and off-thread rejection. A temporary fixture observer
+confirms raw receiver/requester conversion (including None10->None0), alternate
+flag and stack cleanup, then executes the original native Actor body. All
+complete-body and PE relocation/corruption/unhook tests cover the new hook too.
+The AI aimer and identity services remain fixtures, not live game verification.
+
+### Native downed/revive lifecycle continuation (September 6)
+
+This is part of the existing lifecycle work, not a new feature bucket. The
+old physical-player-as-AI downed adapter calls the AI controller but omits
+`SetWorldStateBool(TnAiWorldStateReviveTarget,true,None)`. Native AI behavior
+requires that write after shared pawn notifications and controller StartDowned.
+Those four unavailable downed executor hooks and six lifecycle lookups are now
+replaced by `NativePawnDowned`, owned by the same adapter installation/rollback
+transaction. Canonical publication occurs after the existing seqlock update.
+
+Located complete/native continuation boundaries:
+
+- `10BC1FC0..10BC205A`: AI ClientStartDowned, ECX=pawn+10, plain RET.
+  Shared base behavior is **inlined** first (end interaction, PRI notification,
+  teammates, state virtual31C). BoundController read starts `10BC1FFF`;
+  AI controller StartDowned is `10BB7B20`, EDI=controller+10. The native
+  revive-target bool write follows via `11386840`, after authority checks.
+- `10BC2060..10BC20C8`: AI ClientStopDowned. Shared base behavior first;
+  BoundController read at `10BC2088`; controller StopDowned's network/dialog
+  body is inlined afterward. Entry contains a relative CALL at offset3, so
+  copying its first eight bytes into an unrelocated trampoline is unsafe.
+- `10BA2150..10BA21C8` / `10BA21D0..10BA2232`: physical player client
+  start/stop. They cast Controller to TnPlayerController and execute controller
+  callbacks **before** their inlined shared pawn behavior. Passing a native AI
+  controller through these unmodified branches produces compiled None.
+- `10B22990..10B22A0D`: player controller StartDowned, EDI=controller+10.
+  ClearInputs virtual444; authority ForceEquipRobotWeapon `10B22A10..10B22ACF`
+  and dialogue; camera Downed `10BDB1E0`; OnStartDowned virtual484.
+- `10B22AD0..10B22B52`: player controller StopDowned, ESI=controller+10.
+  Authority revive dialogue, camera StartForm via actual pawn form, then
+  OnStopDowned virtual488. Preserve this camera/weapon/input sequence.
+- Shared start `10B0A2E0..10B0A31E` and the derived inlined copies use
+  GetPRIToNotifyOfDowned `10B0A100`, PRI notification `10BA60F0`, teammate
+  notification `10B0A320`, then state callback31C. Stop uses PRI callback
+  `10BA6190`, teammate callback `10B0A490` and state callback320.
+
+Four entry hooks route only the two mapped physical pawns to the matching
+native role's client body. Three scoped BoundController reads supply the actual
+AI controller for the former physical player without touching an AI-only tail.
+The entire player/AI controller callbacks, ordering, camera form, weapon/input
+sequence and AI revive-target write run through original compiled code.
+
+The AI Stop entry's E8 is relocated in its trampoline. `InstallInlineHook`
+supports explicit audited relative-CALL offsets only (not inferred instruction
+boundaries); malformed, overlapping, unsorted or internal-overwrite targets
+reject before mutation. Its dedicated test executes 2,000 real two-CALL cycles.
+
+The downed suite executes 16,000 complete native pawn/controller transitions,
+whole-pawn preservation, controller reciprocity, callback ordering and exact
+revive-state writes. Identity invalidation after state/dialogue callbacks skips
+unsafe AI-tail accesses. The latter case caught and fixed a new failure-path
+stack bug: the second BoundController read precedes cleanup of two native class
+lookup arguments, so its reject epilogue must drop those eight bytes first.
+All eight pawn/controller bodies, PE relocations and each owned trampoline are
+signature/corruption tested. Deep engine/PRI/camera/weapon/dialogue services and
+canonical identity are fixtures. This is a native lifecycle port, not a live
+gameplay claim or completion of the full swapping feature.
+
+### Native weapon drop, shared damage and controller targeting (September 6)
+
+Five more unavailable executor hooks have been replaced within the existing
+role-adapter transaction: DropFrom, HandleFlashBangDamage, OnBlockDamage,
+GetAdjustedAimFor and HasSameKillTarget. The remaining executor set is **10**,
+plus the same **20** cooked cast gates. No gate was bypassed. The physical-player
+normal-AI adapter, native class/menu/campaign integration and durable
+loadout/checkpoint ownership remain incomplete. **Not gameplay-ready.**
+
+The old drop adapter corrected ammo after calling the original, which allowed
+the wrong physical-class branch to run first. The native hook now changes only
+the scoped player-role decision at `109E8E21`, before mesh/animation/base-drop
+callbacks. The shipping `DropFrom` (`109E8DD0..109E8FCE`) captures that role,
+executes the original callbacks, stores impact sound with the native GC barrier,
+hides the pickup inventory, clears AmmoIncrease and copies the original clip/
+reserve for the logical player. Other AI still use native default pickup ammo.
+There is no second corrective SetupAmmo call, inventory recreation or global
+IsA hook. This CALL shares the existing GivenTo role thunk, whose original IsA
+target remains live until both owned call patches have been removed.
+
+Drop's ABI is ECX=weapon+10, three stack pointers (location, velocity, rotation),
+RET12 and compiled pickup in EAX. `SetupAmmoForDefaultPlayerPickup`
+(`109E7020..109E70A3`) instead uses EDI=weapon+10, no stack arguments and plain
+RET. It reads PlayerData and clamps default pickup ammo to clip/reserve capacity;
+the original no-data and network behavior is retained. The exposure suite now
+executes 2,000 drop cycles in addition to its pickup/fire cycles, including
+Instigator clearing inside the base-drop callback, None pickup/inventory,
+capacity limits, native GC and source-ammo preservation. Mesh/animation/base
+inventory callbacks remain fixtures.
+
+`NativePawnDamage` fixes a separate error in the former reflected adapter:
+returning immediately from AI OnBlockDamage also discarded the shared pawn's
+health-on-block buff activation. The hook now runs **after** that shared callback
+and skips only the AI-controller damage accumulator for the logical player.
+
+- `10BC15A0..10BC160F`: AI OnBlockDamage. ECX is the **raw pawn+530 damage
+  interface**, not pawn+10; two float stack arguments, RET8. The six-byte hook
+  at `10BC15D6` precedes the inlined AI controller accumulator. Mapped calls
+  take the original POP ESI/RET8 epilogue.
+- `10B095D0..10B0963E`: shared OnBlockDamage. Same interface ABI. It finds
+  TnBuffHealthOnBlock in the existing manager and calls `10BD6020` once with
+  PreDamage-PostDamage. This path remains native for both player and AI roles.
+- `10BC1370..10BC1417`: AI flash-bang reaction. ESI=pawn+10, instigator and
+  hit-vector pointers on stack, RET8. After the native network gate, the hook
+  at `10BC138D` skips only the mapped player's AI-only controller tail. Stock
+  AI retain type10 death or GOAP reaction5/replan1. Neither hook dereferences
+  the intentionally absent mapped pawn's BoundController.
+
+Damage tests execute 2,000 stock/mapped cycles, shared-buff present/absent/zero
+damage paths, native authority checks, all complete-body bytes and relocations,
+trampoline/foreign-patch rejection and unhook restoration. Class, buff activation,
+planner and death callbacks are fixtures. This does not port every physical-AI
+damage rule: cloak/instant-kill/downed role compatibility still needs its existing
+lifecycle work. These are source-level incompatibilities, not a new device crash
+diagnosis.
+
+`NativePawnTargeting` replaces the unavailable FFrame/prepared aim call with the
+shipping Engine.Pawn aim path and closes the two-participant squad-dialog hole:
+
+- `10BC1C00..10BC1C41`: physical-AI adjusted aim, ECX=pawn+10, output rotator,
+  weapon and StartFireLoc pointers on stack, RET12. Unmapped calls retain the
+  AI WeaponAimer and original zero-rotation behavior for None BoundController.
+- `1177D560..1177D5AA`: Engine.Pawn.GetAdjustedAimFor, identical ABI. A
+  canonical mapped player tail-calls this whole body. It forwards the **original
+  weapon and firing origin** to the current controller's script virtual240.
+  Its native None/non-authority fallback calls pawn virtual238 (base aim), so
+  camera/aiming state is not synthesized by the mod. The retained base-aim
+  implementation `1178F640..1178F73D` reads Controller/GetController, checks
+  free camera, calls controller view-point virtual264 or returns pawn rotation;
+  it does not use BoundController. This deeper body was inspected, not executed
+  by the new targeting fixture.
+- `10BC20E0..10BC2143`: HasSameKillTarget uses EAX=receiver pawn+10 and
+  ECX=other pawn+10, plain RET. After native network/None checks, the six-byte
+  hook at `10BC2103` tests **both** participants against the logical player.
+  Either mapped-player participant takes the original false epilogue; other
+  AI retain the two native GOAP target reads and identity comparison. The old
+  executor guard checked only the receiver, missing an ordinary AI's query
+  about the player-controlled former AI. Its Controller would fail the AI cast
+  and then be dereferenced by GetKillTarget.
+- All five direct native callers (`10A8C87E`, `10A8C8C4`, `10A8C907`,
+  `10A8C94D`, `10A8C97D`) are in the retained teammate-dialog branches. They
+  call this body rather than a reflected executor. `10BBA3B0..10BBA413`
+  implements GetKillTarget by reading the existing typed GOAP subject entry.
+
+The targeting fixture runs 2,000 repeated stock/mapped calls, both dialogue
+directions, distinct/None/missing GOAP subjects, native network and base-aim
+fallbacks, wrong thread, stale mapping, original stack cleanup and argument
+identity, plus all body/relocation/trampoline/foreign-patch checks. A follow-up
+SIMD-canary run passed with the resolver deliberately clobbering XMM registers;
+the controller callback sees the original state. Controller aim/base-aim, AI
+aimer, class/cast and canonical identities are fixtures. These tests do not
+execute a complete ownership transfer or render a camera in game.
+
+Both new hook sets install only after all remaining role contracts pass and are
+removed through the existing rollback/teardown chain. Fast identities are
+published after the canonical role seqlock; targeting validates the current
+reciprocal pair before routing player aim. There is no added polling, object
+scan, actor spawn, class spoof, input reset, checkpoint write or UI change.
+
+### Native buddy setter (same continuation)
+
+The AI buddy setter is now part of the existing native pawn/buddy hook set,
+replacing `AiSetIsAiBuddyHook` and its unavailable UFunction requirement.
+The remaining executor count is **15**, with the same **20** cooked cast
+requirements and the previously documented lifecycle/class-system work.
+This removes one obsolete runtime requirement; it does not bypass the others.
+
+`10BB4940..10BB49B2` is a 115-byte **set-true specialization**, EDI=
+controller+10, plain RET, not the cooked setter's boolean-parameter ABI.
+Both direct callers (`10BC6D38`, `10BC6EC0`) use this no-argument form.
+It sets the pawn's Actor dirty flag at raw+30 bit3 and physical TnAiPawn
+buddy storage at raw+8BC bit5. The compiled body inlines its own physical
+AI casts, so the getter hook alone does not intercept it.
+
+Unmapped controllers retain the whole shipping setter, including those
+stores. For the mapped former-player controller, the native thunk performs
+no write: its buddy identity already comes from the canonical role mapping.
+It never pretends that sibling player storage is AI storage, nor calls a
+resolver on the no-write path. It preserves GPRs, flags and FP state, and
+stale/off-thread mapped calls cannot write a pawn. Installation/removal and
+every-byte/trampoline/foreign-patch audits now cover all four role hooks.
+
+The native role suite adds 1,000 repeated stock/logical setter cycles, native
+dirty-bit/buddy-bit preservation and post-unhook restoration. Full binary
+bytes and PE relocations match the retained executable. The world-state suite
+also runs with the production role hooks installed. Mapping/class metadata
+are still fixtures, not a live squad creation or ownership-transfer test.
+
+### Native AI world-state handoff (September 6 continuation)
+
+`NativeAiWorldState` now calls the complete shipping `RefreshPawnWorldState`
+after weapon-role/shooter/service reassignment, while input is held and the
+planner is drained and suspended. This updates the existing controller's
+current weapon class, current weapon-state overheat result and robot/vehicle
+form. The previous custom handoff omitted that refresh, leaving planning
+inputs associated with the controller's previous pawn. This is a source-level
+handoff defect, not a newly observed device crash diagnosis.
+
+Rollback ownership is armed before runtime services can mutate. Refresh of
+the original AI pawn happens only after reciprocal graph restoration AND
+deferred inventory/service restoration. A dirty refresh stops guard release;
+the forward path also checks the cache immediately before planner resume.
+No actor, controller, form, weapon or inventory is recreated. This is a
+transition-only call, not another per-frame poll.
+
+Executable evidence:
+
+- `10BB53F0..10BB554E`: full refresh, ESI=controller+10, plain RET. The
+  no-weapon fallback is **base TnWeapon**, not None. Form is robot0/vehicle1,
+  not the vehicle-type enum. Calling the separate form-transition parent to
+  refresh would also mutate form and is deliberately avoided.
+- `10980BA0..10980BD5`: physical TnWeapon cast; `110031A0..110031F8`:
+  compiled class lookup. Required caches must already contain canonical
+  compiled class pointers; the allocating/lazy lookup path is not admitted.
+- `10BB7DC0..10BB7DF3` / `10BB7E40..10BB7E72`: controller bool/class
+  writers. `11386840..11386901` / `11386770..11386834`: full native GOAP
+  bool/class setters, preserving unrelated union bits and native GC barriers.
+- The existing 24-byte hashed entries must be typed, subjectless and distinct.
+  Even SetLength(currentCount) calls Remove(count,0), which can shrink storage.
+  Admission implements the verified `10FEE560` capacity policy so no array
+  reallocation is entered. The native allocator and lazy class finder are
+  forbidden-call traps in tests, not production replacements.
+- Weapon script slot350 selects base IsOverheating=false or Overheated=true;
+  current-form slot70 is a literal robot/vehicle getter. Only verified
+  side-effect-free literal getters execute inside this refresh. Unknown
+  overrides reject before mutation.
+
+The new native fixture executes 2,000 refresh/idle cycles plus retained-capacity
+boundaries, whole-pawn/weapon/form/controller preservation, byte-signature and
+PE-relocation checks, stale identities, ownership/state mutation, GC/input/
+planner invalidation and off-thread rejection. Metadata, IsA, input and planner
+readiness are fixtures; this does **not** execute the full GameBridge handoff.
+The integration still rejects physical TnPlayerPawn-as-native-AI. Its missing
+normal-AI adapter, remaining role gates and class/menu/persistence integration
+are not solved by this cache refresh. **Still not gameplay-ready.**
+
+### Previous native weapon-role continuation
+
+Latest September 6 weapon continuation: **two more** stripped executor hooks have
+been replaced in `CharacterRoleAdapter`: `TnWeapon.GivenTo` and
+`TnWeapon.OnPreServerFire`. At that checkpoint the executor set was **16**, plus
+the same 20 cooked cast requirements and additional lifecycle calls. These
+counts refer to hooks, not a new list of features. Native-role, retained
+weapon/world-state, physical-player AI, and class/menu/persistence work remain
+incomplete. The full role adapter still refuses activation until its remaining
+contracts pass; this is not yet a working character-swap/class release.
+
+`NativeWeaponExposure` installs both narrowly scoped weapon-role decisions
+as one rollback-owned set. Pickup changes the existing native decision BEFORE
+weapon tuning is initialized. It retains `DesiredWeaponDataType` and the
+native missing-data fallback instead of forcing player tuning 1 and running
+another reset afterward. Firing retains the stock network guard, shared
+`TnPawn` cast and native buff-manager calls. No global IsA hook or actor layout
+spoof is used. Unmapped calls take constant-size native fast paths without
+reflection or global object scans; mapped calls use the existing canonical
+identity/reciprocal-link resolver and game-thread check.
+
+### Native weapon pickup/exposure evidence
+
+- `109E6C40..109E6D04`: complete `GivenTo`, ECX=weapon+10, stack pawn+10
+  and bDoNotActivate, RET8. Native superclass `11369710` executes first.
+  Only its player-class decision CALL at `109E6C8E` is redirected; no relative
+  CALL is copied into an unrelocated trampoline. Original class lookup and
+  game-mode tuning selection still run. `SetWeaponDataType` is **inlined**
+  here at `109E6CE9`, followed by one data assignment/UpdateData chain, so
+  hooking the standalone `109E6500` body would miss this pickup path.
+- `109E78D0..109E7939`: complete `OnPreServerFire`, ECX=weapon+10.
+  Direct shipping callers are `109E79CD` and `109E7B24`. The six-byte
+  instruction at `109E78EC` is redirected AFTER the native early-out. Only
+  a live logical player reaches the original continuation `109E7922`; a
+  logical former player or invalid mapped actor reaches `109E7936`.
+- `1094B8F0..1094B925`: the unchanged physical **base TnPawn** cast used
+  by that continuation. Passing the role decision does not globally make
+  an AI pawn a TnPlayerPawn.
+- `10B0B800..10B0B8FE`: shared native `ExposeSelf`, ESI=pawn+10,
+  stack ExposeDisguise, RET4. ExposeCloak has been specialized as true.
+  Native authority, cloak/disguise removal and replacement buffs execute
+  through the pawn's existing buff interface. No reflected ExposeSelf call.
+- Tests execute all four complete shipping bodies with binary/PE relocation
+  oracles. 2,000 exposure cycles cover both roles, unrelated enemy fire,
+  invalid owners, None, off-thread rejection, cloak/disguise combinations,
+  native authority early-outs, GPR/x87/SSE guards, code/trampoline corruption
+  and foreign-patch-safe restoration. 2,000 pickup cycles cover stock and
+  logical roles, native tuning 3/4, missing-data/game-class fallback to 1,
+  bDoNotActivate forwarding, stale links and exactly ONE native update.
+  Class lookup, mapping, buff and deep inventory services are fixtures;
+  these are **not gameplay or complete role-adapter tests**.
+
+Validation for this continuation: all **31 local native test groups** passed
+in the serial Release DLL build, followed by 32-bit link/export/dependency
+checks. The cooked audit passed **240 behavior contracts, 26 call signatures,
+and 20 retained cast contracts**. `git diff --check` passed. Latest local
+build/package DLL SHA256:
+`a2d098b013870c789d547fec34caa838adb8f39b33a608ec42c376abe3e1da76`.
+Launcher manifest SHA256 remains
+`4df18f029707362bfa65d59d780ba07dab663a62215a819f405668977c0d26d5`;
+no APK, deployment, publication or device/save access occurred.
+
+September 6 native-role continuation: **three** unavailable reflected getters
+have now been removed from `CharacterRoleAdapter` and replaced by guarded native
+hooks in `NativeRolePawn`: both controller pawn getters and the AI-buddy getter.
+At that checkpoint the remaining executor set was **18**, plus the existing **20 cooked cast
+requirements** and additional downed/aim lifecycle calls. These are still
+unported shipping-runtime gates, not completed features. Installing the new
+getters is delayed until those remaining contracts all pass. No general IsA
+override, physical pawn layout spoofing, actor replacement or readiness bypass
+was added. The physical-player AI role and class/menu/persistence integration
+remain incomplete; **this still is not a gameplay-ready swap release**.
+
+The same continuation removed the unnecessary null detachment of retained
+GOAP action/goal sets in `GameBridge`. Both shipping private setters already
+Unbind/Bind on same-set assignment. Identity/reciprocal-pawn/other-set checks
+now reject callback-invalidated graphs before the transaction resumes AI.
+Targeted native role/vehicle tests and 3,000 retained-set lifecycle cycles pass;
+the cooked audit passes 238 behavior contracts, 23 call signatures and 20
+cast sites. The full serial native-only integration build passed all **30 test
+groups**, 32-bit linking, exports and standalone runtime dependency checks.
+Build/package `dinput8.dll` SHA256:
+`6d5c62be10b1bb80f57531c85da383177e90d1759012443e9c7bc4467300272c`.
+The launcher manifest is unchanged; no APK, deployment or publication occurred.
+
+### Native role getters and retained-set evidence
+
+- `10B18130..10B18169`: player getter; EAX=controller+10, EAX=pawn+10
+  or compiled None (`10`). Hardcasts to physical TnPlayerPawn.
+- `10BB49D0..10BB4A09`: AI getter; same private ABI, physical TnAiPawn cast.
+- `10BB48C0..10BB4937`: AI-buddy getter; **EDI**=controller+10, EAX=bool.
+  It inlines the physical pawn cast twice and reads TnAiPawn+8BC bit5.
+  A valid mapped former player is a logical buddy without touching that
+  non-shared field. Invalid mappings return false/None.
+- `NativeRolePawnTests` execute these entire native bodies with fixture class
+  lookup and mapping resolution, verifying 1,000 repeated native/cross-role
+  cycles, native cast rejection, off-thread rejection, GPR/x87/SSE preservation,
+  every instruction-byte corruption, trampoline corruption, owned-hook removal
+  and restoration. These are **not gameplay tests** or the full role adapter.
+- The unmapped hot path preserves flags and directly tail-forwards. Mapped
+  calls use the existing adapter seqlock, canonical UObject slots and reciprocal
+  controller/pawn links. No repeated metadata lookup or GObjects scan was added.
+- `NativeVehicleAi` accepts the shared getter only if our target patch,
+  original trampoline and untouched suffix all match. Its native rebuild test
+  runs with the getter hooks installed; arbitrary foreign patches still reject.
+- AI buddy setter candidate `10BB4940..10BB49B2` is an optimized **set-true**
+  specialization, EDI-this, plain RET, not a general bool-argument setter.
+  It sets pawn replication-dirty +30 bit3 and physical buddy +8BC bit5.
+  Its two direct .text callers are `10BC6D38` and `10BC6EC0`. Do not replace
+  the remaining setter requirement by assuming a cooked bool argument ABI.
+- Private action/goal setters `11386BA0..11386C00` / `113791F0..11379245`
+  have no same-value suppression. Same-set assignment retains `_ActionSet` /
+  `_GoalSet` during both Unbind and Bind. Tests now assert these roots during
+  callbacks and reject expired canonical identities, changed opposite sets,
+  lost reference-write readiness and queued work. Removal remains supported by
+  the low-level API but is not used for GameBridge's retained-set rebinding.
+
+Additional trace within the existing world-state work bucket: compiled
+`RefreshPawnWorldState` is `10BB53F0..10BB554E` (ESI-this, plain RET).
+It updates current weapon class, the weapon's **current virtual** IsOverheating
+at script slot +350, and robot/vehicle form using current form's slot +70.
+It is not equivalent to testing the heat-service state alone. Direct callers
+`10BB5CF0` (initialization) and `10BBA1E0` (form transition) do not make the
+cache automatically correct immediately after a custom ownership handoff.
+The form-transition caller also contains its own physical-AI cast and virtual
+form mutation and must not be used to refresh caches while preserving form.
+Controller setters are `10BB7DC0` (bool), `10BB7E40` (class), and collection
+setters `11386840` (bool) / `11386770` (class). The latter is compiled for
+Subject=None (RET4); ClassVal is entry+0C and BoolVal is entry+10 bit0, not
+the same storage as IntVal at entry+08. This trace is not yet an implementation.
+
+Recovery continuation (September 6, after the reported PC crash): saved source
+and the last local DLL survived. No agents or device operations were used.
+Heavy Ghidra work/full builds stayed paused; only targeted reads, one-at-a-time
+native test compilation and source checks ran. `NativeVehicleAi` now replaces
+the stripped vehicle-strategy journal call in forward/rebuild-rollback paths,
+and detached-strategy rollback can recover a collected backup. See the vehicle
+section below. The saved DLL at that checkpoint predated recovery; a later
+local native-only build is recorded below. No published payload or APK contains
+these latest source changes yet. The four remaining work
+buckets are unchanged, and the mod is still not gameplay-ready.
+
+Further September 6 continuation: native vehicle navigation intent now has
+an in-place, typed update and a copyable identity-only rollback journal. The
+physical-AI sensor path now calls compiled `TnTacticalAnalyzer.SetSensorSet`
+without dropping the existing set's GC root. Both are connected in GameBridge;
+the stripped sensor UFunction lookup is removed. These do **not** implement the
+physical-player AI role, complete the class menus, or enable a working swap.
+See the sensor and navigation details below. No device access, deployment or
+APK build occurred. After free memory recovered above 6 GB, one serial local
+native-only build passed all **29 test groups** and DLL link/export checks.
+The local build/package DLL SHA256 is
+`60a3114ec3bafd7f9236155be08915a4214493ff4b0d4dcaa64662e1116d097a`.
+`-SkipLauncherPayloadUpdate` left the launcher manifest unchanged at
+`4df18f029707362bfa65d59d780ba07dab663a62215a819f405668977c0d26d5`.
+This is a local integration-check artifact, **not a working-swap release**.
+
+Latest source batch (September 6): the inventory transaction now calls the
+custom native role/Data assignment in **both forward and rollback paths**.
+The old reflected `SetWeaponDataType` call/audit is removed. This is guarded by
+the new retained-service compatibility check described below; unsupported
+initialization/heat-role cases still reject before detachment. It does not
+complete the other native journal, physical-role, menu or persistence work.
 
 ## Evidence
 
@@ -1497,6 +2602,283 @@ event numbering, weapon Tick and EndFire behavior.
 
 ## Remaining native port (required before gameplay claims)
 
+### Connected current identity publication (September 6, same item 1)
+
+GameBridge now calls `NativeAssignCurrentCharacter` in both forward identity
+publication and deferred rollback. The unavailable reflected
+`set_CurrentCharacter` handle/resolution/calls were removed, not bypassed.
+Readiness and mutation checks validate the exact executable, reflected layouts,
+same-world live graph and copied-data ownership; assignment additionally requires
+the PRI owner's reciprocal current controller/pawn pair.
+
+| Verified native entry | Meaning / ABI |
+| --- | --- |
+| `10BA3920..10BA3976` | Actual `set_CurrentCharacter`: EAX=PRI+10, EDI=resolved source, plain RET. Independently called at `10BE272D` in CharacterApplier. |
+| `10951470..10951511` | `CharacterDataResolved` copy: EAX=destination, EDI=source. Size 0x88, inherited strings/arrays copied through `10951520`; chassis and melee references use native GC barriers. |
+| `10BA4030..10BA4067` / `10B18DE0..10B18E23` | RefreshProvider / RefreshPlayerSubscribers. Setter inlines the owner cast, then calls the real player data-store refresh. |
+| `10BA5B50` / `10B046B0` | **Not** current identity: selected/replicated identity uses a different 0xB0 structure, including arrays of chassis/faction/colors. Do not substitute this similarly shaped setter. |
+
+Current identity is PRI raw +3C4, current display FString +484; selected
+identity remains raw +314 and selected display +490. The source is the exact
+existing pawn's live `_CurrentCharacter`, never a generated appearance or newly
+spawned pawn. Native copying preserves independent FString/TArray ownership.
+The port retains and checks selected/replication headers and scalars, validates
+all resolved fields, bounded dynamic storage and referenced object indices, and
+rejects overlapping/shallow-owned buffers before any native allocation/free.
+Provider refresh is part of the call, not a fake UI-only name update. Forward
+and rollback postconditions reject changed controller/world/pawn/provider state
+or modified source data. No ApplyCharacter, SelectCharacter, loading, inventory
+initialization, health reset or ability reset is called.
+
+The executable suite runs the actual retained setter, resolved/base copy, GC
+barrier and refresh instructions through the production EDI/EAX adapter for
+1,000 repeated updates. Allocator/string/array/class lookup and subscriber
+endpoints are fixtures. It checks byte signatures and ASLR operands against
+the retained PE relocation directory, every corrupted signature byte, distinct
+buffer ownership, AI/no-provider cases, nested calls, thread mismatch, malformed
+metadata/arrays, shallow aliases, wrong pairs and six dirty callbacks. The real
+UnrealBridge field-layout resolver has separate metadata tests. All 27 local
+suites and the DLL-only build passed; 222 cooked behavior contracts and 23
+critical signatures passed. This closes the identity dependency, **not** the
+remaining native role/sensor/vehicle adapters, normal AI, class menu or gameplay
+validation. The class spawn code's separate temporary raw struct alias is not
+made ownership-safe by this PRI-only port.
+
+### Vehicle-strategy journal port (September 6 recovery, same item 1)
+
+`NativeVehicleAi` replaces `ai_create_vehicle_control` / its stripped reflected
+CreateAndInitialize call. Admission runs after the existing native camera/form
+classifier is bound. It accepts only a real physical TnAiPawn: the native factory
+has an inlined cast followed by an unguarded dereference at **10BB4D5C**.
+A logical role flag or a controller getter hook cannot make that access safe
+for the sibling TnPlayerPawn allocation. That separate role work stays closed.
+
+Verified bodies: factory `10BB4D00..10BB4E69` and its five-way table through
+`10BB4E7F`; tank specialization `10BB4E80..10BB4F8A`; getter
+`10BB49D0..10BB4A09`; CreateAndInitialize wrapper `10BB5B20..10BB5B8A`;
+strategy Initialize `109DEE60..109DEF1D`; path Initialize
+`10B00830..10B008C8`. The factory takes EAX=controller+10 and returns a compiled
+pointer (None=10). Initialize takes **two compiled pointers on the stack**, with
+RET8; it is not a thiscall or reflected UObject method. It initializes both
+owner caches, the private path follower, then OnInitialize at script slot +38.
+
+Car/plane/tank/giant-tank callbacks are `109DF7A0..109DF87A`,
+`109E3A00..109E3ADE`, `109E47E0..109E48B2`, `109E3420..109E34F2`.
+Tank specialization tests **TnTankAiPawn**, not the character's display name.
+Raw strategy fields are controller +28, pawn +2C, path follower +64, blueprint
++74 and form +78. Path follower fields are controller +28 / pawn +2C.
+The native factory creates a strategy UObject, never another pawn.
+
+The custom wrapper validates the newly allocated class, native callback,
+controller outer, independently owned path follower, empty pre-initialization
+caches, typed layouts, current vehicle/blueprint/input owners and indices BEFORE
+publishing through the existing GC-aware expected-reference writer. It then
+executes native Initialize and verifies reciprocal owners, unchanged actor pose,
+form, world and input leases. Native creation failure or a dirty callback reports
+failure to the armed outer rollback. No unrooted allocation is manually freed.
+
+The old postcondition used the PREVIOUS pawn's strategy presence to decide
+whether the NEW pawn required one. It now validates the actual new pawn's form,
+strategy, path follower and blueprint, including a genuinely vehicle-less pawn.
+Rollback likewise revalidates ownership, not just non-null pointers. Rebuild
+rollback preserves the original strategy when still valid; both rebuild and
+detach rollback can recreate it if the unrooted saved pointer was collected.
+A physical-player proxy restoration must stay null and never call the factory.
+
+TnAiController.Tick updates vehicle AI **before** PlanRunner.Update. Suspending
+GOAP is therefore insufficient to stop a freshly constructed strategy during
+the swap's settling frames. The wrapper now uses the existing verified native
+strategy StopMovement / form-specific boost setter, preserving unrelated bits.
+It also initializes desired location/rotation from the unchanged pawn pose,
+following Activate's cache copies at `109DEF53..109DEF89`. MoveToLocation later
+clears the native stop flag through the normal AI path.
+
+This is a strategy-cache/journal port, **not completed native AI activation**.
+Further tracing corrected the earlier interpretation of VehicleMode: it is
+navigation intent, not the pawn's physical airborne state. For example,
+`TnVehiclePlaneAiControlStrategy.OnMoveTowardActor` chooses 2 or 1 from the goal
+actor's air-path/airborne classification. A fresh native Activate initializes
+intent to 1 even for a plane; it does not move, land or transform that pawn.
+
+Rebuild now reproduces that initialization for an already transformed pawn.
+It resolves the exact registered VehicleMode class and its default HashIndex,
+then validates an existing hashed, subjectless typed entry in AiWorldState.
+Only its reflected Value.IntVal is changed. The full native SetIntValue body
+at `11386910..113869C9` has no notification dispatch. Its general SetLength
+helper can shrink/reallocate an array even for an equal length; the existing-
+slot specialization avoids that work and does not assign object references.
+Missing/uninitialized entries reject; this does not bootstrap a new GOAP table.
+GameBridge captures controller/collection identities and the original value,
+not a borrowed array element, and restores only an unchanged value or the
+known Activate transition. Unexpected intervening values or recycled objects
+reject restoration. Weapon/overheat/transformer-form world-state synchronization
+and the physical-role adapters still remain required before normal AI resumes.
+
+`NativeVehicleAiTests` passes 1,000 independent factory/setup cases across all
+four vehicle kinds, robot/vehicle modes and vehicle-less pawns. It runs the real
+factory, tank specialization, owner/path initializers, all four subclass callbacks,
+GC barrier and native stop/boost bodies. Allocation, class lookup/metadata, form
+classification, input leases and GOAP readiness are fixtures. Tests cover twenty-one
+dirty-construction/initializer outcomes, nested/off-thread calls, foreign/shared
+paths, wrong ownership/roles/worlds/layouts, deletion, missing blueprints, missing
+strategies, wrong code permissions, preserved pawn/old-strategy bytes and seeded
+steering targets. Another 2,000 restoration calls exercise the production
+`NativeRestoreVehicleAi` path, including idempotent same-object restoration;
+additional cases rebuild collected/wrong-index/wrong-owner backups and reject
+unquiesced rollback. Navigation tests also compare complete array bytes against
+the actual SetIntValue, SetLength, indexed-element and Remove helper bodies;
+cover mode restoration, stale collection identities, malformed keys/subjects,
+uninitialized tables, changed values and excess capacity without reallocation.
+Twenty-one full code ranges (including wrapper/Activate evidence)
+and every absolute operand match the retained EXE/PE relocation directory; every
+signature byte is corruption-tested. This does not execute full GameBridge
+rollback, native gameplay, native GOAP activation or the class UI.
+
+The expanded cooked audit passes **236 behavior contracts**, 23 critical call
+signatures and 20 old role cast sites. The earlier 27-suite/DLL result below is
+the PRE-recovery artifact, not a full build of this new source. The first
+recovery check did not create a new DLL/package; the subsequent 29-group local
+build above supersedes that checkpoint. Neither accessed the device or built
+an APK. Recovery verification also rebuilt and passed the identity suite with the
+shared assembly adapter, passed changed C++ / PowerShell syntax checks and
+`git diff --check`. The launcher manifest remains identical to the pre-recovery
+checkpoint; only the local native DLL/package changed in the subsequent build.
+
+### Native sensor-set lifecycle (September 6 continuation, same item 1)
+
+`NativeAiSensors` now replaces the stripped SetSensorSet lookup and call in
+GameBridge. The native setter is `10B61A70..10B61B0D`: analyzer+10 in EDI,
+set+10 in EAX, plain RET. It assigns the same SensorSet with the native GC
+barrier, then unconditionally initializes each non-null TnAiSensor through
+virtual slot +40. There is no same-object suppression or unbind operation.
+The former null-then-reattach sequence was unnecessary and dropped the set's
+engine root. The replacement keeps that root throughout callbacks, checks
+collection/sensor identities and cached owners, rejects duplicate/null entries,
+and requires quiescent input, drained planning, a reciprocal authoritative
+standalone controller/pawn graph and the original sensor set.
+
+Base sensor Initialize is `10BC54D0..10BC55A4`, ECX=sensor+10, two compiled
+controller/database pointers on the stack, RET8. It writes controller raw+28,
+pawn raw+2C and tactical database raw+30 with native GC barriers, then invokes
+OnInitialize at virtual +44. **It hard-casts the pawn to TnAiPawn**. Passing a
+physical TnPlayerPawn would cache null; native callbacks such as biggest-threat
+initialization subsequently dereference that cache. The new wrapper therefore
+rejects that allocation before calling native code. The physical-player AI
+adapter still needs its compatible lifecycle; no safety gate was bypassed.
+
+Additional traced evidence, not yet a completed physical-role adaptation:
+biggest-threat Initialize at `10C28A20..10C28A8F` directly calls the base
+initializer and then uses the pawn's service-provider interface at raw+538.
+Its TCS cache is a full interface value, not just a UObject pointer. Threat
+evaluators accept TnPawn but need owner-controller rebinding. Tactical path
+picker initialization obtains team information through the AI-only getter.
+These nested contracts must not be replaced with unchecked pointer writes.
+
+`NativeAiSensorTests` runs 2,000 production rebind calls against actual native
+SetSensorSet/base Initialize bytes and fixture subclass callbacks, class lookup
+and metadata. It verifies root retention during every callback, repeated calls,
+preserved pawn bytes, native GC barriers, dirty callback detection, malformed
+lists/owners, rapid reentry, off-thread rejection and physical-player rejection.
+Both complete body signatures and every relocation match the original EXE;
+every signature byte is corruption-tested. This is not a gameplay test, an
+exhaustive subclass callback test, or evidence that the whole swap is enabled.
+
+### Connected retained-weapon role path (September 6, same item 1)
+
+`NativeWeaponRetention` is connected to inventory capture, identity comparison,
+readiness, each mutation boundary, postconditions and rollback. GameBridge now
+uses `NativeAssignWeaponRoleData` instead of calling the stripped reflected
+setter. The existing progress, skill-derived capacity and derived-data-cache
+ports perform the rest of the admitted tuning update. The complete role and
+other native journal gates remain mandatory.
+
+Admission compares the actual script virtual `UpdateData` slot at +228 with
+the verified base, beam, grenade-launcher or grenade-bag body. Each complete
+body is checked, including its PE-verified ASLR operands. A different override
+does not pass as an ordinary base weapon: this also closes the earlier
+unknown-cache fallback for the retained PlasmaCannon body. Repair is not yet
+admitted without its compiled dispatch verification.
+
+The weapon keeps its existing owner animator and pickup component references.
+Cooked InitializeOwnerAnimator explicitly returns when an animator already
+exists; SetPickupMeshes clones from the weapon's unchanged mesh template,
+not from the role tuning. The custom path does not recreate those services.
+Their object indices, types and ownership are journaled and checked. A missing
+animator requiring real instigator initialization is reported explicitly, not
+silently treated as an initialized weapon.
+
+No heat reset, SyncCurrentHeat or animation/state callback is invoked by this
+retained assignment. The mutation checks the same heat service, capacity,
+modifier objects/tuning **and transient flags/timers**, plus unchanged current
+heat. Rollback restores role/tuning/caches/ammo through the same guarded leaves;
+it does not rewind unexpected heat/animation events to pretend cleanup succeeded.
+
+An important compatibility restriction is now explicit: TnWeapon.IsHeatBased
+reads **Data.HeatProperties.HeatMax**, and Tick sends cooling events only when
+that predicate is true. Merely keeping the old heat service while selecting
+zero-max AiData would stop native cooling. Different role capacities, missing
+modifiers, incompatible modifier tuning and missing required animation setup
+therefore remain closed. The cold-AI clone/capacity initializer is still not
+part of a complete ownership-safe bootstrap. This section supersedes older
+notes below saying that GameBridge still calls the reflected setter; it does
+not claim that every campaign weapon is supported.
+
+The new retention suite executes 512 read-only old/new-role round trips and
+every-byte signature corruption checks for all four bodies, comparing absolute
+operand lists independently with the retained PE relocation directory. It
+checks unknown dispatch, foreign/stale services, capacity/animation cases,
+changed control during checks, wrong threads and non-executable code pages.
+The modifier suite additionally verifies authored-template compatibility does
+not confuse runtime timers/default flags with tuning. These are production
+checks with UObject/control/template fixtures, not gameplay.
+
+Further same-bucket sensor tracing (not yet bound): controller SetSensorSet
+wrapper `10BB7D80..10BB7DAF` uses **ECX = controller +2E8**, not the usual +10.
+Its world and Role reads are context-250 and context-282; analyzer is context+C
+(raw controller +2F4). It calls analyzer SetSensorSet at
+`10B61A70..10B61B0D` with EDI=analyzer+10 and EAX=compiled sensor set. The loop
+dispatches each sensor's Initialize at script slot +40. The base initializer
+`10BC54D0..10BC55A4` contains an **inlined physical TnAiPawn cast**, before
+calling OnInitialize at +44. Hooking the controller getter alone will not
+change that cast. Cooked overrides initialize threat evaluators, range detectors,
+friend selection, target-claim services and path-node pickers. No guessed setter
+or bare owner-pointer substitution was added as a replacement for this lifecycle.
+
+The follow-up cooked sensor scan found two further getter consumers:
+`TnAiLineOfSightSensor.SetWorldStateLOSToEnemy` and
+`SetWorldStateAtActorLOS`. Both pass the controller's typed TransformerPawn to
+the line-of-sight detector. Adapting only Initialize does not establish a
+working sensor lifecycle. The eight `_OwnerPawn` consumers found by the same
+scan use position, inventory, range detection and threat-evaluator setup;
+their callees still need native-path verification. No absence claim is made
+about unrelated names/classes. Whole-class TnAiSensor decompilation reports a
+UELib class-deserialization error; targeted function/property output is usable.
+
+The vehicle dependency has also been located without calling it on the device:
+`CreateAndInitializeVehicleAiControlStrategy` is `10BB5B20..10BB5B8A`, with
+ESI=controller+10 and no stack arguments. It calls the factory at `10BB4D00`,
+publishes controller raw +3CC with a GC barrier, then calls
+`TnVehicleAiControlStrategy.Initialize` at `109DEE60..109DEF1D` using two
+compiled object pointers on the stack (RET8). The latter assigns strategy
+raw +28/+2C, initializes its existing path follower, then calls OnInitialize
+at script slot +38. TnPathFollower.Initialize also obtains a typed AI pawn.
+
+**The unmodified factory is unsafe for a physical TnPlayerPawn:** after its
+inlined TnAiPawn cast fails it sets compiled None=10, then reads +570 from
+that result at `10BB4D5C`. The initializer repeats the physical cast. Calling
+these bodies merely because a controller was reassigned is not a solution.
+The current proxy branch does not call this factory; it detaches the strategy.
+Normal native AI restoration and subsequent AI-shaped-pawn transfers still
+need the verified factory binding and complete service postconditions. The
+cooked factory/tank-factory bytecode decoder also fails around `new`, so its
+incomplete output and corrupted apparent function flags must not be treated
+as authoritative ABI metadata. Targeted retained-EXE outputs are in
+`build/ghidra/vehicle-ai-create.txt` and `vehicle-ai-initialize.txt`.
+
+Vehicle OnInitialize source paths cache the car/plane/tank form and blueprint;
+the base hook is empty. This is within the existing vehicle/role-adapter work,
+not an additional feature bucket and not a live-crash diagnosis.
+
 ### Derived tuning references and grenade handoff
 
 `NativeWeaponDataCache` is now part of inventory capture, per-weapon boundary
@@ -1817,8 +3199,9 @@ not an additional feature or a claim that the class flow is ready to test.
    bindings. Shooter, planner, movement cancellation/stopping/delegates, player
    services, input guards, camera owner/form handoff and native view-target
    transfer, dialog-owner initializers, point-of-interest reset and collision
-   role changes are ported, but inventory role methods still
-   need bindings. Three later journal dependencies (ClearSolution and immediate
+   role changes are ported. The preservation-safe inventory assignment is now
+   connected for admitted existing services; cold-AI/heat-role adaptation still
+   needs completion. Three later journal dependencies (ClearSolution and immediate
    action/goal setters) plus the required stopped-plan drain are also ported.
    Both controller-detachment dependencies and custom reciprocal player/AI
    ownership, acknowledgment and basic AI owner services are now integrated.
@@ -1828,26 +3211,29 @@ not an additional feature or a claim that the class flow is ready to test.
    overrides still reject and need explicit native verification to expand support.
    State-specific input cleanup is integrated for verified native-compatible
    pairs; its physical-AI walking service adaptation remains in item 2. The
-   AI aiming is now integrated for the current native aimer. The
-   immediate preflight now has one unported reflected function type left:
-   SetWeaponDataType. SyncCurrentHeat has a native binding, but the preceding
-   role-update path still needs preservation-safe integration. Fire-rate ramp and
-   spread preservation are integrated in that journal, not a completed role setter.
+   AI aiming is now integrated for the current native aimer. The old immediate
+   SetWeaponDataType reflection dependency has been replaced by the custom role
+   assignment and retention gate. Fire-rate ramp and spread preservation are
+   integrated; unknown native UpdateData overrides still reject. SyncCurrentHeat
+   remains available as a separate binding, but the retained assignment no longer
+   invokes it or resets live heat/animation state.
    Skill-derived capacity and exact ammo/magazine preservation checks are now
-   integrated in the same journal; the owner-animation/bootstrap paths remain.
+   integrated in the same journal; missing owner-animation/bootstrap paths remain.
    Same-object modifier timer/flag preservation is also integrated; modifier
    initialization/retention across AI/player tuning remains in this same item.
    Derived tuning caches (including the grenade bag/thrower pair) are now
-   integrated in the journal; the destructive base update remains unported.
+   integrated in the journal; replaying the destructive base update is not the
+   intended implementation.
    The native component collision calls
    are separately audited by their guarded wrapper. This count
    excludes later journal dependencies and the role/menu/persistence work; it
    is not a total remaining-work estimate.
-   Sensor, vehicle-AI strategy and identity journal
-   dependencies remain. Full native cross-role controller/service handoff is NOT
+   The current-identity native dependency is now connected in both directions.
+   Sensor and vehicle-AI strategy dependencies remain.
+   Full native cross-role controller/service handoff is NOT
    complete. Do not bypass
    failed preflight checks.
-2. Replace the twenty cooked-bytecode cast patches and compiled-direct role
+2. Replace the remaining OnSetPawn cooked-bytecode cast and compiled-direct role
    hooks with verified native control/AI/camera adaptations. The current role
    proxy cannot be declared equivalent to native squad AI.
 3. Replace non-exported class/loadout/AI-spawn methods with native bindings and
@@ -1863,8 +3249,9 @@ spawn copies, alter native class identities or suppress safety validation.
 
 ## Local verification
 
-`build.ps1 -Configuration Release -SkipLauncherPayloadUpdate` runs twenty-three native
-suites and builds only dinput8.dll. Extended resolver tests execute the actual
+`build.ps1 -Configuration Release -SkipLauncherPayloadUpdate` runs the native
+suites listed in the current checkpoint above and builds only dinput8.dll.
+Extended resolver tests execute the actual
 x86 context thunks 3,000 times, preserve the four-word checkpoint delegate through
 frame capture/replay, reject stripped executors, and validate Script boundaries.
 NativeCampaignTravelTests executes a real EAX-this fixture through the production
@@ -1914,8 +3301,9 @@ cancellation, every individual delegate word, invalid/missing state stacks,
 modified vtables, no-pop and stale-callback failures, network guard and re-entry.
 It does not execute the engine's real state-stack machinery. The real resolver
 fixture also verifies the full object delegate read and bounded larger scheduler
-array reads. The cooked-package check now covers nineteen call signatures,
-twenty cast sites and forty-four behavioral contracts, including the actual
+array reads. The original cooked-package checkpoint covered nineteen call signatures,
+twenty cast sites and forty-four behavioral contracts (see the current counts
+at the top), including the actual
 possession/restart/input-reset/form-selection chain, vehicle input cleanup and
 six pawn/weapon/forced-selection contracts and four acknowledgment/eye-height
 contracts from the latest trace.
@@ -2083,12 +3471,11 @@ covered. Array helpers, Scaleform Invoke and metadata are fixtures: this does no
 test a rendered native HUD, live effective-value reader or integrated swap.
 
 Latest local-only DLL SHA256:
-`d807ccbe79f3a05f4f2648d2899d209623128c9db5a70bc1c07e14093095dad9`.
-All 25 local test suites, 216 cooked behavior contracts (plus 22 call signatures
-and 20 role cast sites), and the DLL-only build passed with
+`ed357f41ee8260b9f1394b592ca3b0a0b0e6686165c2be6e3b8cebc4c8723a28`.
+All 27 local test suites and the DLL-only build passed with
 `-Configuration Release -SkipLauncherPayloadUpdate`; no APK build ran.
-The heat and modifier suites were also rebuilt/rerun against the final
-clone-boundary cold-state guard after the full build's earlier test compilation.
+The cooked behavior audit passed all 222 contracts, plus 23 call signatures
+and 20 role cast sites.
 The launcher manifest still identifies payload DLL `9360fb79a295...`; it was
 not updated, published, installed or presented as containing this batch.
 

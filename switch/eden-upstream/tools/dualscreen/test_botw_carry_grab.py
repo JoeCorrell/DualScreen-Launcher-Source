@@ -145,6 +145,6 @@ if __name__ == '__main__':
     if args.deps:
         sys.path.insert(0, str(args.deps.resolve()))
     args.work.mkdir(parents=True, exist_ok=True)
-    build(Path(__file__).resolve().parents[2] / 'src/core/loader/nso.cpp', args.image,
+    build(Path(__file__).resolve().parents[3] / 'mods/botw/native/hooks.cpp', args.image,
           args.work.resolve(), args.compiler)
     test(args.work)

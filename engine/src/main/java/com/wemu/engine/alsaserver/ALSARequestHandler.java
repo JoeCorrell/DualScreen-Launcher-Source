@@ -2,16 +2,13 @@ package com.wemu.engine.alsaserver;
 
 import android.util.Log;
 
-import com.wemu.engine.sysvshm.SysVSharedMemory;
 import com.wemu.engine.xconnector.Client;
 import com.wemu.engine.xconnector.RequestHandler;
-import com.wemu.engine.xconnector.XConnectorEpoll;
 import com.wemu.engine.xconnector.XInputStream;
 import com.wemu.engine.xconnector.XOutputStream;
 import com.wemu.engine.xconnector.XStreamLock;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 
 public class ALSARequestHandler implements RequestHandler {
     private static final int PREPARE_BYTES = 10;
@@ -20,7 +17,6 @@ public class ALSARequestHandler implements RequestHandler {
     private static final int MIN_SAMPLE_RATE = 8_000;
     private static final int MAX_SAMPLE_RATE = 384_000;
     private static final int MAX_BUFFER_FRAMES = 262_144;
-    private int maxSHMemoryId = 0;
 
     @Override
     public boolean handleRequest(Client client) throws IOException {
@@ -87,23 +83,14 @@ public class ALSARequestHandler implements RequestHandler {
                         " bufferFrames=" + bufferFrames);
                 alsaClient.prepare();
 
-                createSharedMemory(alsaClient, outputStream);
+                // WemuSession selects socket PCM in the guest plugin. PREPARE
+                // has no reply in that protocol: sending a shared-memory FD or
+                // its dummy byte would corrupt the next POINTER response.
+                Log.i("WemuAudio", "PCM transport=socket (ordered, no shared slot)");
                 break;
             case RequestCodes.WRITE:
-                ByteBuffer buffer = alsaClient.getSharedBuffer();
-                if (buffer != null) {
-                    if (requestLength > buffer.capacity()) {
-                        throw new IOException("ALSA write exceeds shared buffer: "
-                                + requestLength + " > " + buffer.capacity());
-                    }
-                    buffer.clear();
-                    buffer.limit(requestLength);
-                    alsaClient.writeDataToStream(buffer);
-                }
-                else {
-                    if (inputStream.available() < requestLength) return false;
-                    alsaClient.writeDataToStream(inputStream.readByteBuffer(requestLength));
-                }
+                if (inputStream.available() < requestLength) return false;
+                alsaClient.writeDataToStream(inputStream.readByteBuffer(requestLength));
                 break;
             case RequestCodes.DRAIN:
                 requireLength(requestLength, 0, "DRAIN");
@@ -129,21 +116,4 @@ public class ALSARequestHandler implements RequestHandler {
         }
     }
 
-    private void createSharedMemory(ALSAClient alsaClient, XOutputStream outputStream) throws IOException {
-        int size = alsaClient.getBufferSizeInBytes();
-        int fd = SysVSharedMemory.createMemoryFd("alsa-shm"+(++maxSHMemoryId), size);
-
-        if (fd >= 0) {
-            ByteBuffer buffer = SysVSharedMemory.mapSHMSegment(fd, size, 0, true);
-            if (buffer != null) alsaClient.setSharedBuffer(buffer);
-        }
-
-        try (XStreamLock lock = outputStream.lock()) {
-            outputStream.writeByte((byte)0);
-            outputStream.setAncillaryFd(fd);
-        }
-        finally {
-            if (fd >= 0) XConnectorEpoll.closeFd(fd);
-        }
-    }
 }

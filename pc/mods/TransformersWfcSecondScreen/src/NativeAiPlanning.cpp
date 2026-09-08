@@ -364,18 +364,35 @@ bool RunnerReadyToReplan(void* runner) {
 }
 
 NativeAiPlanningResult SetPlanSet(void* controller, void* value, bool action) {
-  if (g_planning_mutating) return NativeAiPlanningResult::kRejected;
+  if (g_planning_mutating || !UnrealObjectReferenceWritesReady()) return NativeAiPlanningResult::kRejected;
   void* runner = PlanningRunner(controller);
   if (!runner || !PlanLifecycleLayout(runner) || !RunnerDrained(runner) ||
       !PhysicalAiPair(controller) || !RunnerSetsValid(runner) || !PlanSetValid(value, action))
     return NativeAiPlanningResult::kRejected;
+  void *pawn=nullptr,*previous=nullptr,*other_set=nullptr;
+  if (!UnrealReadObjectProperty(controller,L"Pawn",&pawn) ||
+      !UnrealReadObjectProperty(runner,action ? L"_ActionSet":L"_GoalSet",&previous) ||
+      !UnrealReadObjectProperty(runner,action ? L"_GoalSet":L"_ActionSet",&other_set))
+    return NativeAiPlanningResult::kRejected;
+  const std::array<void*,6> objects={controller,runner,pawn,previous,value,other_set};
+  std::array<uint32_t,6> indices{};
+  for(size_t i=0;i<objects.size();++i)
+    if (objects[i] && !(indices[i]=UnrealObjectIndex(objects[i]))) return NativeAiPlanningResult::kRejected;
   PlanningMutationGuard guard;
   WfcCallEsiObject(action ? g_planning.set_action : g_planning.set_goal,
       static_cast<uint8_t*>(runner) + kNativeScriptThisOffset,
       reinterpret_cast<void*>(reinterpret_cast<uintptr_t>(value) + kNativeScriptThisOffset));
+  // Engine callbacks can recycle a slot or change an otherwise valid graph.
+  // Check canonical identities BEFORE dereferencing any retained object again.
+  for(size_t i=0;i<objects.size();++i)
+    if (objects[i] && UnrealObjectAt(static_cast<int32_t>(indices[i]-1))!=objects[i])
+      return NativeAiPlanningResult::kStateMismatch;
   void* actual = nullptr;
   if (PlanningRunner(controller) != runner || !RunnerDrained(runner) ||
-      !PhysicalAiPair(controller) ||
+      !PhysicalAiPair(controller) || !UnrealObjectReferenceWritesReady() ||
+      !UnrealReadObjectProperty(controller,L"Pawn",&actual) || actual!=pawn ||
+      !UnrealReadObjectProperty(runner,action ? L"_GoalSet":L"_ActionSet",&actual) || actual!=other_set ||
+      !RunnerSetsValid(runner) ||
       !UnrealReadObjectProperty(runner, action ? L"_ActionSet" : L"_GoalSet", &actual) ||
       actual != value) return NativeAiPlanningResult::kStateMismatch;
   return NativeAiPlanningResult::kApplied;

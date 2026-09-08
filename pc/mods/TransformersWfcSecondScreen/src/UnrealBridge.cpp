@@ -2830,6 +2830,21 @@ bool UnrealResolveBytePropertyOffset(void* object,
   return true;
 }
 
+bool UnrealResolveArrayPropertyOffset(void* object, const wchar_t* property_name,
+                                      uint32_t* output) {
+  if (!output) return false;
+  *output = 0;
+  if (!UnrealObjectValid(object) || !property_name || !*property_name) return false;
+  void* field = FindField(object, property_name);
+  if (!field || !UnrealObjectIsA(field, L"ArrayProperty") ||
+      FieldArrayDim(field) != 1 || FieldElementSize(field) != sizeof(UnrealArrayView)) return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset == UINT32_MAX || offset < 0x28u ||
+      !Readable(static_cast<uint8_t*>(object) + offset, sizeof(UnrealArrayView))) return false;
+  *output = offset;
+  return true;
+}
+
 bool UnrealResolveStructPropertyOffset(void* object,
                                        const wchar_t* property_name,
                                        uint32_t expected_size,
@@ -3233,6 +3248,23 @@ bool UnrealReadStructTypedArray(const UnrealStructValueView& value,
       static_cast<uint32_t>(array.capacity) > max_capacity ||
       (array.count && (!array.data || !Readable(array.data, array.count * element_size)))) return false;
   *output = array;
+  return true;
+}
+
+bool UnrealResolveStructFieldOffset(const UnrealStructValueView& value,
+                                    const wchar_t* field_name,
+                                    const wchar_t* field_class,
+                                    uint32_t expected_size, uint32_t* output) {
+  if (!output) return false;
+  *output = UINT32_MAX;
+  if (!field_name || !field_class || !expected_size || !value.data ||
+      !UnrealObjectValid(value.struct_definition) || !Readable(value.data, value.size)) return false;
+  void* field = FindStructField(value.struct_definition, field_name);
+  if (!field || !UnrealObjectIsA(field, field_class) ||
+      FieldElementSize(field) != expected_size || FieldArrayDim(field) != 1) return false;
+  const uint32_t offset = FieldOffset(field);
+  if (offset > value.size || expected_size > value.size - offset) return false;
+  *output = offset;
   return true;
 }
 

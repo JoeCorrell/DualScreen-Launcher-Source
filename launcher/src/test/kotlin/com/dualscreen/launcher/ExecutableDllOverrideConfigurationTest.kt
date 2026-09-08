@@ -7,6 +7,52 @@ import java.nio.file.Files
 
 class ExecutableDllOverrideConfigurationTest {
     @Test
+    fun ac2CatalogAudioAndPanelPoliciesAreAcceptedAndRemainExecutableScoped() {
+        val root = Files.createTempDirectory("ac2-overrides").toFile()
+        try {
+            val game = checkNotNull(GameCatalog.byId("assassins-creed-ii"))
+            File(root, ".wine").mkdirs()
+            val registry = File(root, ".wine/user.reg").apply {
+                writeText("WINE REGISTRY Version 2\n\n[Software\\\\Wine\\\\DllOverrides] 1\n\"dsound\"=\"native\"\n")
+            }
+            repeat(2) {
+                ExecutableDllOverrideConfiguration.ensure(root, game.executableCandidates.single(), game.nativeDllOverrides)
+            }
+            val key = "Software\\Wine\\AppDefaults\\AssassinsCreedIIGame.exe\\DllOverrides"
+            com.wemu.engine.core.WineRegistryEditor(registry).use { editor ->
+                assertThat(editor.getStringValue(key, "dinput8")).isEqualTo("native,builtin")
+                assertThat(editor.getStringValue(key, "dsound")).isEqualTo("builtin,native")
+                assertThat(editor.getStringValue("Software\\Wine\\DllOverrides", "dsound")).isEqualTo("native")
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidPoliciesAreRejectedBeforeRegistryWrites() {
+        val root = Files.createTempDirectory("invalid-overrides").toFile()
+        try {
+            File(root, ".wine").mkdirs()
+            val registry = File(root, ".wine/user.reg").apply { writeText("WINE REGISTRY Version 2\n") }
+            val original = registry.readText()
+            for ((dll, value) in listOf(
+                "dsound" to "builtin,native\n\"other\"=\"native\"",
+                "dsound" to "native,builtin,unknown",
+                "../dsound" to "builtin,native",
+            )) {
+                var rejected = false
+                try { ExecutableDllOverrideConfiguration.ensure(root, "AssassinsCreedIIGame.exe", mapOf(dll to value)) }
+                catch (_: IllegalArgumentException) { rejected = true }
+                assertThat(rejected).isTrue()
+                assertThat(registry.readText()).isEqualTo(original)
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun overrideIsExecutableScopedAndIdempotent() {
         val root = Files.createTempDirectory("wfc-override").toFile()
         try {

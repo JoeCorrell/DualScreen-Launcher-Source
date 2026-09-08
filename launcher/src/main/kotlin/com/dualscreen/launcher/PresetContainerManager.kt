@@ -36,10 +36,18 @@ class PresetContainerManager(private val context: Context) {
     suspend fun prepare(game: SupportedGame, reporter: ProgressReporter): Container {
         prepareRuntime(reporter)
         val specification = presetFor(game)
-        val baseProfile = loadPreset(specification)
+        val baseProfile = loadGamePreset(specification, game)
         val initialDriver = selectedDriver(baseProfile, specification)
         val profile = profileWithDriver(baseProfile, initialDriver)
-        ComponentProvisioner(context).ensure(profile, reporter)
+        ComponentProvisioner(context).ensure(CapturedRuntimeRequirements.preset(profile), reporter)
+        supportedGameDirectXConfig(game.id, profile.getString("dxwrapperConfig"))?.let { config ->
+            ComponentProvisioner(context).ensure(CapturedRuntimeRequirements.directX(config), reporter)
+        }
+        supportedGameFexCoreVersion(game.id)?.let { version ->
+            // Provision the per-game translator without modifying the shared
+            // WFC profile or any of its other captured settings.
+            ComponentProvisioner(context).ensure(CapturedRuntimeRequirements.fexCore(version), reporter)
+        }
 
         val manager = withContext(Dispatchers.IO) { ContainerManager(context) }
         // A driver choice updates the tested container in place. It is not a
@@ -162,7 +170,17 @@ class PresetContainerManager(private val context: Context) {
             check(expectedId == container.id) {
                 "${game.title} is assigned to the wrong predefined container"
             }
-            val baseProfile = loadPreset(specification)
+            supportedGameFexCoreVersion(game.id)?.let { version ->
+                ComponentProvisioner(context).ensure(CapturedRuntimeRequirements.fexCore(version)) { _, _, message ->
+                    reporter(message)
+                }
+            }
+            val baseProfile = loadGamePreset(specification, game)
+            supportedGameDirectXConfig(game.id, baseProfile.getString("dxwrapperConfig"))?.let { config ->
+                ComponentProvisioner(context).ensure(CapturedRuntimeRequirements.directX(config)) { _, _, message ->
+                    reporter(message)
+                }
+            }
             val selectedDriver = selectedDriver(baseProfile, specification, container)
             ensureSelectedDriverAvailable(selectedDriver)
             val configurationChanged = synchronizePresetConfiguration(
@@ -232,7 +250,14 @@ class PresetContainerManager(private val context: Context) {
             },
         )
         Shortcut(container, file).also { shortcut ->
-            shortcut.putExtra("envVars", supportedGameLaunchEnvironment())
+            shortcut.putExtra("envVars", supportedGameLaunchEnvironment(game.id))
+            supportedGameTranslatorExtras(game.id).forEach { (key, value) -> shortcut.putExtra(key, value) }
+            supportedGameDirectXConfig(game.id, container.dxWrapperConfig)?.let { config ->
+                shortcut.putExtra("dxwrapper", "dxvk+vkd3d")
+                shortcut.putExtra("dxwrapperConfig", config)
+            }
+            supportedGameFexCoreVersion(game.id)?.let { shortcut.putExtra("fexcoreVersion", it) }
+            supportedGameGpuDriverId(game.id)?.let { shortcut.putExtra("rendererDriverId", it) }
             if (game.exclusiveXInput) {
                 shortcut.putExtra("inputType", "4")
                 shortcut.putExtra("exclusiveXInput", "1")
@@ -281,6 +306,17 @@ class PresetContainerManager(private val context: Context) {
 
     internal fun requiresDedicatedContainer(game: SupportedGame): Boolean =
         presetFor(game) != DEFAULT_PRESET
+
+    private fun loadGamePreset(specification: PresetSpecification, game: SupportedGame): JSONObject =
+        loadPreset(specification).also { profile ->
+            // Explicit app-private baseline override. Apply at both prepare
+            // stages so preset synchronization cannot restore the tall desktop.
+            if (game.id == "dishonored" &&
+                File(context.filesDir, "dishonored-single-display").isFile
+            ) {
+                profile.getJSONObject("extraData").put("displaySecondScreen", "0")
+            }
+        }
 
     private fun loadPreset(specification: PresetSpecification): JSONObject {
         val text = runCatching {
@@ -432,9 +468,12 @@ class PresetContainerManager(private val context: Context) {
         private const val KEY_MATERIALIZATION_REVISION = "companionPresetMaterialization"
         private const val MATERIALIZATION_REVISION = "7"
 
+        internal fun presetKeyFor(game: SupportedGame): String = presetFor(game).key
+
         private fun presetFor(game: SupportedGame): PresetSpecification = when (game.id) {
             "stardew-valley" -> STARDEW_PRESET
-            "transformers-wfc" -> TRANSFORMERS_WFC_PRESET
+            // Dishonored shares WFC's actual Wine prefix and pinned graphics/runtime setup.
+            "transformers-wfc", "dishonored" -> TRANSFORMERS_WFC_PRESET
             else -> DEFAULT_PRESET
         }
 
@@ -514,15 +553,41 @@ private data class PresetSpecification(
 internal fun supportedGameLaunchEnvironment(gameId: String? = null): String {
     val winmm = if (gameId == "isaac-repentance") ";winmm=n,b" else ""
     val controller = if (gameId == "assassins-creed-ii") " FAKE_EVDEV_XBOX360=1" else ""
-    return "WINEDLLOVERRIDES=icu=n$winmm;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1$controller"
+    // User-authorized isolation candidate: Performance scheduling/ordering and
+    // caches, retaining Compatibility's full x87 precision. Landing is not yet
+    // verified with relaxed ordering; the known-good Compatibility build is kept.
+    val ac2Precision = if (gameId == "assassins-creed-ii")
+        " FEX_X87REDUCEDPRECISION=0 FEX_DYNAMICL1CACHE=1 FEX_DISABLEL2CACHE=0" else ""
+    // A shortcut-local setting, never persisted in Skyrim's shared container.
+    // No DEP policy or executable patch is implied by exception logging.
+    val diagnostics = if (gameId == "crysis3") " WINEDEBUG=-all,+timestamp,+pid,+tid,+seh" else ""
+    return "WINEDLLOVERRIDES=icu=n$winmm;mscoree=d;mshtml=d FAKE_EVDEV_LOG=1$controller$ac2Precision$diagnostics"
 }
+
+internal fun supportedGameTranslatorExtras(gameId: String): Map<String, String> =
+    if (gameId == "assassins-creed-ii") mapOf(
+        "ac2WowBox64" to "0", "emulator" to "FEXCore", "fexcorePreset" to "PERFORMANCE",
+        "box64Version" to "0.4.2", "box64Preset" to "PERFORMANCE",
+    ) else if (gameId == "crysis3") mapOf(
+        "emulator" to "FEXCore", "fexcorePreset" to "PERFORMANCE",
+        "affinityBeforeLaunch" to "1",
+    ) else emptyMap()
+
+/** A shortcut override; WFC's shared container continues to select its captured translator. */
+internal fun supportedGameFexCoreVersion(gameId: String): String? =
+    if (gameId == "dishonored") "FEXCore-2608-stable-0" else null
+
+/** The imported driver used by Dishonored's successful Thor launch; never changes WFC's preset. */
+internal fun supportedGameGpuDriverId(gameId: String): String? =
+    if (gameId == "dishonored") "Turnip A8XX Draft" else null
 
 /** Installs only the exact component ids named by the captured preset. */
 private class ComponentProvisioner(private val context: Context) {
     private val receipts = context.getSharedPreferences("captured_components", Context.MODE_PRIVATE)
 
-    suspend fun ensure(profile: JSONObject, reporter: ProgressReporter) {
-        val required = componentIds(profile)
+    suspend fun ensure(requirements: CapturedRuntimeRequirements, reporter: ProgressReporter) {
+        requirements.fixedAssets?.let(::verifyFixedRuntimeAssets)
+        val required = requirements.componentIds
         if (required.isEmpty()) {
             reporter(InstallStage.COMPONENTS, 1f, "Preset uses bundled components")
             return
@@ -541,7 +606,6 @@ private class ComponentProvisioner(private val context: Context) {
                 receipts.getString(id, null) != captured[id]?.sha256
         }
         if (missing.isEmpty()) {
-            verifyFixedRuntimeAssets(profile)
             reporter(InstallStage.COMPONENTS, 1f, "Exact captured compatibility components verified")
             return
         }
@@ -566,34 +630,8 @@ private class ComponentProvisioner(private val context: Context) {
             install(contents, archive, id)
             receipts.edit().putString(id, component.sha256).apply()
         }
-        verifyFixedRuntimeAssets(profile)
         reporter(InstallStage.COMPONENTS, 1f, "Exact captured compatibility components installed")
     }
-
-    private fun componentIds(data: JSONObject): Set<String> {
-        val candidates = linkedSetOf<String>()
-        listOf("wineVersion", "box64Version").forEach { key ->
-            data.optString(key).takeIf(::looksLikeComponentId)?.let(candidates::add)
-        }
-        data.optString("fexcoreVersion")
-            .takeIf(::looksLikeComponentId)
-            ?.let { value ->
-                candidates += if (value.startsWith("FEXCore-FEXCore-", ignoreCase = true)) {
-                    value
-                } else {
-                    "FEXCore-$value"
-                }
-            }
-        listOf(data.optString("dxwrapperConfig"), data.optString("graphicsDriverConfig"))
-            .flatMap { config -> config.split(',', ';') }
-            .mapNotNull { token -> token.substringAfter('=', "").takeIf(::looksLikeComponentId) }
-            .forEach(candidates::add)
-        return candidates
-    }
-
-    private fun looksLikeComponentId(value: String): Boolean =
-        listOf("Proton-", "Wine-", "DXVK-", "VKD3D-", "Box64-", "WOWBox64-", "FEXCore-")
-            .any { value.startsWith(it, ignoreCase = true) } && value.lastOrNull()?.isDigit() == true
 
     private fun loadCapturedComponents(): Map<String, CapturedComponent> {
         val text = context.assets.open(COMPONENT_MANIFEST).bufferedReader().use { it.readText() }
@@ -642,13 +680,10 @@ private class ComponentProvisioner(private val context: Context) {
         return target
     }
 
-    private fun verifyFixedRuntimeAssets(profile: JSONObject) {
-        val box64 = profile.optString("box64Version")
-        check(box64.isNotBlank()) { "The captured preset has no Box64 version" }
-        context.assets.open("box64/box64-$box64.tzst").close()
+    private fun verifyFixedRuntimeAssets(assets: CapturedRuntimeRequirements.FixedAssets) {
+        context.assets.open(assets.box64Archive).close()
 
-        val driver = profile.optString("rendererDriverId")
-        check(driver.isNotBlank()) { "The captured preset has no renderer driver" }
+        val driver = assets.rendererDriverId
         if (!requiresAdrenotoolsProvisioning(driver)) return
         val manager = AdrenotoolsManager(context)
         val alreadyInstalled = driver in manager.enumarateInstalledDrivers() &&

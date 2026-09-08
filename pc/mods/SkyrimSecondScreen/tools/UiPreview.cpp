@@ -154,9 +154,16 @@ int main(int argc, char** argv) {
         ui.page() != Page::kStatus) return 9;
 
     Page expected = Page::kStatus;
-    if (std::strcmp(mode, "map") == 0 ||
-        std::strcmp(mode, "map-default") == 0) {
-      expected = Page::kMap;
+    if (std::strcmp(mode, "map-disabled") == 0) {
+      // Map is intentionally gated off in both producer and UI. Exercise the
+      // complete carousel twice; an old harness expected this retired page.
+      g_command_count = 0;
+      for (int step = 0; step < 8; ++step) {
+        if (!ui.Tap(1193.0f / 1240.0f, 0.05f) || ui.page() == Page::kMap)
+          return 70;
+      }
+      if (ui.page() != Page::kStatus || g_command_count != 0) return 71;
+      std::puts("disabled map stays out of navigation: PASS");
     } else if (std::strcmp(mode, "inventory") == 0) {
       expected = Page::kInventory;
     } else if (std::strcmp(mode, "magic") == 0) {
@@ -171,24 +178,6 @@ int main(int argc, char** argv) {
     if (ui.page() != expected) return 11;
     g_command_count = 0;
     if (!ui.Render(g_preview)) return 2;
-
-    if (expected == Page::kMap) {
-      // Opening the isolated map emits exactly one read-only marker refresh.
-      // Pan and pinch must remain local and never enqueue a camera command.
-      if (g_command_count != 1 ||
-          g_last_command.type != CommandType::kRequestMapPreview ||
-          (g_last_command.flags & kCommandRefreshMapMarkers) == 0 ||
-          g_last_command.map_world_id != g_preview.world_form_id)
-        return 70;
-      if (std::strcmp(mode, "map") == 0) {
-        if (!ui.Pinch(0.5f, 0.55f, 1.4f) || !ui.Render(g_preview)) return 17;
-        if (!ui.Pointer(WM_LBUTTONDOWN, 0.50f, 0.55f) ||
-            !ui.Pointer(WM_MOUSEMOVE, 0.58f, 0.61f) ||
-            !ui.Pointer(WM_LBUTTONUP, 0.58f, 0.61f) ||
-            !ui.Render(g_preview)) return 18;
-      }
-      if (g_command_count != 1) return 71;
-    }
 
     if (expected == Page::kInventory) {
       // Every visible category must resolve at least one real Skyrim form

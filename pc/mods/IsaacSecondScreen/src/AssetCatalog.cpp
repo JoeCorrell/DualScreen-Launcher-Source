@@ -24,6 +24,7 @@ std::unordered_map<int, PlayerMetadata> g_players;
 std::unordered_map<int, PocketMetadata> g_pockets;
 std::unordered_map<std::string, SpriteFrame> g_sprites;
 std::string g_source_build;
+std::map<int, ProgressMetadata> g_achievements, g_challenges, g_bosses;
 
 std::vector<std::string_view> Split(std::string_view value, char separator,
                                     size_t maximum) {
@@ -67,7 +68,7 @@ bool Decode(std::string_view input, std::string* output) {
 
 bool ParseItem(const std::vector<std::string_view>& fields,
                std::unordered_map<int, ItemMetadata>* target) {
-  if (fields.size() != 7 || !target) return false;
+  if ((fields.size() != 7 && fields.size() != 9) || !target) return false;
   ItemMetadata item;
   if (!Integer(fields[1], 1, 65535, &item.id) ||
       !Integer(fields[2], -1, 16, &item.quality) ||
@@ -75,6 +76,7 @@ bool ParseItem(const std::vector<std::string_view>& fields,
       !Decode(fields[4], &item.asset) || !Decode(fields[5], &item.name) ||
       !Decode(fields[6], &item.description) || item.asset.empty())
     return false;
+  if(fields.size()==9 && (!Decode(fields[7],&item.kind) || !Decode(fields[8],&item.affected_stats))) return false;
   return target->emplace(item.id, std::move(item)).second;
 }
 
@@ -144,12 +146,19 @@ bool LoadAssetCatalog(const wchar_t* path) {
         Log(LogLevel::kError, "[Assets] invalid pocket line=%zu", line_number);
         return false;
       }
+    } else if (fields[0] == "U" || fields[0] == "Q" || fields[0] == "B") {
+      ProgressMetadata entry;
+      if(fields.size()!=5 || !Integer(fields[1],1,65535,&entry.id) ||
+         !Decode(fields[2],&entry.name) || !Decode(fields[3],&entry.requirement) ||
+         !Decode(fields[4],&entry.asset)) return false;
+      auto& target=fields[0]=="U" ? g_achievements : fields[0]=="Q" ? g_challenges : g_bosses;
+      if(!target.emplace(entry.id,std::move(entry)).second) return false;
     } else if (fields[0] == "A") {
       std::string actor;
       std::string animation;
       SpriteFrame sprite;
       int frame = 0;
-      if (fields.size() != 9 || !Decode(fields[1], &actor) ||
+      if ((fields.size() != 9 && fields.size() != 11) || !Decode(fields[1], &actor) ||
           !Decode(fields[2], &animation) ||
           !Integer(fields[3], 0, 65535, &frame) ||
           !Decode(fields[4], &sprite.asset) ||
@@ -157,6 +166,7 @@ bool LoadAssetCatalog(const wchar_t* path) {
           !Integer(fields[6], 0, 65535, &sprite.y) ||
           !Integer(fields[7], 1, 65535, &sprite.width) ||
           !Integer(fields[8], 1, 65535, &sprite.height) ||
+          (fields.size()==11 && (!Integer(fields[9],-4096,4096,&sprite.pivot_x) || !Integer(fields[10],-4096,4096,&sprite.pivot_y))) ||
           sprite.asset.empty() ||
           !g_sprites
                .emplace(SpriteKey(actor, animation, frame), std::move(sprite))
@@ -192,6 +202,7 @@ void ClearAssetCatalog() {
   g_pockets.clear();
   g_sprites.clear();
   g_source_build.clear();
+  g_achievements.clear(); g_challenges.clear(); g_bosses.clear();
 }
 
 const ItemMetadata* FindCollectible(int id) {
@@ -220,6 +231,10 @@ const SpriteFrame* FindSprite(const char* actor, const char* animation,
   const auto found = g_sprites.find(SpriteKey(actor, animation, frame));
   return found == g_sprites.end() ? nullptr : &found->second;
 }
+
+const std::map<int, ProgressMetadata>& AchievementMetadata() { return g_achievements; }
+const std::map<int, ProgressMetadata>& ChallengeMetadata() { return g_challenges; }
+const std::map<int, ProgressMetadata>& BossMetadata() { return g_bosses; }
 
 const std::string& CatalogSourceBuild() { return g_source_build; }
 

@@ -309,8 +309,8 @@ struct Command {
   uint64_t world_epoch = 0;
 };
 
-// Retained only as the mixed-version ABI for the retired character renderer.
-// Current proxy exports return an invisible surface and ignore submissions.
+// Visibility and controls for the private NIF/DDS character renderer. The old
+// actor-clone implementation is disabled; the proxy receives real RGBA frames.
 struct CharacterPreviewSurface {
   uint32_t version = kBridgeVersion;
   uint32_t size = sizeof(CharacterPreviewSurface);
@@ -324,8 +324,7 @@ struct CharacterPreviewSurface {
   uint64_t control_revision = 0;
 };
 
-// Retained with the no-op ABI while older character-renderer internals remain
-// compiled but unreachable behind the permanent feature gate.
+// Bounds checked by the proxy before accepting a private character frame.
 constexpr uint32_t kCharacterPreviewMaxWidth = 512;
 constexpr uint32_t kCharacterPreviewMaxHeight = 768;
 // The private map target is a bounded 16:9 surface. The lower UI preserves its

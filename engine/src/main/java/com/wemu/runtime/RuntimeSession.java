@@ -70,4 +70,7 @@ public interface RuntimeSession {
     void start();
 
     void stop();
+
+    /** Suspend this session's guest while the physical device sleeps. */
+    default void setDeviceSleeping(boolean sleeping) {}
 }

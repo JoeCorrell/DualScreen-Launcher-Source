@@ -28,6 +28,8 @@ struct DsHostApi {
     size_t (*romfs_read)(const char*, uint64_t, void*, size_t);
     uint8_t* (*decode_texture)(const uint8_t*, size_t, const char*, uint32_t, size_t*);
     void (*free_buffer)(void*);
+    uint8_t* (*decode_rgba)(const uint8_t*, size_t, const char*, uint32_t, uint32_t*, uint32_t*, size_t*);
+    uint8_t* (*encode_png)(const uint8_t*, size_t, uint32_t, uint32_t, size_t*);
 };
 struct DsModuleApi {
     uint32_t size, abi;
@@ -38,5 +40,7 @@ struct DsModuleApi {
     int32_t (*snapshot)(void*, size_t);
     int32_t (*action)(int32_t, int32_t, int32_t);
     size_t (*asset)(const char*, uint8_t*, size_t);
+    size_t (*query)(int32_t, const char*, uint8_t*, size_t);
+    int32_t (*action64)(int32_t, int64_t);
 };
 using DsModuleEntry = const DsModuleApi* (*)(const DsHostApi*);

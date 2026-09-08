@@ -415,7 +415,7 @@ class EdenSwitchBackend(private val application: Application) {
             ensureInitialized()
             val installed = registry.get(game.id) ?: error("Add the base game before pressing Play.")
             modPayloads.synchronize(game, installed)
-            if (game.id == "pokemon-legends-za") {
+            if (game.id == "pokemon-legends-za" || game.id == "breath-of-the-wild") {
                 org.yuzu.yuzu_emu.companion.ExternalCompanionPackages.activate(application, game.titleId)
             }
             val model = Game(

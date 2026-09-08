@@ -25,6 +25,11 @@ enum class Action : u32 {
     None = 0,
     SwitchCharacter = 1,
     FastTravel = 2,
+    InstallProbe = 3, // argument: site ID in low 16 bits, ITM_BeaconList ID in high 16.
+    TrackMission = 4, // FLD_questlist row ID; zero clears mission navigation.
+    SwapPartyMembers = 5, // Bytes: source slot, destination slot, expected source/destination IDs.
+    EquipItem = 6, // argument: full inventory key; reserved: character | (UI slot << 8).
+    EvaluateConditions = 7, // Internal read-only batch. argument=count; reserved=ignored condition types.
 };
 
 enum class State : u32 {
@@ -65,5 +70,9 @@ struct Mailbox {
 static_assert(sizeof(Mailbox) == 48);
 static_assert(offsetof(Mailbox, request) == 8);
 static_assert(offsetof(Mailbox, state) == 24);
+
+constexpr u32 ConditionIdsOffset = 0x80;
+constexpr u32 ConditionResultsOffset = 0x280;
+constexpr u32 MaximumConditions = 128;
 
 } // namespace XcxCompanionPayload

@@ -30,11 +30,10 @@ class GamePayloadPackageTest {
         rejects { GamePayloadPackage.parse(descriptor().put("launcherApi", 2).toString(), game) }
     }
 
-    @Test fun developmentPackagesRequireExplicitLocalOptIn() {
+    @Test fun developmentAndRevokedPackagesAreRejected() {
         val development = descriptor().put("status", "development").toString()
         rejects { GamePayloadPackage.parse(development, game) }
-        assertEquals(game, GamePayloadPackage.parse(development, game, allowDevelopment = true).gameId)
-        rejects { GamePayloadPackage.parse(descriptor().put("status", "revoked").toString(), game, allowDevelopment = true) }
+        rejects { GamePayloadPackage.parse(descriptor().put("status", "revoked").toString(), game) }
     }
 
     @Test fun unsafePathsAreRejected() {
